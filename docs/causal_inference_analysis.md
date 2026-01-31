@@ -340,5 +340,56 @@ We can observe whale *actions* (on-chain flows) but not their *intent* (why they
 
 ---
 
+## Appendix B: Fear & Greed Index Analysis
+
+### CRITICAL FINDING: F&G is a COLLIDER, not a Confounder
+
+The Fear & Greed Index should **NOT** be used as a confounder in causal analysis.
+
+#### What is Fear & Greed Index?
+
+The Alternative.me Fear & Greed Index is composed of:
+- Volatility (25%) - compares current vol to 30/90 day avg
+- Market Momentum/Volume (25%) - compares to 30/90 day avg
+- Social Media (15%) - Twitter hashtag sentiment
+- Surveys (15%) - strawpoll surveys (currently paused)
+- Bitcoin Dominance (10%) - BTC market cap share
+- Google Trends (10%) - search volume for "Bitcoin"
+
+#### Evidence that F&G is a Collider
+
+| Test | Result | Implication |
+|------|--------|-------------|
+| F&G predicts sentiment? | p=0.06 (No) | F&G doesn't cause sentiment |
+| Past returns predict F&G? | p=0.008 (Yes) | F&G is CAUSED by price |
+| Correlation F&G vs BTC Trend | r=0.85 | Measures same thing |
+
+#### DAG Comparison
+
+**WRONG (F&G as confounder):**
+```
+        F&G
+       ↙   ↘
+Sentiment → Price
+```
+
+**CORRECT (F&G as collider):**
+```
+Sentiment    Price
+       ↘    ↙
+        F&G
+```
+
+#### Impact on Analysis
+
+| Model | Sentiment Coef | p-value | Valid? |
+|-------|---------------|---------|--------|
+| Without F&G | -0.03 | 0.55 | ✅ Yes |
+| With F&G (wrong) | -0.18 | 0.085 | ❌ Collider bias |
+
+**Conclusion**: The "marginal significance" observed when including F&G was spurious, caused by collider bias. The true effect of sentiment on price is not significant.
+
+---
+
 *Document created: 2026-01-31*
 *Last updated: 2026-01-31*
