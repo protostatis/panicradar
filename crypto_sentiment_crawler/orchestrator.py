@@ -246,14 +246,19 @@ class CrawlerOrchestrator:
             novelty = self.utility_scorer.compute_novelty_only(text, add_to_recent=True)
             title_preview = (content.title or "No title")[:50]
 
-            # Log post age for freshness visibility
+            # Log post age and content stats
             if content.published_at:
                 age_hours = (content.crawled_at - content.published_at).total_seconds() / 3600
                 age_str = f"age={age_hours:.1f}h"
             else:
-                age_str = "age=unknown"
+                age_str = "age=?"
 
-            logger.info(f"Crawled: {title_preview}... ({age_str}, novelty={novelty:.3f})")
+            # Content stats
+            content_len = len(content.content) if content.content else 0
+            n_comments = len(content.metadata.get("comments", []))
+            content_str = f"content={content_len}ch/{n_comments}cmt"
+
+            logger.info(f"Crawled: {title_preview}... ({age_str}, {content_str})")
 
             self.state.total_crawls += 1
 
@@ -284,8 +289,10 @@ class CrawlerOrchestrator:
                     posts = await self.reddit_pipeline.crawl_subreddit(
                         subreddit,
                         sort="new",
-                        limit=25,
+                        limit=10,  # Reduced limit since we fetch full content
                         max_age_hours=4.0,  # Only posts from last 4 hours
+                        fetch_content=True,  # Fetch full thread + comments
+                        max_comments=10,
                     )
                     if posts:
                         # Return freshest post with some engagement
@@ -306,8 +313,10 @@ class CrawlerOrchestrator:
                     posts = await self.reddit_pipeline.crawl_subreddit(
                         subreddit,
                         sort="hot",
-                        limit=25,
+                        limit=10,
                         max_age_hours=None,  # No age filter
+                        fetch_content=True,
+                        max_comments=15,
                     )
                     if posts:
                         # Return highest-engagement post

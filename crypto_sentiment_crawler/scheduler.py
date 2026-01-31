@@ -3,7 +3,7 @@ Background scheduler for continuous crawling and belief updates.
 
 Runs the following jobs:
 - Price collection: every 5 minutes
-- Sentiment crawling: every 12 seconds (Bayesian selection)
+- Sentiment crawling: every 20 seconds (Bayesian selection, fetches full threads)
 - Outcome evaluation: every 15 minutes
 - Fear & Greed: every 4 hours
 - Causal discovery: weekly
@@ -32,7 +32,7 @@ class CrawlerScheduler:
 
     def __init__(
         self,
-        crawl_interval_seconds: int = 12,        # 12 seconds (10x faster)
+        crawl_interval_seconds: int = 20,        # 20 seconds (fetching full threads is slower)
         price_interval_seconds: int = 300,       # 5 minutes
         eval_interval_seconds: int = 900,        # 15 minutes
         fear_greed_interval_seconds: int = 14400,  # 4 hours
@@ -246,7 +246,7 @@ class CrawlerScheduler:
 
 
 async def run_background_scheduler(
-    crawl_interval: int = 12,
+    crawl_interval: int = 20,
     price_interval: int = 300,
     eval_interval: int = 900,
 ) -> None:

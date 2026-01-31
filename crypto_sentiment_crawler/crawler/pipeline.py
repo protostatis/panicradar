@@ -192,6 +192,35 @@ class ContentPipeline:
         }
 
 
+@dataclass
+class RedditComment:
+    """A Reddit comment with metadata."""
+
+    author: str | None
+    body: str
+    score: int
+    created_utc: float | None
+    published_at: datetime | None
+    depth: int = 0
+
+
+@dataclass
+class RedditThread:
+    """Full Reddit thread with post body and comments."""
+
+    url: str
+    title: str | None
+    selftext: str | None  # Post body for text posts
+    author: str | None
+    score: int
+    num_comments: int
+    created_utc: float | None
+    published_at: datetime | None
+    subreddit: str
+    comments: list[RedditComment]
+    crawled_at: datetime
+
+
 class RedditPipeline(ContentPipeline):
     """Specialized pipeline for Reddit (old.reddit.com)."""
 
@@ -204,12 +233,159 @@ class RedditPipeline(ContentPipeline):
         "timestamp": "time",
     }
 
+    async def fetch_thread(
+        self,
+        permalink: str,
+        max_comments: int = 20,
+    ) -> RedditThread | None:
+        """
+        Fetch a full Reddit thread with post body and comments.
+
+        Args:
+            permalink: Reddit permalink (e.g., /r/bitcoin/comments/abc123/title/)
+            max_comments: Maximum number of comments to extract
+
+        Returns:
+            RedditThread with full content, or None on failure
+        """
+        # Use old.reddit.com for static HTML
+        if permalink.startswith("http"):
+            url = permalink.replace("www.reddit.com", "old.reddit.com").replace("reddit.com", "old.reddit.com")
+        else:
+            url = f"https://old.reddit.com{permalink}"
+
+        fetch_result = await self.fetcher.fetch(url, rate_limit=0.5)
+
+        if not fetch_result.success:
+            return None
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(fetch_result.content, "lxml")
+        crawled_at = datetime.now(timezone.utc)
+
+        # Extract post info
+        thing = soup.select_one("div.thing.link")
+        if not thing:
+            return None
+
+        # Title
+        title_elem = thing.select_one("a.title")
+        title = title_elem.get_text() if title_elem else None
+
+        # Author
+        author_elem = thing.select_one("a.author")
+        author = author_elem.get_text() if author_elem else None
+
+        # Score
+        score_elem = thing.select_one("div.score.unvoted")
+        score_text = score_elem.get_text() if score_elem else "0"
+        try:
+            score = int(score_text.replace("•", "0"))
+        except ValueError:
+            score = 0
+
+        # Timestamp
+        timestamp_attr = thing.get("data-timestamp")
+        if timestamp_attr:
+            try:
+                created_utc = int(timestamp_attr) / 1000
+                published_at = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+            except (ValueError, TypeError, OSError):
+                created_utc = None
+                published_at = None
+        else:
+            created_utc = None
+            published_at = None
+
+        # Subreddit
+        subreddit = thing.get("data-subreddit", "")
+
+        # Self-text (post body)
+        selftext = None
+        usertext = soup.select_one("div.expando form.usertext div.md")
+        if usertext:
+            selftext = usertext.get_text(separator="\n").strip()
+
+        # Comments
+        comments = []
+        comment_area = soup.select_one("div.commentarea")
+        if comment_area:
+            for comment_thing in comment_area.select("div.thing.comment")[:max_comments]:
+                try:
+                    # Skip deleted/removed
+                    if "deleted" in comment_thing.get("class", []):
+                        continue
+
+                    # Author
+                    c_author_elem = comment_thing.select_one("a.author")
+                    c_author = c_author_elem.get_text() if c_author_elem else None
+
+                    # Body
+                    c_body_elem = comment_thing.select_one("div.md")
+                    c_body = c_body_elem.get_text(separator="\n").strip() if c_body_elem else ""
+
+                    if not c_body:
+                        continue
+
+                    # Score
+                    c_score_elem = comment_thing.select_one("span.score.unvoted")
+                    c_score_text = c_score_elem.get_text() if c_score_elem else "0"
+                    try:
+                        # Format: "X points"
+                        c_score = int(c_score_text.split()[0])
+                    except (ValueError, IndexError):
+                        c_score = 0
+
+                    # Timestamp
+                    c_time_elem = comment_thing.select_one("time")
+                    c_created_utc = None
+                    c_published_at = None
+                    if c_time_elem and c_time_elem.get("datetime"):
+                        try:
+                            c_published_at = datetime.fromisoformat(
+                                c_time_elem["datetime"].replace("Z", "+00:00")
+                            )
+                            c_created_utc = c_published_at.timestamp()
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Depth (nesting level)
+                    depth = len(comment_thing.find_parents("div", class_="thing"))
+
+                    comments.append(RedditComment(
+                        author=c_author,
+                        body=c_body[:2000],  # Limit comment length
+                        score=c_score,
+                        created_utc=c_created_utc,
+                        published_at=c_published_at,
+                        depth=depth,
+                    ))
+
+                except Exception:
+                    continue
+
+        return RedditThread(
+            url=url,
+            title=title,
+            selftext=selftext,
+            author=author,
+            score=score,
+            num_comments=len(comments),
+            created_utc=created_utc,
+            published_at=published_at,
+            subreddit=subreddit,
+            comments=comments,
+            crawled_at=crawled_at,
+        )
+
     async def crawl_subreddit(
         self,
         subreddit: str,
         sort: str = "new",
         limit: int = 25,
         max_age_hours: float | None = None,
+        fetch_content: bool = True,
+        max_comments: int = 10,
     ) -> list[CrawledContent]:
         """
         Crawl posts from a subreddit using old.reddit.com.
@@ -221,6 +397,8 @@ class RedditPipeline(ContentPipeline):
             max_age_hours: Maximum post age in hours. Posts older than this are filtered out.
                           Use None for no filtering (training mode).
                           Use 2-4 hours for inference mode.
+            fetch_content: If True, fetch full thread content and comments (slower but richer)
+            max_comments: Maximum comments to fetch per thread
 
         Returns:
             List of CrawledContent for each post
@@ -283,15 +461,48 @@ class RedditPipeline(ContentPipeline):
                     if age_hours > max_age_hours:
                         continue  # Skip posts older than threshold
 
-                # Analyze
-                coins = detect_coins(title or "")
-                sentiment = sentiment_analyzer.analyze(title or "")
+                # Fetch full thread content if requested
+                content = None
+                comments_data = []
+
+                if fetch_content and permalink:
+                    thread = await self.fetch_thread(permalink, max_comments=max_comments)
+                    if thread:
+                        # Build content from selftext + comments
+                        content_parts = []
+                        if thread.selftext:
+                            content_parts.append(thread.selftext)
+
+                        for c in thread.comments:
+                            content_parts.append(c.body)
+
+                        content = "\n\n".join(content_parts) if content_parts else None
+
+                        # Store comment metadata
+                        comments_data = [
+                            {
+                                "author": c.author,
+                                "body": c.body,
+                                "score": c.score,
+                                "created_utc": c.created_utc,
+                                "depth": c.depth,
+                            }
+                            for c in thread.comments
+                        ]
+
+                        # Update score from thread (more accurate)
+                        score = thread.score
+
+                # Analyze full text (title + content)
+                full_text = " ".join(filter(None, [title, content]))
+                coins = detect_coins(full_text)
+                sentiment = sentiment_analyzer.analyze(full_text)
 
                 posts.append(CrawledContent(
                     url=f"https://reddit.com{permalink}" if permalink else post_url,
                     source=f"reddit_{subreddit}",
                     title=title,
-                    content=None,
+                    content=content,
                     author=author,
                     published_at=published_at,
                     crawled_at=crawled_at,
@@ -302,7 +513,7 @@ class RedditPipeline(ContentPipeline):
                     parse_result=ParseResult(
                         url=url,
                         title=title,
-                        content=None,
+                        content=content,
                         author=author,
                         published_at=published_at,
                         links=[],
@@ -314,6 +525,7 @@ class RedditPipeline(ContentPipeline):
                         "num_comments": num_comments,
                         "subreddit": subreddit,
                         "created_utc": created_utc,
+                        "comments": comments_data,
                     },
                 ))
 
