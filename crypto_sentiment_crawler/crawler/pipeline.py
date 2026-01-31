@@ -207,16 +207,20 @@ class RedditPipeline(ContentPipeline):
     async def crawl_subreddit(
         self,
         subreddit: str,
-        sort: str = "hot",
+        sort: str = "new",
         limit: int = 25,
+        max_age_hours: float | None = None,
     ) -> list[CrawledContent]:
         """
         Crawl posts from a subreddit using old.reddit.com.
 
         Args:
             subreddit: Subreddit name (without r/)
-            sort: Sort method ('hot', 'new', 'rising', 'top')
+            sort: Sort method ('hot', 'new', 'rising', 'top') - default 'new' for fresh content
             limit: Number of posts to fetch
+            max_age_hours: Maximum post age in hours. Posts older than this are filtered out.
+                          Use None for no filtering (training mode).
+                          Use 2-4 hours for inference mode.
 
         Returns:
             List of CrawledContent for each post
@@ -260,6 +264,25 @@ class RedditPipeline(ContentPipeline):
                 post_url = thing.get("data-url", "")
                 permalink = thing.get("data-permalink", "")
 
+                # Extract post timestamp (data-timestamp is in milliseconds)
+                timestamp_attr = thing.get("data-timestamp")
+                if timestamp_attr:
+                    try:
+                        created_utc = int(timestamp_attr) / 1000  # Convert ms to seconds
+                        published_at = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                    except (ValueError, TypeError, OSError):
+                        created_utc = None
+                        published_at = None
+                else:
+                    created_utc = None
+                    published_at = None
+
+                # Filter by age if max_age_hours is specified (inference mode)
+                if max_age_hours is not None and published_at is not None:
+                    age_hours = (crawled_at - published_at).total_seconds() / 3600
+                    if age_hours > max_age_hours:
+                        continue  # Skip posts older than threshold
+
                 # Analyze
                 coins = detect_coins(title or "")
                 sentiment = sentiment_analyzer.analyze(title or "")
@@ -270,7 +293,7 @@ class RedditPipeline(ContentPipeline):
                     title=title,
                     content=None,
                     author=author,
-                    published_at=None,
+                    published_at=published_at,
                     crawled_at=crawled_at,
                     coins_mentioned=coins,
                     sentiment_score=sentiment["compound"],
@@ -281,7 +304,7 @@ class RedditPipeline(ContentPipeline):
                         title=title,
                         content=None,
                         author=author,
-                        published_at=None,
+                        published_at=published_at,
                         links=[],
                         metadata={},
                         success=True,
@@ -290,6 +313,7 @@ class RedditPipeline(ContentPipeline):
                         "score": score,
                         "num_comments": num_comments,
                         "subreddit": subreddit,
+                        "created_utc": created_utc,
                     },
                 ))
 

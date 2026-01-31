@@ -15,7 +15,7 @@ from .bayesian.cold_start import compute_baseline_informativeness, initialize_so
 from .causal import GrangerAnalyzer
 from .crawler import ContentPipeline, Fetcher
 from .crawler.pipeline import CrawledContent, RedditPipeline
-from .crawler.sources import DEFAULT_SOURCES, SourceConfig
+from .crawler.sources import DEFAULT_SOURCES, SourceConfig, get_all_sources
 from .logging_config import logger
 from .storage.db import Database
 from .storage.models import PriceData, SentimentRaw, SentimentScore
@@ -77,7 +77,8 @@ class CrawlerOrchestrator:
         eval_lag_hours: int = 4,
     ):
         self.db = db
-        self.sources = sources or DEFAULT_SOURCES
+        # Load discovered sources if none provided
+        self.sources = sources or get_all_sources(include_discovered=True)
         self.state_path = Path(state_path)
         self.eval_lag_hours = eval_lag_hours
 
@@ -244,7 +245,15 @@ class CrawlerOrchestrator:
             text = content.content or content.title or ""
             novelty = self.utility_scorer.compute_novelty_only(text, add_to_recent=True)
             title_preview = (content.title or "No title")[:50]
-            logger.info(f"Crawled: {title_preview}... (novelty={novelty:.3f})")
+
+            # Log post age for freshness visibility
+            if content.published_at:
+                age_hours = (content.crawled_at - content.published_at).total_seconds() / 3600
+                age_str = f"age={age_hours:.1f}h"
+            else:
+                age_str = "age=unknown"
+
+            logger.info(f"Crawled: {title_preview}... ({age_str}, novelty={novelty:.3f})")
 
             self.state.total_crawls += 1
 
@@ -254,23 +263,59 @@ class CrawlerOrchestrator:
         self,
         source_name: str,
         source_config: SourceConfig,
+        mode: str = "inference",
     ) -> CrawledContent | None:
-        """Crawl a specific source based on its type."""
+        """
+        Crawl a specific source based on its type.
+
+        Args:
+            source_name: Source identifier
+            source_config: Source configuration
+            mode: "inference" for fresh posts (last 4 hours), "training" for all posts
+        """
         try:
             if source_name.startswith("reddit_"):
                 # Reddit crawling
                 subreddit = source_name.replace("reddit_", "")
-                posts = await self.reddit_pipeline.crawl_subreddit(
-                    subreddit,
-                    limit=10,
-                )
-                if posts:
-                    # Return highest-engagement post
-                    posts.sort(
-                        key=lambda p: p.metadata.get("score", 0),
-                        reverse=True,
+
+                # Inference mode: fresh posts only, sorted by new
+                # Training mode: all posts, sorted by hot for engagement
+                if mode == "inference":
+                    posts = await self.reddit_pipeline.crawl_subreddit(
+                        subreddit,
+                        sort="new",
+                        limit=25,
+                        max_age_hours=4.0,  # Only posts from last 4 hours
                     )
-                    return posts[0]
+                    if posts:
+                        # Return freshest post with some engagement
+                        # Sort by timestamp (most recent first), then by score as tiebreaker
+                        posts.sort(
+                            key=lambda p: (
+                                p.published_at or p.crawled_at,
+                                p.metadata.get("score", 0),
+                            ),
+                            reverse=True,
+                        )
+                        return posts[0]
+                    else:
+                        logger.warning(f"No fresh posts (<4h old) found in r/{subreddit}")
+                        return None
+                else:
+                    # Training mode: get popular historical posts
+                    posts = await self.reddit_pipeline.crawl_subreddit(
+                        subreddit,
+                        sort="hot",
+                        limit=25,
+                        max_age_hours=None,  # No age filter
+                    )
+                    if posts:
+                        # Return highest-engagement post
+                        posts.sort(
+                            key=lambda p: p.metadata.get("score", 0),
+                            reverse=True,
+                        )
+                        return posts[0]
 
             else:
                 # Generic web crawling

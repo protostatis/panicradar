@@ -3,7 +3,7 @@ Background scheduler for continuous crawling and belief updates.
 
 Runs the following jobs:
 - Price collection: every 5 minutes
-- Sentiment crawling: every 2 minutes (Bayesian selection)
+- Sentiment crawling: every 12 seconds (Bayesian selection)
 - Outcome evaluation: every 15 minutes
 - Fear & Greed: every 4 hours
 - Causal discovery: weekly
@@ -32,7 +32,7 @@ class CrawlerScheduler:
 
     def __init__(
         self,
-        crawl_interval_seconds: int = 120,      # 2 minutes
+        crawl_interval_seconds: int = 12,        # 12 seconds (10x faster)
         price_interval_seconds: int = 300,       # 5 minutes
         eval_interval_seconds: int = 900,        # 15 minutes
         fear_greed_interval_seconds: int = 14400,  # 4 hours
@@ -246,7 +246,7 @@ class CrawlerScheduler:
 
 
 async def run_background_scheduler(
-    crawl_interval: int = 120,
+    crawl_interval: int = 12,
     price_interval: int = 300,
     eval_interval: int = 900,
 ) -> None:
@@ -325,3 +325,8 @@ async def view_live_stats() -> None:
     if recent:
         print(f"Last crawl: {recent[0]} at {recent[1][:19]}")
     print("=" * 50)
+
+
+if __name__ == "__main__":
+    # Run the scheduler when executed directly
+    asyncio.run(run_background_scheduler())

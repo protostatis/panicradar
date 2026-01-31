@@ -111,7 +111,7 @@ def load_all_sources(directory: str | Path) -> dict[str, SourceConfig]:
     return sources
 
 
-# Default source configs (can be overridden by YAML files)
+# Default source configs (can be overridden by YAML files or discovery)
 DEFAULT_SOURCES = {
     "reddit_cryptocurrency": SourceConfig(
         name="reddit_cryptocurrency",
@@ -166,6 +166,59 @@ DEFAULT_SOURCES = {
         prior_adjustment=-0.1,  # Often lower quality
     ),
 }
+
+
+def load_discovered_sources(state_path: str = "data/discovery_state.json") -> dict[str, SourceConfig]:
+    """
+    Load sources from discovery state file.
+    Returns active sources as SourceConfig objects.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(state_path)
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    sources = {}
+    for key, source_data in data.get("sources", {}).items():
+        if source_data.get("status") != "active":
+            continue
+
+        if source_data.get("source_type") == "reddit":
+            subreddit = source_data.get("subreddit", key.replace("reddit_", ""))
+            sources[key] = SourceConfig(
+                name=key,
+                base_url="https://old.reddit.com",
+                source_type="social",
+                endpoints=[
+                    EndpointConfig(name="new", path=f"/r/{subreddit}/new/"),
+                ],
+                rate_limit=0.5,
+                prior_adjustment=0.0,
+            )
+
+    return sources
+
+
+def get_all_sources(include_discovered: bool = True) -> dict[str, SourceConfig]:
+    """
+    Get all available sources, including discovered ones.
+    Discovered sources override defaults with the same name.
+    """
+    sources = dict(DEFAULT_SOURCES)
+
+    if include_discovered:
+        discovered = load_discovered_sources()
+        sources.update(discovered)
+
+    return sources
 
 # News sources (require JS, disabled for now)
 # TODO: Add RSS feed support or use playwright for these
