@@ -6,6 +6,7 @@ Runs the following jobs:
 - Sentiment crawling: every 20 seconds (Bayesian selection, fetches full threads)
 - Outcome evaluation: every 15 minutes
 - Fear & Greed: every 4 hours
+- Confounder collection: every 15 minutes (for causal inference)
 - Causal discovery: weekly
 """
 
@@ -20,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from .collectors import FearGreedCollector, PriceCollector
 from .config import settings
+from .confounders import ConfounderCollector
 from .logging_config import logger
 from .orchestrator import CrawlerOrchestrator
 from .storage.db import Database
@@ -36,23 +38,27 @@ class CrawlerScheduler:
         price_interval_seconds: int = 300,       # 5 minutes
         eval_interval_seconds: int = 900,        # 15 minutes
         fear_greed_interval_seconds: int = 14400,  # 4 hours
+        confounder_interval_seconds: int = 900,  # 15 minutes (for causal inference)
     ):
         self.crawl_interval = crawl_interval_seconds
         self.price_interval = price_interval_seconds
         self.eval_interval = eval_interval_seconds
         self.fear_greed_interval = fear_greed_interval_seconds
+        self.confounder_interval = confounder_interval_seconds
 
         self.scheduler = AsyncIOScheduler()
         self.db: Database | None = None
         self.orchestrator: CrawlerOrchestrator | None = None
         self.price_collector: PriceCollector | None = None
         self.fear_greed_collector: FearGreedCollector | None = None
+        self.confounder_collector: ConfounderCollector | None = None
 
         self._running = False
         self._stats = {
             "crawls": 0,
             "price_updates": 0,
             "evaluations": 0,
+            "confounder_snapshots": 0,
             "errors": 0,
             "started_at": None,
         }
@@ -72,6 +78,8 @@ class CrawlerScheduler:
         # Collectors
         self.price_collector = PriceCollector(self.db)
         self.fear_greed_collector = FearGreedCollector(self.db)
+        self.confounder_collector = ConfounderCollector()
+        await self.confounder_collector.start()
 
         logger.info("Scheduler initialized")
 
@@ -91,6 +99,9 @@ class CrawlerScheduler:
 
         if self.fear_greed_collector:
             await self.fear_greed_collector.close()
+
+        if self.confounder_collector:
+            await self.confounder_collector.close()
 
         if self.db:
             await self.db.close()
@@ -143,16 +154,30 @@ class CrawlerScheduler:
             logger.error(f"Fear & Greed job error: {e}")
             self._stats["errors"] += 1
 
+    async def _job_confounders(self) -> None:
+        """Job: Collect confounder variables for causal inference."""
+        try:
+            snapshot = await self.confounder_collector.collect_and_store()
+            self._stats["confounder_snapshots"] += 1
+            logger.debug(
+                f"Confounder snapshot: FNG={snapshot.fear_greed_index}, "
+                f"VIX={snapshot.vix_level}, errors={len(snapshot.collection_errors)}"
+            )
+        except Exception as e:
+            logger.error(f"Confounder job error: {e}")
+            self._stats["errors"] += 1
+
     async def _job_stats(self) -> None:
         """Job: Log statistics periodically."""
         uptime = datetime.now(timezone.utc) - self._stats["started_at"]
         hours = uptime.total_seconds() / 3600
 
         logger.info(
-            f"📊 Stats | uptime: {hours:.1f}h | "
+            f"Stats | uptime: {hours:.1f}h | "
             f"crawls: {self._stats['crawls']} | "
             f"prices: {self._stats['price_updates']} | "
             f"evals: {self._stats['evaluations']} | "
+            f"confounders: {self._stats['confounder_snapshots']} | "
             f"errors: {self._stats['errors']}"
         )
 
@@ -194,6 +219,15 @@ class CrawlerScheduler:
             max_instances=1,
         )
 
+        # Confounder collection job (for causal inference)
+        self.scheduler.add_job(
+            self._job_confounders,
+            IntervalTrigger(seconds=self.confounder_interval),
+            id="confounders",
+            name="Confounder Collection",
+            max_instances=1,
+        )
+
         # Stats job - every 10 minutes
         self.scheduler.add_job(
             self._job_stats,
@@ -215,6 +249,7 @@ class CrawlerScheduler:
         logger.info("Running initial collection...")
         await self._job_price()
         await self._job_fear_greed()
+        await self._job_confounders()
         await self._job_crawl()
 
         logger.info(
