@@ -17,18 +17,41 @@ from .storage.db import Database
 from .storage.models import SentimentRaw, SentimentScore
 
 
-# Subreddits to backfill, with page limits
-BACKFILL_SOURCES = {
-    "bitcoin": {"pages": 5, "sort": "top", "time": "month"},
-    "cryptocurrency": {"pages": 5, "sort": "top", "time": "month"},
-    "ethereum": {"pages": 3, "sort": "top", "time": "month"},
-    "solana": {"pages": 3, "sort": "top", "time": "month"},
-    "ethtrader": {"pages": 3, "sort": "top", "time": "month"},
-    "cryptomarkets": {"pages": 3, "sort": "top", "time": "month"},
-    "bitcoinbeginners": {"pages": 2, "sort": "top", "time": "month"},
-    "defi": {"pages": 2, "sort": "top", "time": "month"},
-    "altcoin": {"pages": 2, "sort": "top", "time": "month"},
-}
+# Subreddits to backfill with multiple time periods for more data
+BACKFILL_SOURCES = [
+    # High-volume subreddits - multiple time periods
+    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "week"},
+    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "month"},
+    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "year"},
+    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "week"},
+    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "month"},
+    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "year"},
+    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "week"},
+    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "month"},
+    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "year"},
+    {"sub": "solana", "pages": 3, "sort": "top", "time": "week"},
+    {"sub": "solana", "pages": 3, "sort": "top", "time": "month"},
+    {"sub": "ethtrader", "pages": 3, "sort": "top", "time": "month"},
+    {"sub": "ethtrader", "pages": 3, "sort": "top", "time": "year"},
+    {"sub": "cryptomarkets", "pages": 3, "sort": "top", "time": "month"},
+    {"sub": "bitcoinbeginners", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "defi", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "altcoin", "pages": 2, "sort": "top", "time": "month"},
+    # Additional subreddits
+    {"sub": "binance", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "coinbase", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "cardano", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "dogecoin", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "litecoin", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "ripple", "pages": 2, "sort": "top", "time": "month"},
+    {"sub": "bitcoinmarkets", "pages": 3, "sort": "top", "time": "month"},
+    {"sub": "satoshistreetbets", "pages": 2, "sort": "top", "time": "month"},
+]
+
+# Rate limit settings
+RATE_LIMIT_DELAY = 2.0  # Seconds between requests
+RATE_LIMIT_BACKOFF = 30  # Seconds to wait on 429 error
+MAX_RETRIES = 3
 
 
 class HistoricalBackfiller:
@@ -78,9 +101,23 @@ class HistoricalBackfiller:
         if after:
             url += f"&after={after}"
 
-        result = await self.fetcher.fetch(url, rate_limit=1.0)
-        if not result.success:
-            logger.error(f"Failed to fetch r/{subreddit}: {result.error}")
+        # Retry with backoff on rate limit
+        result = None
+        for attempt in range(MAX_RETRIES):
+            result = await self.fetcher.fetch(url, rate_limit=RATE_LIMIT_DELAY)
+
+            if result.success:
+                break
+            elif "429" in str(result.error):
+                wait_time = RATE_LIMIT_BACKOFF * (attempt + 1)
+                logger.warning(f"Rate limited on r/{subreddit}, waiting {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Failed to fetch r/{subreddit}: {result.error}")
+                return [], None
+
+        if not result or not result.success:
+            logger.error(f"Failed to fetch r/{subreddit} after {MAX_RETRIES} retries")
             return [], None
 
         soup = BeautifulSoup(result.content, "lxml")
@@ -170,7 +207,7 @@ class HistoricalBackfiller:
                 continue
 
             # Rate limit between threads
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
 
         return posts, next_after
 
@@ -248,24 +285,29 @@ class HistoricalBackfiller:
         """Run backfill for all configured sources."""
         logger.info("=" * 60)
         logger.info("STARTING HISTORICAL BACKFILL")
+        logger.info(f"Sources to crawl: {len(BACKFILL_SOURCES)}")
         logger.info("=" * 60)
 
         start_time = datetime.now(timezone.utc)
 
-        for subreddit, config in BACKFILL_SOURCES.items():
+        for i, config in enumerate(BACKFILL_SOURCES):
+            subreddit = config["sub"]
+            time_filter = config.get("time", "month")
+
             try:
+                logger.info(f"[{i+1}/{len(BACKFILL_SOURCES)}] r/{subreddit} ({time_filter})")
                 await self.backfill_subreddit(
                     subreddit,
                     pages=config.get("pages", 3),
                     sort=config.get("sort", "top"),
-                    time_filter=config.get("time", "month"),
+                    time_filter=time_filter,
                 )
             except Exception as e:
                 logger.error(f"Error backfilling r/{subreddit}: {e}")
                 self.stats["errors"] += 1
 
-            # Pause between subreddits
-            await asyncio.sleep(3)
+            # Pause between subreddits to avoid rate limits
+            await asyncio.sleep(5)
 
         elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
 
