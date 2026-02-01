@@ -169,19 +169,20 @@ uv run python -m crypto_sentiment_crawler.taskmanager logs <task_name>
 
 ### 5. Signal Detection Job (Default: Every 1 minute)
 
-**Purpose**: Detect contrarian trading signals.
+**Purpose**: Detect contrarian trading signals using multi-dimensional sentiment.
 
 **Process**:
-1. Load sentiment history with weighted aggregation
-2. Invert sentiment for contrarian sources
+1. Load sentiment from `user_sentiment_scores` (filtered, multi-dimensional)
+2. Aggregate with weighted averaging (invert contrarian sources)
 3. Compute Z-scores against 30-day baseline
-4. Check for signal conditions:
-   - BULLISH_DIVERGENCE: Extreme fear + price stable/rising
-   - BEARISH_DIVERGENCE: Extreme greed + price stable/falling
-   - CAPITULATION: Extreme negative sentiment spike
-   - EUPHORIA: Extreme positive sentiment spike
-5. Apply signal cooldown (6 hours minimum between signals)
-6. Send alerts via Telegram and/or Ntfy.sh
+4. Load multi-dimensional signals: `fear_index`, `euphoria_index`, `activity_level`
+5. Check for signal conditions (enhanced with multi-dimensional data):
+   - BULLISH_DIVERGENCE: Extreme fear + price stable/rising (boosted by high `fear_index`)
+   - BEARISH_DIVERGENCE: Extreme greed + price stable/falling (boosted by high `euphoria_index`)
+   - CAPITULATION: Extreme negative sentiment OR `fear_index > 25%`
+   - EUPHORIA: Extreme positive sentiment OR `euphoria_index > 25%`
+6. Apply signal cooldown (6 hours minimum between signals)
+7. Send alerts via Telegram and/or Ntfy.sh
 
 **Code Path**: `signals/service.py` → `signals/detector.py` → `signals/alerts.py`
 
@@ -275,15 +276,20 @@ NTFY_TOPIC=my-crypto-signals
    └── Save weights to source_weights table
 
 5. SIGNAL DETECTION (every 1 min)
-   ├── Load sentiment with weighted aggregation
+   ├── Load sentiment from user_sentiment_scores (filtered)
+   │   └── Uses final_score (excludes bots, scams)
    │   └── Apply source weights from database
    │   └── Invert contrarian source sentiment
+   ├── Load multi-dimensional signals
+   │   └── fear_index: proportion of loss/panic segments
+   │   └── euphoria_index: proportion of moon/FOMO segments
+   │   └── activity_level: proportion of scam/warning segments
    ├── Compute Z-scores against 30-day baseline
-   ├── Check signal conditions
-   │   └── BULLISH_DIVERGENCE: fear + stable price
-   │   └── BEARISH_DIVERGENCE: greed + falling price
-   │   └── CAPITULATION: extreme negative spike
-   │   └── EUPHORIA: extreme positive spike
+   ├── Check signal conditions (multi-dimensional enhanced)
+   │   └── BULLISH_DIVERGENCE: fear + stable price (+ high fear_index)
+   │   └── BEARISH_DIVERGENCE: greed + falling price (+ high euphoria_index)
+   │   └── CAPITULATION: extreme negative OR fear_index > 25%
+   │   └── EUPHORIA: extreme positive OR euphoria_index > 25%
    ├── Apply cooldown (6 hours between signals)
    └── Send alerts (Telegram, Ntfy.sh)
 
@@ -310,6 +316,7 @@ The services log to stdout and log files:
   💰 BTC: $78,095  -4.0% (24h)  -11.9% (7d)
   📊 Sentiment: -0.241  Z-Score: -0.28σ  State: Fear
   📈 Divergence: -0.056
+  🔍 Activity: 15.2%  Fear: 3.2%  Euphoria: 4.1%
   ✅ No signal - conditions within normal ranges
 ```
 
@@ -363,14 +370,15 @@ sqlite3 data/sentiment.db "SELECT source, weight, accuracy, is_contrarian FROM s
 | `bayesian/bandit.py` | Thompson Sampling |
 | `bayesian/beliefs.py` | Source belief model |
 | `bayesian/utility.py` | Accuracy + novelty scoring |
-| `analysis/belief_updater.py` | Update beliefs from data |
+| `analysis/belief_updater.py` | Update beliefs from filtered scores |
 | `analysis/belief_auto_updater.py` | Continuous belief updates |
 | `analysis/source_weights.py` | Dynamic weight computation |
-| `signals/detector.py` | Contrarian signal detection |
-| `signals/service.py` | Signal service with weighted aggregation |
+| `signals/detector.py` | Contrarian signal detection (multi-dimensional) |
+| `signals/service.py` | Signal service with multi-dimensional aggregation |
 | `signals/alerts.py` | Telegram + Ntfy.sh alerts |
 | `crawler/pipeline.py` | Crawl execution |
 | `processing/sentiment.py` | VADER + FinBERT sentiment |
+| `processing/user_sentiment.py` | Multi-dimensional scoring + segment categorization |
 | `data/sentiment.db` | SQLite database |
 | `data/orchestrator_state.json` | Persisted beliefs |
 

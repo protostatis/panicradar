@@ -10,8 +10,9 @@ This project implements a **Bayesian-guided crawler** that learns which sources 
 2. **Thompson Sampling**: Balances exploration vs exploitation when selecting sources to crawl
 3. **Dynamic Source Weights**: Learns accuracy-based weights stored in database, used for weighted sentiment aggregation
 4. **Contrarian Signals**: Detects sentiment-price divergences that historically precede market reversals
-5. **Transformer Sentiment**: Uses FinBERT (ProsusAI/finbert) for advanced sentiment analysis
-6. **Real-time Alerts**: Telegram and Ntfy.sh push notifications for detected signals
+5. **Multi-Dimensional Sentiment**: Segment-level analysis with fear_index, euphoria_index, and activity_level
+6. **Transformer Sentiment**: Uses FinBERT (ProsusAI/finbert) for advanced sentiment analysis
+7. **Real-time Alerts**: Telegram and Ntfy.sh push notifications for detected signals
 
 ## Key Discovery
 
@@ -133,14 +134,21 @@ uv run python -m crypto_sentiment_crawler.taskmanager logs <task_name>
 
 ## Signal Detection
 
-The system detects 4 types of contrarian signals:
+The system detects 4 types of contrarian signals using **multi-dimensional sentiment**:
 
-| Signal | Condition | Interpretation |
-|--------|-----------|----------------|
-| **BULLISH_DIVERGENCE** | Extreme fear + price stable/rising | Potential bottom |
-| **BEARISH_DIVERGENCE** | Extreme greed + price stable/falling | Potential top |
-| **CAPITULATION** | Extreme negative sentiment spike | Panic selling, often marks bottoms |
-| **EUPHORIA** | Extreme positive sentiment spike | Irrational exuberance, often marks tops |
+| Signal | Condition | Multi-Dimensional Enhancement |
+|--------|-----------|------------------------------|
+| **BULLISH_DIVERGENCE** | Extreme fear + price stable/rising | Boosted by high `fear_index` |
+| **BEARISH_DIVERGENCE** | Extreme greed + price stable/falling | Boosted by high `euphoria_index` |
+| **CAPITULATION** | Extreme negative sentiment spike | Triggers at `fear_index` > 25% |
+| **EUPHORIA** | Extreme positive sentiment spike | Triggers at `euphoria_index` > 25% |
+
+### Multi-Dimensional Signal Strength
+
+The new segment-level analysis improves signal quality:
+- **`fear_index`**: High values indicate actual losses/panic (not just negative words)
+- **`euphoria_index`**: High values indicate FOMO/moon talk (not just positive words)
+- **`activity_level`**: High values indicate scam activity (market is active)
 
 ### Alerts
 
@@ -228,19 +236,50 @@ if sentiment < -0.3 and zscore < -1.5 and price_stable:
 
 ## Sentiment Analysis
 
-Two sentiment engines available:
+### Multi-Dimensional Scoring (Default)
 
-### VADER + Crypto Lexicon (Default for speed)
+The system uses **user-centric multi-dimensional scoring** that goes beyond simple sentiment:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Post Content                                           │
+├─────────────────────────────────────────────────────────┤
+│  ├── Segment 1 → FILTER (bot message, excluded)        │
+│  ├── Segment 2 → ACTIVITY (scam warning, tracked)      │
+│  ├── Segment 3 → TRUE_BEARISH (actual loss, included)  │
+│  ├── Segment 4 → EUPHORIA (moon talk, tracked)         │
+│  └── Segment 5 → STANDARD (normal content, included)   │
+└─────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│  Multi-Dimensional Output                               │
+│  ├── final_score: Filtered sentiment (for Bayesian)    │
+│  ├── fear_index: 0-1 (contrarian BUY signal)           │
+│  ├── euphoria_index: 0-1 (contrarian SELL signal)      │
+│  └── activity_level: 0-1 (market activity indicator)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Segment Categories:**
+| Category | Example Content | In Sentiment? | Tracked As |
+|----------|-----------------|---------------|------------|
+| `FILTER` | "I am a bot..." | ❌ Excluded | - |
+| `ACTIVITY` | "Beware of scams..." | ❌ Excluded | `activity_level` |
+| `TRUE_BEARISH` | "I lost $10k..." | ✅ Included | `fear_index` |
+| `EUPHORIA` | "To the moon!" | ❌ Excluded | `euphoria_index` |
+| `STANDARD` | Regular content | ✅ Included | - |
+
+### VADER + Crypto Lexicon (Legacy)
 
 Extended lexicon with 80+ crypto-specific terms:
 - Bullish: "moon", "hodl", "diamond hands", "pump", etc.
 - Bearish: "rekt", "rugpull", "scam", "dump", etc.
 - Pattern-based corrections for complaints and questions
 
-### FinBERT Transformer (Default for accuracy)
+### FinBERT Transformer
 
 ```python
-# Enable transformer (default)
+# Enable transformer
 sentiment_analyzer = CryptoSentimentAnalyzer(use_transformer=True)
 ```
 
@@ -309,7 +348,9 @@ crypto_sentiment_crawler/
     │   └── twitter.py
     │
     ├── processing/          # Content processing
-    │   └── sentiment.py     # VADER + FinBERT
+    │   ├── sentiment.py     # VADER + FinBERT
+    │   ├── semantic_sentiment.py  # Semantic similarity
+    │   └── user_sentiment.py      # Multi-dimensional scoring
     │
     └── storage/             # Database layer
         ├── models.py
@@ -331,12 +372,15 @@ crypto_sentiment_crawler/
 | Stocktwits crawler | ✅ | Public API |
 | Bitcointalk crawler | ✅ | HTML scraping |
 | Twitter/X crawler | ✅ | Requires API key |
-| Sentiment analysis | ✅ | VADER + FinBERT |
+| Sentiment analysis | ✅ | VADER + FinBERT + Semantic |
+| **Multi-dimensional scoring** | ✅ | fear_index, euphoria_index, activity_level |
+| **Segment categorization** | ✅ | FILTER, ACTIVITY, TRUE_BEARISH, EUPHORIA, STANDARD |
+| **User-centric scoring** | ✅ | Tracks 3,000+ users with credibility |
 | Granger causality | ✅ | Price leads sentiment finding |
-| Dynamic source weights | ✅ | Learned from accuracy |
-| Contrarian signals | ✅ | 4 signal types |
+| Dynamic source weights | ✅ | Learned from filtered accuracy |
+| Contrarian signals | ✅ | 4 signal types with multi-dimensional boost |
 | Signal alerts | ✅ | Telegram + Ntfy.sh |
-| REST API | ✅ | FastAPI endpoints |
+| REST API | ✅ | FastAPI with multi-dimensional fields |
 | Belief auto-updater | ✅ | Every 30 minutes |
 | Task manager | ✅ | Start/stop/status |
 
@@ -378,6 +422,7 @@ BTC ➡️
   💰 BTC: $78,095  -4.0% (24h)  -11.9% (7d)
   📊 Sentiment: -0.241  Z-Score: -0.28σ  State: Fear
   📈 Divergence: -0.056
+  🔍 Activity: 15.2%  Fear: 3.2%  Euphoria: 4.1%
   ✅ No signal - conditions within normal ranges
 ```
 

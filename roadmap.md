@@ -391,6 +391,34 @@ def detect_contrarian_signal(sentiment, price_change, zscore):
 
 ---
 
+## Phase 8: Multi-Dimensional Sentiment ✅ (Complete)
+
+### 8.1 Segment Categorization
+- [x] `FILTER`: Bot messages, automod - excluded from sentiment
+- [x] `ACTIVITY`: Scam warnings - tracked as market activity indicator
+- [x] `TRUE_BEARISH`: Actual losses, panic - included + tracked as fear
+- [x] `EUPHORIA`: Moon talk, FOMO - tracked as contrarian sell signal
+- [x] `STANDARD`: Regular content - included in sentiment
+
+### 8.2 Multi-Dimensional Signals
+- [x] `final_score`: Filtered sentiment (for Bayesian accuracy)
+- [x] `fear_index`: Proportion of loss/panic segments (0-1)
+- [x] `euphoria_index`: Proportion of moon/FOMO segments (0-1)
+- [x] `activity_level`: Proportion of scam/warning segments (0-1)
+
+### 8.3 User-Centric Scoring
+- [x] `user_profiles` table tracking 3,000+ users
+- [x] User credibility weights
+- [x] Hierarchical aggregation (title + segments)
+
+### 8.4 Integration
+- [x] Signal detector uses multi-dimensional data
+- [x] Belief updater uses filtered scores
+- [x] API exposes multi-dimensional fields
+- [x] Database schema includes new tables
+
+---
+
 ## Project Structure (Current)
 
 ```
@@ -462,7 +490,9 @@ crypto_sentiment_crawler/
     │   └── onchain.py
     │
     ├── processing/               # ✅ Content processing
-    │   └── sentiment.py          # VADER + FinBERT + crypto lexicon
+    │   ├── sentiment.py          # VADER + FinBERT + crypto lexicon
+    │   ├── semantic_sentiment.py # Semantic similarity scoring
+    │   └── user_sentiment.py     # Multi-dimensional scoring + segment categorization
     │
     └── storage/                  # ✅ Database layer
         ├── models.py
@@ -497,6 +527,9 @@ crypto_sentiment_crawler/
 3. **Contrarian signals work** - Extreme sentiment often marks reversals
 4. **Source accuracy varies widely** - From 30% to 60%
 5. **Dynamic weights improve inference** - Better than static weights
+6. **VADER has positive bias** - Scores 69% positive vs 19% for filtered scores
+7. **Scam warnings ≠ negative sentiment** - High scam activity indicates bull market
+8. **Segment-level analysis improves signal quality** - Separate fear from activity
 
 ---
 

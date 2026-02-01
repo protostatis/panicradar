@@ -59,18 +59,26 @@ class SignalService:
             self.source_weights = {}
             self.contrarian_sources = set()
 
-    async def _load_data(self) -> tuple[list, list]:
-        """Load sentiment and price history from database with weighted aggregation."""
+    async def _load_data(self) -> tuple[list, list, dict]:
+        """Load sentiment and price history from database with weighted aggregation.
+
+        Returns:
+            tuple: (sentiment_history, price_history, multi_dimensional_data)
+        """
         db = Database(Path(self.db_path))
         await db.connect()
 
-        # Get sentiment data with source (last 30 days)
+        # Get sentiment data from user_sentiment_scores (last 30 days)
+        # Uses final_score which is filtered (excludes bot/scam content)
         cutoff = datetime.now() - timedelta(days=30)
         cursor = await db.conn.execute(
             """
-            SELECT timestamp, source, score FROM sentiment_scores
-            WHERE timestamp >= ?
-            ORDER BY timestamp ASC
+            SELECT uss.timestamp, up.source, uss.final_score,
+                   uss.activity_level, uss.fear_index, uss.euphoria_index
+            FROM user_sentiment_scores uss
+            JOIN user_profiles up ON uss.user_id = up.user_id
+            WHERE uss.timestamp >= ?
+            ORDER BY uss.timestamp ASC
             """,
             (cutoff.isoformat(),),
         )
@@ -78,11 +86,13 @@ class SignalService:
 
         # Group by hour with weighted aggregation
         hourly_sentiment = {}
-        for ts_str, source, score in sentiment_rows:
+        hourly_multidim = {}
+        for ts_str, source, score, activity, fear, euphoria in sentiment_rows:
             ts = datetime.fromisoformat(ts_str)
             hour_key = ts.replace(minute=0, second=0, microsecond=0)
             if hour_key not in hourly_sentiment:
                 hourly_sentiment[hour_key] = []
+                hourly_multidim[hour_key] = {'activity': [], 'fear': [], 'euphoria': []}
 
             # Get weight for source (default 0.01 for unknown)
             weight = self.source_weights.get(source, 0.01)
@@ -92,6 +102,9 @@ class SignalService:
                 score = -score
 
             hourly_sentiment[hour_key].append((score, weight))
+            hourly_multidim[hour_key]['activity'].append(activity or 0)
+            hourly_multidim[hour_key]['fear'].append(fear or 0)
+            hourly_multidim[hour_key]['euphoria'].append(euphoria or 0)
 
         # Compute weighted average per hour
         sentiment_history = []
@@ -102,6 +115,22 @@ class SignalService:
             else:
                 weighted_avg = sum(s for s, _ in scores_weights) / len(scores_weights)
             sentiment_history.append((ts, weighted_avg))
+
+        # Compute latest multi-dimensional averages
+        multi_dimensional = {'activity_level': 0.0, 'fear_index': 0.0, 'euphoria_index': 0.0}
+        if hourly_multidim:
+            latest_hours = sorted(hourly_multidim.keys())[-24:]  # Last 24 hours
+            all_activity = []
+            all_fear = []
+            all_euphoria = []
+            for h in latest_hours:
+                all_activity.extend(hourly_multidim[h]['activity'])
+                all_fear.extend(hourly_multidim[h]['fear'])
+                all_euphoria.extend(hourly_multidim[h]['euphoria'])
+            if all_activity:
+                multi_dimensional['activity_level'] = sum(all_activity) / len(all_activity)
+                multi_dimensional['fear_index'] = sum(all_fear) / len(all_fear)
+                multi_dimensional['euphoria_index'] = sum(all_euphoria) / len(all_euphoria)
 
         # Get price data (last 30 days)
         cursor = await db.conn.execute(
@@ -118,12 +147,12 @@ class SignalService:
         ]
 
         await db.close()
-        return sentiment_history, price_history
+        return sentiment_history, price_history, multi_dimensional
 
     async def check_signals(self) -> Optional[Signal]:
         """Check current conditions for signals."""
         try:
-            sentiment_history, price_history = await self._load_data()
+            sentiment_history, price_history, multi_dim = await self._load_data()
 
             if len(sentiment_history) < 10 or len(price_history) < 24:
                 logger.warning("Insufficient data for signal detection")
@@ -135,7 +164,7 @@ class SignalService:
                 lookback_days=30,
             )
 
-            signal = detector.detect(coin="BTC")
+            signal = detector.detect(coin="BTC", multi_dimensional=multi_dim)
 
             if signal:
                 # Check cooldown
@@ -160,7 +189,7 @@ class SignalService:
 
     async def get_market_summary(self) -> dict:
         """Get current market summary without requiring a signal."""
-        sentiment_history, price_history = await self._load_data()
+        sentiment_history, price_history, multi_dim = await self._load_data()
 
         if len(sentiment_history) < 5 or len(price_history) < 2:
             return {"error": "Insufficient data"}
@@ -171,7 +200,12 @@ class SignalService:
             lookback_days=30,
         )
 
-        return detector.get_market_summary(coin="BTC")
+        summary = detector.get_market_summary(coin="BTC")
+        # Add multi-dimensional signals to summary
+        summary['activity_level'] = multi_dim.get('activity_level', 0.0)
+        summary['fear_index'] = multi_dim.get('fear_index', 0.0)
+        summary['euphoria_index'] = multi_dim.get('euphoria_index', 0.0)
+        return summary
 
     async def run_once(self) -> Optional[Signal]:
         """Run signal detection once and broadcast if signal found."""
@@ -234,6 +268,11 @@ class SignalService:
             state = summary.get('sentiment_state', 'Unknown')
             divergence = summary.get('divergence_score', 0)
 
+            # Multi-dimensional signals
+            activity = summary.get('activity_level', 0)
+            fear = summary.get('fear_index', 0)
+            euphoria = summary.get('euphoria_index', 0)
+
             # Color coding for terminal
             price_color = "\033[32m" if change_24h >= 0 else "\033[31m"
             sent_color = "\033[32m" if sentiment >= 0 else "\033[31m"
@@ -242,6 +281,7 @@ class SignalService:
             print(f"  💰 BTC: ${price:,.0f}  {price_color}{change_24h:+.1f}% (24h){reset}  {change_7d:+.1f}% (7d)")
             print(f"  📊 Sentiment: {sent_color}{sentiment:+.3f}{reset}  Z-Score: {zscore:+.2f}σ  State: {state}")
             print(f"  📈 Divergence: {divergence:+.3f}")
+            print(f"  🔍 Activity: {activity:.2%}  Fear: {fear:.2%}  Euphoria: {euphoria:.2%}")
 
             # Check for signal
             signal = await self.check_signals()

@@ -3,6 +3,9 @@ Update Bayesian beliefs based on observed prediction performance.
 
 Computes accuracy for each source and updates the orchestrator's
 belief priors accordingly.
+
+Uses user_sentiment_scores.final_score which is filtered sentiment
+(excludes bot messages, scam warnings, and other noise).
 """
 
 import asyncio
@@ -33,14 +36,18 @@ async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG)
     """
     Compute prediction accuracy for each source.
 
+    Uses final_score from user_sentiment_scores which is filtered
+    (excludes bot messages, scam warnings, and other noise).
+
     Returns dict of source -> {accuracy, correct, total, correlation}
     """
-    # Get sentiment scores from recent period (where we have price data)
+    # Get sentiment scores from user_sentiment_scores (filtered scores)
     cursor = await db.conn.execute("""
-        SELECT timestamp, source, score
-        FROM sentiment_scores
-        WHERE timestamp >= '2026-01-01'
-        ORDER BY timestamp
+        SELECT uss.timestamp, up.source, uss.final_score
+        FROM user_sentiment_scores uss
+        JOIN user_profiles up ON uss.user_id = up.user_id
+        WHERE uss.timestamp >= '2026-01-01'
+        ORDER BY uss.timestamp
     """)
     sent_rows = await cursor.fetchall()
 

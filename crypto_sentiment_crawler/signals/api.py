@@ -24,13 +24,23 @@ app = FastAPI(
     - **CAPITULATION**: Extreme panic (often marks bottoms)
     - **EUPHORIA**: Extreme greed (often marks tops)
 
+    ## Multi-Dimensional Signals
+
+    Beyond simple sentiment scores, the API provides segment-level analysis:
+
+    - **activity_level**: Proportion of scam/warning content (high = active market)
+    - **fear_index**: Proportion of loss/panic mentions (high = contrarian BUY)
+    - **euphoria_index**: Proportion of moon/FOMO mentions (high = contrarian SELL)
+
+    These are derived from categorizing individual sentences/paragraphs in posts.
+
     ## Pricing
 
     - **Free**: 3 signals/week, BTC only
     - **Pro** ($9.99/mo): Unlimited signals, all coins
     - **Enterprise** ($49.99/mo): API access, priority support
     """,
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -52,7 +62,7 @@ subscription_manager = SubscriptionManager()
 
 # Response models
 class MarketSummary(BaseModel):
-    """Current market sentiment summary."""
+    """Current market sentiment summary with multi-dimensional signals."""
 
     coin: str
     timestamp: str
@@ -63,6 +73,10 @@ class MarketSummary(BaseModel):
     sentiment_zscore: float
     sentiment_state: str
     divergence_score: float
+    # Multi-dimensional signals from segment categorization
+    activity_level: float = 0.0  # Scam/warning activity (indicates market activity)
+    fear_index: float = 0.0  # Loss/panic mentions (contrarian BUY signal)
+    euphoria_index: float = 0.0  # Moon/FOMO mentions (contrarian SELL signal)
 
 
 class SignalResponse(BaseModel):

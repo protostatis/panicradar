@@ -57,6 +57,54 @@ CREATE INDEX IF NOT EXISTS idx_sentiment_scores_time ON sentiment_scores(timesta
 CREATE INDEX IF NOT EXISTS idx_price_data_time ON price_data(timestamp, coin);
 CREATE INDEX IF NOT EXISTS idx_on_chain_time ON on_chain_metrics(timestamp, coin);
 CREATE INDEX IF NOT EXISTS idx_sentiment_raw_time ON sentiment_raw(timestamp, source);
+
+-- User-centric sentiment scoring with multi-dimensional signals
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username VARCHAR(100) NOT NULL,
+    source VARCHAR(50) NOT NULL,
+    total_posts INTEGER DEFAULT 0,
+    avg_sentiment FLOAT,
+    sentiment_stddev FLOAT,
+    bullish_pct FLOAT,
+    bearish_pct FLOAT,
+    tendency VARCHAR(30),
+    accuracy_score FLOAT,
+    credibility_weight FLOAT DEFAULT 1.0,
+    first_seen DATETIME,
+    last_seen DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(username, source)
+);
+
+CREATE TABLE IF NOT EXISTS user_sentiment_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES user_profiles(user_id),
+    raw_id INTEGER REFERENCES sentiment_raw(id),
+    timestamp DATETIME,
+    coin TEXT,
+    title_score REAL,
+    body_score REAL,
+    segment_scores TEXT,
+    final_score REAL,
+    aggregation_method TEXT DEFAULT 'title_weighted',
+    pos_count INTEGER DEFAULT 0,
+    neg_count INTEGER DEFAULT 0,
+    neu_count INTEGER DEFAULT 0,
+    activity_level REAL DEFAULT 0,
+    fear_index REAL DEFAULT 0,
+    euphoria_index REAL DEFAULT 0,
+    segments_filtered INTEGER DEFAULT 0,
+    segments_scored INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_profiles_source ON user_profiles(source);
+CREATE INDEX IF NOT EXISTS idx_user_scores_user ON user_sentiment_scores(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_scores_timestamp ON user_sentiment_scores(timestamp);
+CREATE INDEX IF NOT EXISTS idx_user_scores_raw ON user_sentiment_scores(raw_id);
+CREATE INDEX IF NOT EXISTS idx_user_scores_final ON user_sentiment_scores(final_score);
 """
 
 MIGRATIONS = [
