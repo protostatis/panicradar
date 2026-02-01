@@ -356,7 +356,11 @@ class CrawlerOrchestrator:
                 "metadata": content.metadata or {},
             },
         )
-        await self.db.insert_sentiment_raw(raw)
+        raw_id = await self.db.insert_sentiment_raw(raw)
+
+        # Skip sentiment score if duplicate (raw_id=0)
+        if raw_id == 0:
+            return
 
         # Store sentiment score if coins detected
         for coin in content.coins_mentioned or ["MARKET"]:

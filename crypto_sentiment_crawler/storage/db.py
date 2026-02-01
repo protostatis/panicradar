@@ -1,5 +1,6 @@
 """Database operations using aiosqlite."""
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS sentiment_raw (
     source VARCHAR(50) NOT NULL,
     coin VARCHAR(10),
     raw_data JSON NOT NULL,
+    content_hash VARCHAR(64),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -57,6 +59,11 @@ CREATE INDEX IF NOT EXISTS idx_on_chain_time ON on_chain_metrics(timestamp, coin
 CREATE INDEX IF NOT EXISTS idx_sentiment_raw_time ON sentiment_raw(timestamp, source);
 """
 
+MIGRATIONS = [
+    "ALTER TABLE sentiment_raw ADD COLUMN content_hash VARCHAR(64);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_raw_hash ON sentiment_raw(content_hash);",
+]
+
 
 class Database:
     """Async database wrapper for SQLite."""
@@ -72,6 +79,15 @@ class Database:
         self._connection.row_factory = aiosqlite.Row
         await self._connection.executescript(SCHEMA)
         await self._connection.commit()
+
+        # Run migrations for existing databases
+        for migration in MIGRATIONS:
+            try:
+                await self._connection.execute(migration)
+                await self._connection.commit()
+            except Exception:
+                pass  # Column already exists
+
         logger.info(f"Connected to database: {self.db_path}")
 
     async def close(self) -> None:
@@ -88,18 +104,38 @@ class Database:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._connection
 
+    def _compute_content_hash(self, source: str, raw_data: dict) -> str:
+        """Compute a hash for deduplication based on source and URL/title."""
+        # Use URL if available, otherwise use source + title
+        url = raw_data.get("url", "")
+        title = raw_data.get("title", "")
+        unique_key = f"{source}:{url or title}"
+        return hashlib.sha256(unique_key.encode()).hexdigest()
+
     async def insert_sentiment_raw(self, data: SentimentRaw) -> int:
-        """Insert raw sentiment data."""
+        """Insert raw sentiment data, skipping duplicates."""
+        content_hash = self._compute_content_hash(data.source, data.raw_data)
+
+        # Check if already exists
+        cursor = await self.conn.execute(
+            "SELECT id FROM sentiment_raw WHERE content_hash = ?",
+            (content_hash,),
+        )
+        existing = await cursor.fetchone()
+        if existing:
+            return 0  # Skip duplicate
+
         cursor = await self.conn.execute(
             """
-            INSERT INTO sentiment_raw (timestamp, source, coin, raw_data)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO sentiment_raw (timestamp, source, coin, raw_data, content_hash)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 data.timestamp.isoformat(),
                 data.source,
                 data.coin,
                 json.dumps(data.raw_data),
+                content_hash,
             ),
         )
         await self.conn.commit()
