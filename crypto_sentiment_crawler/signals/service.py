@@ -1,0 +1,223 @@
+"""Signal detection service that integrates with the crawler database."""
+
+import asyncio
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+from ..storage.db import Database
+from .alerts import AlertManager, TelegramChannel, TelegramBot
+from .detector import ContrarianSignalDetector
+from .models import Signal
+
+logger = logging.getLogger(__name__)
+
+
+class SignalService:
+    """
+    Service that monitors sentiment and price data for contrarian signals.
+
+    Runs periodically, checks for signals, and broadcasts alerts.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "data/sentiment.db",
+        check_interval_minutes: int = 60,
+        telegram_token: Optional[str] = None,
+    ):
+        self.db_path = db_path
+        self.check_interval = check_interval_minutes * 60  # Convert to seconds
+        self.telegram_token = telegram_token
+
+        self.alert_manager = AlertManager()
+        self.last_signal: Optional[Signal] = None
+        self._running = False
+
+        # Signal cooldown to prevent spam (minimum 6 hours between signals)
+        self.signal_cooldown = timedelta(hours=6)
+        self._last_signal_time: Optional[datetime] = None
+
+    async def _load_data(self) -> tuple[list, list]:
+        """Load sentiment and price history from database."""
+        db = Database(Path(self.db_path))
+        await db.connect()
+
+        # Get sentiment data (last 30 days)
+        cutoff = datetime.now() - timedelta(days=30)
+        cursor = await db.conn.execute(
+            """
+            SELECT timestamp, score FROM sentiment_scores
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+            """,
+            (cutoff.isoformat(),),
+        )
+        sentiment_rows = await cursor.fetchall()
+
+        # Group by hour and average
+        hourly_sentiment = {}
+        for ts_str, score in sentiment_rows:
+            ts = datetime.fromisoformat(ts_str)
+            hour_key = ts.replace(minute=0, second=0, microsecond=0)
+            if hour_key not in hourly_sentiment:
+                hourly_sentiment[hour_key] = []
+            hourly_sentiment[hour_key].append(score)
+
+        sentiment_history = [
+            (ts, sum(scores) / len(scores))
+            for ts, scores in sorted(hourly_sentiment.items())
+        ]
+
+        # Get price data (last 30 days)
+        cursor = await db.conn.execute(
+            """
+            SELECT timestamp, price_usd FROM price_data
+            WHERE coin = 'BTC' AND timestamp >= ?
+            ORDER BY timestamp ASC
+            """,
+            (cutoff.isoformat(),),
+        )
+        price_rows = await cursor.fetchall()
+        price_history = [
+            (datetime.fromisoformat(ts_str), price) for ts_str, price in price_rows
+        ]
+
+        await db.close()
+        return sentiment_history, price_history
+
+    async def check_signals(self) -> Optional[Signal]:
+        """Check current conditions for signals."""
+        try:
+            sentiment_history, price_history = await self._load_data()
+
+            if len(sentiment_history) < 10 or len(price_history) < 24:
+                logger.warning("Insufficient data for signal detection")
+                return None
+
+            detector = ContrarianSignalDetector(
+                sentiment_history=sentiment_history,
+                price_history=price_history,
+                lookback_days=30,
+            )
+
+            signal = detector.detect(coin="BTC")
+
+            if signal:
+                # Check cooldown
+                if self._last_signal_time:
+                    time_since_last = datetime.now() - self._last_signal_time
+                    if time_since_last < self.signal_cooldown:
+                        logger.info(
+                            f"Signal detected but in cooldown "
+                            f"({time_since_last.total_seconds() / 3600:.1f}h since last)"
+                        )
+                        return None
+
+                self._last_signal_time = datetime.now()
+                self.last_signal = signal
+                logger.info(f"Signal detected: {signal.signal_type.value}")
+
+            return signal
+
+        except Exception as e:
+            logger.error(f"Error checking signals: {e}")
+            return None
+
+    async def get_market_summary(self) -> dict:
+        """Get current market summary without requiring a signal."""
+        sentiment_history, price_history = await self._load_data()
+
+        if len(sentiment_history) < 5 or len(price_history) < 2:
+            return {"error": "Insufficient data"}
+
+        detector = ContrarianSignalDetector(
+            sentiment_history=sentiment_history,
+            price_history=price_history,
+            lookback_days=30,
+        )
+
+        return detector.get_market_summary(coin="BTC")
+
+    async def run_once(self) -> Optional[Signal]:
+        """Run signal detection once and broadcast if signal found."""
+        signal = await self.check_signals()
+
+        if signal:
+            await self.alert_manager.broadcast_signal(signal)
+
+        return signal
+
+    async def run_forever(self) -> None:
+        """Run signal detection in a loop."""
+        self._running = True
+        logger.info(f"Starting signal service (check every {self.check_interval}s)")
+
+        # Set up Telegram if configured
+        if self.telegram_token:
+            self.alert_manager.add_channel(
+                "telegram", TelegramChannel(self.telegram_token)
+            )
+
+        while self._running:
+            try:
+                await self.run_once()
+            except Exception as e:
+                logger.error(f"Signal service error: {e}")
+
+            await asyncio.sleep(self.check_interval)
+
+    def stop(self) -> None:
+        """Stop the service."""
+        self._running = False
+
+
+async def run_signal_check(db_path: str = "data/sentiment.db") -> None:
+    """Run a single signal check and print results."""
+    service = SignalService(db_path=db_path)
+
+    print("\n" + "=" * 60)
+    print("CONTRARIAN SIGNAL CHECK")
+    print("=" * 60)
+
+    # Get market summary
+    summary = await service.get_market_summary()
+    if "error" in summary:
+        print(f"\nError: {summary['error']}")
+        return
+
+    print(f"\n📊 MARKET SUMMARY ({summary['coin']})")
+    print("-" * 40)
+    print(f"  Price: ${summary['current_price']:,.0f}")
+    print(f"  24h Change: {summary['price_change_24h']:+.1f}%")
+    print(f"  7d Change: {summary['price_change_7d']:+.1f}%")
+    print()
+    print(f"  Sentiment: {summary['sentiment_score']:+.3f}")
+    print(f"  Z-Score: {summary['sentiment_zscore']:+.2f}σ")
+    print(f"  State: {summary['sentiment_state']}")
+    print()
+    print(f"  Divergence: {summary['divergence_score']:+.3f}")
+    print()
+    print(f"  Baseline (30d):")
+    print(f"    Mean: {summary['baseline_stats']['sentiment_mean']:+.3f}")
+    print(f"    Std: {summary['baseline_stats']['sentiment_std']:.3f}")
+
+    # Check for signals
+    signal = await service.check_signals()
+
+    print("\n" + "-" * 40)
+    if signal:
+        print("\n🚨 SIGNAL DETECTED!")
+        print()
+        print(signal.format_alert())
+    else:
+        print("\n✅ No signal at this time.")
+        print("   Conditions are within normal ranges.")
+
+    print("\n" + "=" * 60)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_signal_check())

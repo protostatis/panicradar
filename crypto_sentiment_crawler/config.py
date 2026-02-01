@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Etherscan
     etherscan_api_key: str = ""
 
+    # Twitter/X API (optional - for reliable access)
+    twitter_bearer_token: str = ""
+
     # Database
     database_path: str = "data/sentiment.db"
 

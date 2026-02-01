@@ -17,36 +17,78 @@ from .storage.db import Database
 from .storage.models import SentimentRaw, SentimentScore
 
 
-# Subreddits to backfill with multiple time periods for more data
-BACKFILL_SOURCES = [
-    # High-volume subreddits - multiple time periods
-    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "week"},
-    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "month"},
-    {"sub": "bitcoin", "pages": 4, "sort": "top", "time": "year"},
-    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "week"},
-    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "month"},
-    {"sub": "cryptocurrency", "pages": 4, "sort": "top", "time": "year"},
-    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "week"},
-    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "month"},
-    {"sub": "ethereum", "pages": 3, "sort": "top", "time": "year"},
-    {"sub": "solana", "pages": 3, "sort": "top", "time": "week"},
-    {"sub": "solana", "pages": 3, "sort": "top", "time": "month"},
-    {"sub": "ethtrader", "pages": 3, "sort": "top", "time": "month"},
-    {"sub": "ethtrader", "pages": 3, "sort": "top", "time": "year"},
-    {"sub": "cryptomarkets", "pages": 3, "sort": "top", "time": "month"},
-    {"sub": "bitcoinbeginners", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "defi", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "altcoin", "pages": 2, "sort": "top", "time": "month"},
-    # Additional subreddits
-    {"sub": "binance", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "coinbase", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "cardano", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "dogecoin", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "litecoin", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "ripple", "pages": 2, "sort": "top", "time": "month"},
-    {"sub": "bitcoinmarkets", "pages": 3, "sort": "top", "time": "month"},
-    {"sub": "satoshistreetbets", "pages": 2, "sort": "top", "time": "month"},
+# Subreddits to backfill - comprehensive historical data
+# Each subreddit is crawled across multiple time periods for maximum coverage
+SUBREDDITS = [
+    # Tier 1: Major high-volume subs (10 pages each)
+    "bitcoin",
+    "cryptocurrency",
+    "ethereum",
+    # Tier 2: Active trading/discussion subs (6 pages each)
+    "solana",
+    "ethtrader",
+    "CryptoMarkets",
+    "BitcoinMarkets",
+    "defi",
+    # Tier 3: Coin-specific subs (4 pages each)
+    "cardano",
+    "ripple",
+    "litecoin",
+    "dogecoin",
+    "binance",
+    "coinbase",
+    "altcoin",
+    "bitcoinbeginners",
+    # Tier 4: Smaller subs (2 pages each)
+    "CryptoCurrency",
+    "CryptoTechnology",
+    "CryptoMoonShots",
+    "SatoshiStreetBets",
+    "Crypto_General",
+    "CryptoCurrencyMeta",
+    "CryptoTax",
 ]
+
+# Time periods to crawl (most recent first for relevance)
+TIME_PERIODS = ["week", "month", "year", "all"]
+
+# Pages per tier
+TIER_PAGES = {
+    1: 10,  # Major subs
+    2: 6,   # Active subs
+    3: 4,   # Coin-specific
+    4: 2,   # Smaller subs
+}
+
+def get_tier(sub: str) -> int:
+    """Get tier for a subreddit."""
+    tier1 = ["bitcoin", "cryptocurrency", "ethereum"]
+    tier2 = ["solana", "ethtrader", "CryptoMarkets", "BitcoinMarkets", "defi"]
+    tier3 = ["cardano", "ripple", "litecoin", "dogecoin", "binance", "coinbase", "altcoin", "bitcoinbeginners"]
+
+    if sub.lower() in [s.lower() for s in tier1]:
+        return 1
+    elif sub.lower() in [s.lower() for s in tier2]:
+        return 2
+    elif sub.lower() in [s.lower() for s in tier3]:
+        return 3
+    return 4
+
+# Generate comprehensive backfill sources
+BACKFILL_SOURCES = []
+for sub in SUBREDDITS:
+    tier = get_tier(sub)
+    pages = TIER_PAGES[tier]
+    for time_period in TIME_PERIODS:
+        # More pages for recent data, fewer for older
+        time_multiplier = {"week": 1.0, "month": 0.8, "year": 0.6, "all": 0.4}
+        adjusted_pages = max(2, int(pages * time_multiplier[time_period]))
+        BACKFILL_SOURCES.append({
+            "sub": sub,
+            "pages": adjusted_pages,
+            "sort": "top",
+            "time": time_period,
+        })
 
 # Rate limit settings
 RATE_LIMIT_DELAY = 2.0  # Seconds between requests

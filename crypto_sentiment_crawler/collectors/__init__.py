@@ -5,6 +5,7 @@ from .fear_greed import FearGreedCollector
 from .onchain import OnChainCollector
 from .price import PriceCollector
 from .reddit import RedditCollector
+from .twitter import TwitterCollector
 
 __all__ = [
     "BaseCollector",
@@ -12,4 +13,5 @@ __all__ = [
     "OnChainCollector",
     "PriceCollector",
     "RedditCollector",
+    "TwitterCollector",
 ]
