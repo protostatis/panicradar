@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..storage.db import Database
+from ..analysis.source_weights import load_weights_from_db_sync
 from .alerts import AlertManager, TelegramChannel, TelegramBot
 from .detector import ContrarianSignalDetector
 from .models import Signal
@@ -39,16 +40,35 @@ class SignalService:
         self.signal_cooldown = timedelta(hours=6)
         self._last_signal_time: Optional[datetime] = None
 
+        # Load source weights for weighted aggregation
+        self._load_source_weights()
+
+    def _load_source_weights(self):
+        """Load source weights from database."""
+        try:
+            weight_data = load_weights_from_db_sync(self.db_path)
+            self.source_weights = weight_data.get("weights", {})
+            self.contrarian_sources = weight_data.get("contrarian_sources", set())
+            if self.source_weights:
+                logger.info(
+                    f"Loaded {len(self.source_weights)} source weights "
+                    f"({len(self.contrarian_sources)} contrarian)"
+                )
+        except Exception as e:
+            logger.warning(f"Could not load source weights: {e}")
+            self.source_weights = {}
+            self.contrarian_sources = set()
+
     async def _load_data(self) -> tuple[list, list]:
-        """Load sentiment and price history from database."""
+        """Load sentiment and price history from database with weighted aggregation."""
         db = Database(Path(self.db_path))
         await db.connect()
 
-        # Get sentiment data (last 30 days)
+        # Get sentiment data with source (last 30 days)
         cutoff = datetime.now() - timedelta(days=30)
         cursor = await db.conn.execute(
             """
-            SELECT timestamp, score FROM sentiment_scores
+            SELECT timestamp, source, score FROM sentiment_scores
             WHERE timestamp >= ?
             ORDER BY timestamp ASC
             """,
@@ -56,19 +76,32 @@ class SignalService:
         )
         sentiment_rows = await cursor.fetchall()
 
-        # Group by hour and average
+        # Group by hour with weighted aggregation
         hourly_sentiment = {}
-        for ts_str, score in sentiment_rows:
+        for ts_str, source, score in sentiment_rows:
             ts = datetime.fromisoformat(ts_str)
             hour_key = ts.replace(minute=0, second=0, microsecond=0)
             if hour_key not in hourly_sentiment:
                 hourly_sentiment[hour_key] = []
-            hourly_sentiment[hour_key].append(score)
 
-        sentiment_history = [
-            (ts, sum(scores) / len(scores))
-            for ts, scores in sorted(hourly_sentiment.items())
-        ]
+            # Get weight for source (default 0.01 for unknown)
+            weight = self.source_weights.get(source, 0.01)
+
+            # Invert sentiment for contrarian sources
+            if source in self.contrarian_sources:
+                score = -score
+
+            hourly_sentiment[hour_key].append((score, weight))
+
+        # Compute weighted average per hour
+        sentiment_history = []
+        for ts, scores_weights in sorted(hourly_sentiment.items()):
+            total_weight = sum(w for _, w in scores_weights)
+            if total_weight > 0:
+                weighted_avg = sum(s * w for s, w in scores_weights) / total_weight
+            else:
+                weighted_avg = sum(s for s, _ in scores_weights) / len(scores_weights)
+            sentiment_history.append((ts, weighted_avg))
 
         # Get price data (last 30 days)
         cursor = await db.conn.execute(
