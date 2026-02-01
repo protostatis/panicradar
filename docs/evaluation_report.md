@@ -1,97 +1,93 @@
-
 # Multi-Dimensional Sentiment Evaluation Report
 
-**Generated:** 2026-02-01 13:12
-**Data Period:** 2026-01-01 to 2026-02-01
-**Records Analyzed:** 622 hourly observations
+**Generated:** 2026-02-01
+**Short-term Data:** 2026-01-01 to 2026-02-01 (622 hourly observations)
+**Historical Validation:** 2018-06 to 2026-01 (699 daily observations)
 
 ## Executive Summary
 
-The multi-dimensional sentiment scoring system shows **statistically significant predictive power**
-for BTC price movements, with the **Regime-Adaptive strategy** delivering exceptional results.
+Initial backtesting on 1-month data showed promising results for regime-adaptive strategies.
+**However, historical validation on 8 years of data shows these results do not hold.**
 
-| Strategy | Return | vs Buy&Hold | Sharpe Ratio |
-|----------|--------|-------------|--------------|
-| Buy & Hold | -12.23% | -- | -3.96 |
-| Activity Contrarian | +7.16% | +19.39% | 5.15 |
-| **Regime-Adaptive** | **+14.93%** | **+27.16%** | **10.80** |
-| Combined Score | +2.22% | +14.45% | 1.86 |
+| Strategy | 1-Month Return | Historical Return (8yr) | Verdict |
+|----------|----------------|-------------------------|---------|
+| Buy & Hold | -12.23% | +390.2% | **WINNER** |
+| Simple Contrarian | +7.16% | -151.9% | FAILS |
+| Regime-Adaptive | +14.93% | -137.9% | FAILS |
 
-## Key Findings
+## Why Initial Results Were Misleading
 
-### 1. Activity Level is a Strong Contrarian Indicator
+1. **Small sample size**: 622 hourly ≈ 26 daily observations
+2. **Bear market bias**: January 2026 was -12%, contrarian works in downtrends
+3. **Overfitting**: Strategies tuned to recent conditions
+4. **No out-of-sample validation**: All results were in-sample
 
-- **Correlation:** r = -0.24 (p < 0.001) in low volatility regime
-- **Signal:** High activity (>5%) predicts negative next-hour returns
-- **Win Rate:** 54% on short signals
-- **Mechanism:** High activity often indicates retail FOMO/panic
+## Historical Validation Results (2018-2026)
 
-### 2. Regime Context Matters
+### Correlation by Regime (Fear & Greed Index)
 
-**Low Volatility Regime:**
-- Activity level: r = -0.238, p < 0.001 (strong contrarian)
-- Mean reversion dominates
+| Regime | Correlation | P-value | N |
+|--------|-------------|---------|---|
+| Low Volatility | +0.096 | 0.073 | 350 |
+| High Volatility | +0.055 | 0.302 | 349 |
 
-**High Volatility Regime:**  
-- Activity level: r = +0.119, p = 0.038 (momentum)
-- Trend following works better
+**Fisher Z-test for difference: p = 0.59 (NOT significant)**
 
-### 3. Fear and Euphoria Indices
+The correlations are:
+- Both positive (momentum, not contrarian)
+- Not significantly different between regimes
+- Weak overall (r < 0.1)
 
-| Metric | Non-zero % | Predictive Power | Direction |
-|--------|------------|------------------|-----------|
-| activity_level | 13.9% | Strong | Contrarian |
-| euphoria_index | 3.1% | Weak | Mixed |
-| fear_index | 3.4% | Weak | Contrarian |
-| final_score | 100% | Minimal | N/A |
+### Year-by-Year Performance
 
-### 4. Multi-Factor Model
+| Year | Market | B&H | Contrarian | Regime-Adaptive |
+|------|--------|-----|------------|-----------------|
+| 2018 | Bear | -55.6% | -24.5% ★ | -29.9% |
+| 2019 | Recovery | +87.8% ★ | -10.5% | -28.7% |
+| 2020 | Bull | +162.8% ★ | -70.6% | -91.2% |
+| 2021 | Bull | +78.4% ★ | -26.3% | -13.0% |
+| 2022 | Bear | -82.9% | +7.6% | +33.7% ★ |
+| 2023 | Recovery | +105.7% ★ | -18.1% | -18.1% |
+| 2024 | Bull | +92.9% ★ | -42.5% | -23.6% |
+| 2025 | Mixed | +1.9% | +35.0% ★ | +35.0% ★ |
 
-```
-1-Hour Prediction Coefficients (standardized):
-  activity_level:  -0.0311 (bearish signal)
-  fear_index:      -0.0235 (bearish when present)
-  euphoria_index:  +0.0124 (bullish momentum)
-  final_score:     -0.0037 (minimal impact)
+**Pattern:** Contrarian strategies only work in bear markets (2018, 2022, 2025).
+In bull markets (majority of history), they lose significantly.
 
-4-Hour Prediction Coefficients:
-  activity_level:  -0.0799 (stronger effect)
-  euphoria_index:  +0.0433 (stronger momentum)
-```
+## Honest Assessment
 
-## Strategy Details
+### What the Multi-Dimensional Scores Provide
 
-### Regime-Adaptive Strategy
+1. **NOT standalone trading signals** - underperform buy & hold
+2. **Possibly useful for:**
+   - Risk management (increase hedges during euphoria)
+   - Volatility prediction (extreme sentiment → higher vol)
+   - Entry timing within established trends
+   - Filtering/confirming other signals
 
-```
-IF volatility <= median:
-    IF activity_level > 80th percentile:
-        SIGNAL = SHORT (contrarian)
-ELSE (high volatility):
-    IF activity_level > 80th percentile:
-        SIGNAL = LONG (momentum)
-```
+### What We Learned
 
-**Performance:**
-- Total Return: +14.93%
-- Sharpe Ratio: 10.80 (annualized)
-- Win Rate: ~55%
-- Max Drawdown: ~3%
+1. **Sentiment follows price** - momentum, not contrarian
+2. **Regime differences are not statistically significant**
+3. **Short-term backtests are dangerous** - easy to overfit
+4. **Historical validation is essential** - 8 years reveals truth
+
+## Data Quality
+
+| Dataset | Records | Date Range |
+|---------|---------|------------|
+| User Sentiment Scores | 3,994 | 2026-01 |
+| Price Data | 1,874 | 2026-01 |
+| Fear & Greed (historical) | 2,919 | 2018-2026 |
+| On-Chain Metrics | 42 | Just started |
 
 ## Recommendations
 
-1. **Implement Regime Detection** in signal service
-2. **Weight activity_level** as primary signal
-3. **Collect more data** for fear_index validation
-4. **Add on-chain metrics** once sufficient history collected
-5. **Backtest on longer periods** when available
-
-## Data Quality Notes
-
-- On-chain metrics: Just started collection (42 records)
-- Sentiment coverage: 3,994 scored posts
-- Price data: 1,874 hourly observations
-- User profiles: Tracking individual posters for bias detection
+1. **Do not deploy regime-adaptive strategy** - fails on historical data
+2. **Continue collecting multi-dimensional data** - may find other uses
+3. **Focus on risk management applications** - not directional trading
+4. **Combine with trend-following signals** - sentiment as filter, not driver
+5. **Collect on-chain data longer** - may provide orthogonal signal
 
 ---
-*Report generated by crypto_sentiment_crawler evaluation module*
+*This report reflects an honest assessment after historical validation revealed initial findings were likely overfitting.*
