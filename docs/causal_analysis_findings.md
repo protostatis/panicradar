@@ -317,5 +317,51 @@ All figures saved in `docs/figures/` and `data/`:
 
 ---
 
+## 11. Implementation Impact
+
+These causal findings directly shaped the system implementation:
+
+### What Changed Based on This Analysis
+
+| Finding | Implementation Change |
+|---------|----------------------|
+| Price leads sentiment by ~15h | Pivoted from momentum to **contrarian signals** |
+| Fear & Greed is a collider | Removed F&G from confounder adjustment |
+| Improved sentiment scoring | Enabled **FinBERT transformer** by default |
+| Source accuracy varies widely | Added **dynamic source weights** from Bayesian beliefs |
+| Contrarian sources exist | Sources with <45% accuracy have **sentiment inverted** |
+
+### New Components Built
+
+1. **`analysis/belief_updater.py`**: Updates Bayesian beliefs based on prediction accuracy
+2. **`analysis/source_weights.py`**: Computes dynamic weights, identifies contrarian sources
+3. **`signals/detector.py`**: Detects contrarian signals (BULLISH_DIVERGENCE, BEARISH_DIVERGENCE, CAPITULATION, EUPHORIA)
+4. **`signals/service.py`**: Uses weighted aggregation with contrarian inversion
+5. **`inference.py`**: Loads dynamic weights from database for price prediction
+
+### Key Metrics (as of 2026-02-01)
+
+- **32 sources** with learned weights
+- **15 contrarian sources** (sentiment inverted)
+- **Source accuracy range**: 30% to 60%
+- **Auto-update frequency**: Every 30 minutes
+
+### Contrarian Signal Logic
+
+Based on the finding that extreme sentiment often marks reversals:
+
+```python
+# BULLISH_DIVERGENCE: Extreme fear + stable/rising price
+if sentiment < -0.3 and zscore < -1.5 and price_change_24h > -2.0:
+    signal = BULLISH_DIVERGENCE  # Crowd scared but price not falling
+
+# BEARISH_DIVERGENCE: Extreme greed + stable/falling price
+if sentiment > 0.5 and zscore > 1.5 and price_change_24h < 2.0:
+    signal = BEARISH_DIVERGENCE  # Crowd euphoric but price not rising
+```
+
+---
+
 *Analysis updated: 2026-01-31 with improved sentiment scoring.*
+*Implementation completed: 2026-02-01 with dynamic weights and contrarian signals.*
 *Original analysis: 2026-01-31.*

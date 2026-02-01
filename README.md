@@ -4,12 +4,18 @@ An intelligent web crawler that uses Bayesian inference and causal discovery to 
 
 ## Overview
 
-This project implements a **Bayesian-guided crawler** that learns which sources provide the most predictive sentiment signals for cryptocurrency prices. Instead of crawling all sources equally, it:
+This project implements a **Bayesian-guided crawler** that learns which sources provide the most predictive sentiment signals for cryptocurrency prices. Key features:
 
-1. Maintains probabilistic beliefs about each source's informativeness
-2. Uses Thompson Sampling to balance exploration vs exploitation
-3. Updates beliefs based on observed prediction accuracy and content novelty
-4. Runs weekly causal discovery to identify leading indicators
+1. **Bayesian Beliefs**: Maintains probabilistic beliefs about each source's informativeness using Beta distributions
+2. **Thompson Sampling**: Balances exploration vs exploitation when selecting sources to crawl
+3. **Dynamic Source Weights**: Learns accuracy-based weights stored in database, used for weighted sentiment aggregation
+4. **Contrarian Signals**: Detects sentiment-price divergences that historically precede market reversals
+5. **Transformer Sentiment**: Uses FinBERT (ProsusAI/finbert) for advanced sentiment analysis
+6. **Real-time Alerts**: Telegram and Ntfy.sh push notifications for detected signals
+
+## Key Discovery
+
+**Causal analysis revealed that price leads sentiment by ~15 hours** - people react to price moves, not the reverse. This led to a pivot from momentum-based predictions to **contrarian signal detection**.
 
 ## Architecture
 
@@ -17,9 +23,9 @@ This project implements a **Bayesian-guided crawler** that learns which sources 
 ┌─────────────────────────────────────────────────────────────────┐
 │                    BAYESIAN DECISION LAYER                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │   Source    │  │   Thompson  │  │   Utility   │             │
-│  │   Beliefs   │──│   Sampling  │──│   Scoring   │             │
-│  │  Beta(α,β)  │  │   Bandit    │  │  0.7A+0.3N  │             │
+│  │   Source    │  │   Thompson  │  │   Dynamic   │             │
+│  │   Beliefs   │──│   Sampling  │──│   Weights   │             │
+│  │  Beta(α,β)  │  │   Bandit    │  │ (learned)   │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -29,17 +35,18 @@ This project implements a **Bayesian-guided crawler** that learns which sources 
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │   Fetcher   │  │   Parser    │  │  Sentiment  │             │
 │  │   (httpx)   │──│(BeautifulSoup──│   Analysis  │             │
-│  │ rate-limit  │  │  +selectors)│  │   (VADER)   │             │
+│  │ rate-limit  │  │  +selectors)│  │(VADER+BERT) │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CAUSAL DISCOVERY (Weekly)                    │
-│  ┌─────────────┐  ┌─────────────┐                              │
-│  │   Granger   │  │   Update    │                              │
-│  │  Causality  │──│   Priors    │                              │
-│  └─────────────┘  └─────────────┘                              │
+│                    SIGNAL DETECTION LAYER                       │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │ Contrarian  │  │   Weighted  │  │   Alerts    │             │
+│  │  Detector   │──│ Aggregation │──│(Telegram/   │             │
+│  │             │  │ (+inversion)│  │    Ntfy)    │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -59,20 +66,19 @@ cp .env.example .env
 ## Quick Start
 
 ```bash
-# Run background daemon (recommended for continuous collection)
-uv run crawler
+# Start all services
+uv run python -m crypto_sentiment_crawler.taskmanager start crawler
+uv run python -m crypto_sentiment_crawler.taskmanager start signals
+uv run python -m crypto_sentiment_crawler.taskmanager start belief_auto
 
-# Run with custom intervals
-uv run crawler background --crawl-interval 60 --price-interval 300
+# Check status
+uv run python -m crypto_sentiment_crawler.taskmanager status
 
-# Run fixed iterations then exit
-uv run crawler bayesian -n 20 -d 30
+# Run inference (price prediction)
+uv run python -m crypto_sentiment_crawler.inference
 
-# View current stats
-uv run crawler stats
-
-# Run demo
-uv run crawler demo
+# Run single signal check
+uv run signals check
 ```
 
 > **See [pipeline.md](pipeline.md) for detailed documentation on the background pipeline, scheduled jobs, and deployment options.**
@@ -81,14 +87,15 @@ uv run crawler demo
 
 The crawler collects sentiment from multiple sources:
 
-| Source | Type | Update Frequency | Auth Required |
-|--------|------|------------------|---------------|
-| Reddit | Forum | Every 6 hours | No |
-| 4chan /biz/ | Forum | Every 2 hours | No |
-| Stocktwits | Social | Every 4 hours | No |
-| Bitcointalk | Forum | Every 12 hours | No |
-| Twitter/X | Social | Every 4 hours | Yes (API key) |
-| CryptoPanic | News | Every 4 hours | Optional |
+| Source | Type | Status | Notes |
+|--------|------|--------|-------|
+| Reddit (20+ subreddits) | Forum | ✅ Complete | High volume |
+| 4chan /biz/ | Forum | ✅ Complete | High contrarian value |
+| Stocktwits | Social | ✅ Complete | Trader sentiment |
+| Bitcointalk | Forum | ✅ Complete | OG community |
+| Twitter/X | Social | ✅ Complete | Requires API key |
+| CoinDesk/CoinTelegraph | News | ✅ Basic | Headlines |
+| Fear & Greed Index | Composite | ✅ Complete | Market baseline |
 
 ## Task Manager
 
@@ -96,107 +103,76 @@ Monitor and control all crawler tasks:
 
 ```bash
 # List all tasks and their status
-uv run tasks list
+uv run python -m crypto_sentiment_crawler.taskmanager status
 
 # Start a specific task
-uv run tasks start <task_name>
+uv run python -m crypto_sentiment_crawler.taskmanager start <task_name>
 
 # Stop a running task
-uv run tasks stop <task_name>
+uv run python -m crypto_sentiment_crawler.taskmanager stop <task_name>
 
 # View task logs
-uv run tasks logs <task_name>
-
-# Auto-discover running tasks
-uv run tasks discover
+uv run python -m crypto_sentiment_crawler.taskmanager logs <task_name>
 ```
 
 ### Available Tasks
 
 | Task | Command | Description |
 |------|---------|-------------|
-| `crawler` | `uv run tasks start crawler` | Live Reddit sentiment crawler |
-| `collector` | `uv run tasks start collector` | Scheduled multi-source collector |
-| `backfill` | `uv run tasks start backfill` | Historical Reddit backfill |
-| `biz_backfill` | `uv run tasks start biz_backfill` | 4chan /biz/ backfill |
-| `stocktwits_backfill` | `uv run tasks start stocktwits_backfill` | Stocktwits backfill |
-| `bitcointalk_backfill` | `uv run tasks start bitcointalk_backfill` | Bitcointalk forum backfill |
-| `twitter_backfill` | `uv run tasks start twitter_backfill` | Twitter/X backfill (needs API key) |
-| `price_backfill` | `uv run tasks start price_backfill` | Historical price data |
-| `signals` | `uv run tasks start signals` | Contrarian signal detector |
-| `backtest` | `uv run tasks start backtest` | Run backtest analysis |
+| `crawler` | `start crawler` | Live Reddit sentiment crawler |
+| `signals` | `start signals` | Contrarian signal detector |
+| `belief_auto` | `start belief_auto` | Auto-update beliefs every 30 min |
+| `backfill` | `start backfill` | Historical Reddit backfill |
+| `biz_backfill` | `start biz_backfill` | 4chan /biz/ backfill |
+| `stocktwits_backfill` | `start stocktwits_backfill` | Stocktwits backfill |
+| `bitcointalk_backfill` | `start bitcointalk_backfill` | Bitcointalk forum backfill |
+| `twitter_backfill` | `start twitter_backfill` | Twitter/X backfill (needs API key) |
+| `price_backfill` | `start price_backfill` | Historical price data |
+| `collector` | `start collector` | Scheduled multi-source collector |
+| `backtest` | `start backtest` | Run backtest analysis |
 
-## Backtest & Analysis
+## Signal Detection
 
-Run sentiment vs price backtests:
+The system detects 4 types of contrarian signals:
 
-```bash
-# Run comprehensive backtest analysis
-uv run python -m crypto_sentiment_crawler.analysis.backtest_analysis
+| Signal | Condition | Interpretation |
+|--------|-----------|----------------|
+| **BULLISH_DIVERGENCE** | Extreme fear + price stable/rising | Potential bottom |
+| **BEARISH_DIVERGENCE** | Extreme greed + price stable/falling | Potential top |
+| **CAPITULATION** | Extreme negative sentiment spike | Panic selling, often marks bottoms |
+| **EUPHORIA** | Extreme positive sentiment spike | Irrational exuberance, often marks tops |
 
-# Run contrarian signal backtest
-uv run python -m crypto_sentiment_crawler.signals.backtest
+### Alerts
 
-# View backtest results log
-cat data/backtest_results.log
-```
-
-### Analysis Output
-
-The backtest analyzes:
-- Correlation at different time lags (1h to 48h)
-- Performance by data source
-- Extreme sentiment events
-- Momentum vs contrarian strategies
-
-## Scheduled Collector
-
-For continuous data collection, use the scheduled collector:
+Configure alerts in `.env`:
 
 ```bash
-# Start scheduled collector (runs all backfills on schedule)
-uv run tasks start collector
+# Telegram
+TELEGRAM_BOT_TOKEN=your_token_here
 
-# Or run directly
-uv run python -m crypto_sentiment_crawler.scheduled_collector
+# Ntfy.sh (free, no account needed)
+NTFY_TOPIC=your_topic_here
 ```
 
-### Collection Schedule
-
-| Job | Interval | Description |
-|-----|----------|-------------|
-| 4chan /biz/ | Every 2 hours | Threads expire quickly |
-| Stocktwits | Every 4 hours | Social sentiment |
-| Reddit | Every 6 hours | Forum discussions |
-| Bitcointalk | Every 12 hours | Classic crypto forum |
-| Backtest | Every 24 hours | Daily analysis |
-| Status Log | Every 1 hour | Progress tracking |
-
-## Monitoring
-
+Test Ntfy notifications:
 ```bash
-# View collector logs
-tail -f logs/collector_*.log
-
-# Check database stats
-sqlite3 data/sentiment.db "SELECT source, COUNT(*) FROM sentiment_raw GROUP BY source ORDER BY 2 DESC;"
-
-# View running processes
-ps aux | grep -E "collector|backfill" | grep python
+uv run signals test-ntfy your_topic_here
 ```
 
-## Twitter/X Setup (Optional)
+## Dynamic Source Weights
 
-To enable Twitter data collection:
+The system learns which sources are most predictive:
 
-1. Create a developer account at https://developer.twitter.com/
-2. Create a project and get a Bearer Token
-3. Add to `.env`:
-   ```bash
-   TWITTER_BEARER_TOKEN=your_token_here
-   ```
+1. **Accuracy Tracking**: Measures if sentiment correctly predicted price direction
+2. **Bayesian Updates**: Updates Beta(α, β) beliefs based on accuracy
+3. **Contrarian Detection**: Sources with <45% accuracy are marked as contrarian
+4. **Weight Computation**: Weight = distance_from_50% × confidence
+5. **Signal Inversion**: Contrarian source sentiment is inverted in aggregation
 
-The free tier provides 10,000 tweets/month.
+View current weights:
+```bash
+sqlite3 data/sentiment.db "SELECT source, weight, accuracy, is_contrarian FROM source_weights ORDER BY weight DESC"
+```
 
 ## Core Concepts
 
@@ -217,12 +193,13 @@ Each source has a Beta(α, β) distribution representing our belief about its in
 
 ```python
 class SourceBelief:
-    alpha: float  # Pseudo-count of informative crawls
-    beta: float   # Pseudo-count of non-informative crawls
+    alpha: float   # Informative crawls
+    beta: float    # Non-informative crawls
+    accuracy: float
+    is_contrarian: bool
 
     @property
     def mean(self) -> float:
-        """Expected probability of being informative."""
         return self.alpha / (self.alpha + self.beta)
 ```
 
@@ -232,38 +209,42 @@ Source selection uses Thompson Sampling for explore-exploit balance:
 
 ```python
 def select_source(beliefs: dict[str, SourceBelief]) -> str:
-    # Sample from each source's posterior
     samples = {
         source: np.random.beta(b.alpha, b.beta)
         for source, b in beliefs.items()
     }
-    # Select highest sample
     return max(samples, key=samples.get)
 ```
 
-### 4. Cold Start
+### 4. Contrarian Signal Detection
 
-New sources are initialized using price autocorrelation:
-
-```
-baseline = 1 - R²(price ~ lagged_price)
-```
-
-- High autocorrelation → low baseline (price is predictable)
-- Low autocorrelation → high baseline (any signal helps)
-
-### 5. Causal Discovery
-
-Weekly Granger causality tests identify which sources *cause* price moves:
+Based on the key finding that **price leads sentiment by ~15 hours**:
 
 ```python
-# Test: does sentiment Granger-cause price?
-result = granger_causality_test(sentiment, price, max_lag=24)
-
-if result.pvalue < 0.05:
-    # This source has causal power
-    belief.alpha += 2  # Boost prior
+# Extreme sentiment at stable prices = potential reversal
+if sentiment < -0.3 and zscore < -1.5 and price_stable:
+    signal = BULLISH_DIVERGENCE  # Crowd scared but price not falling
 ```
+
+## Sentiment Analysis
+
+Two sentiment engines available:
+
+### VADER + Crypto Lexicon (Default for speed)
+
+Extended lexicon with 80+ crypto-specific terms:
+- Bullish: "moon", "hodl", "diamond hands", "pump", etc.
+- Bearish: "rekt", "rugpull", "scam", "dump", etc.
+- Pattern-based corrections for complaints and questions
+
+### FinBERT Transformer (Default for accuracy)
+
+```python
+# Enable transformer (default)
+sentiment_analyzer = CryptoSentimentAnalyzer(use_transformer=True)
+```
+
+Uses ProsusAI/finbert with Apple Silicon MPS GPU support.
 
 ## Project Structure
 
@@ -272,250 +253,149 @@ crypto_sentiment_crawler/
 ├── pyproject.toml           # Dependencies (uv)
 ├── README.md                # This file
 ├── roadmap.md               # Development roadmap
-├── .env.example             # Environment template
+├── pipeline.md              # Pipeline documentation
 │
 ├── data/                    # Data storage
 │   ├── sentiment.db         # SQLite database
+│   ├── orchestrator_state.json  # Persisted beliefs
 │   └── backtest_results.log # Backtest history
 │
 ├── logs/                    # Log files
-│   ├── collector_*.log      # Scheduled collector logs
-│   └── backfill_*.log       # Backfill logs
+│
+├── docs/                    # Documentation
+│   ├── causal_analysis_findings.md
+│   ├── signal_service.md
+│   └── ...
 │
 └── crypto_sentiment_crawler/
-    ├── __init__.py
-    ├── config.py            # Settings from env vars
-    ├── logging_config.py    # Logging setup
+    ├── config.py            # Settings
     ├── main.py              # Entry point
     ├── taskmanager.py       # Task manager CLI
-    ├── scheduled_collector.py # Multi-source scheduler
-    │
-    ├── backfill.py          # Reddit historical backfill
-    ├── biz_backfill.py      # 4chan /biz/ backfill
-    ├── stocktwits_backfill.py # Stocktwits backfill
-    ├── bitcointalk_backfill.py # Bitcointalk backfill
-    ├── twitter_backfill.py  # Twitter/X backfill
-    │
-    ├── analysis/            # Backtest & analysis
-    │   └── backtest_analysis.py # Correlation analysis
-    │
-    ├── signals/             # Signal detection
-    │   ├── detector.py      # Contrarian signal detector
-    │   ├── backtest.py      # Signal backtester
-    │   └── models.py        # Signal models
+    ├── orchestrator.py      # Integration layer
+    ├── inference.py         # Price prediction
     │
     ├── bayesian/            # Decision layer
     │   ├── beliefs.py       # SourceBelief model
     │   ├── bandit.py        # Thompson Sampling
-    │   ├── utility.py       # Accuracy + novelty scoring
-    │   └── cold_start.py    # Price autocorrelation baseline
+    │   ├── utility.py       # Accuracy + novelty
+    │   └── cold_start.py    # Price autocorrelation
     │
     ├── causal/              # Causal discovery
-    │   └── granger.py       # Granger causality tests
+    │   └── granger.py       # Granger causality
+    │
+    ├── analysis/            # Analysis layer
+    │   ├── belief_updater.py      # Update beliefs
+    │   ├── belief_auto_updater.py # Continuous updates
+    │   ├── source_weights.py      # Dynamic weights
+    │   └── backtest_analysis.py   # Backtesting
+    │
+    ├── signals/             # Signal detection
+    │   ├── detector.py      # Contrarian signals
+    │   ├── service.py       # Signal service
+    │   ├── alerts.py        # Telegram/Ntfy
+    │   ├── api.py           # REST API
+    │   └── models.py        # Signal models
     │
     ├── crawler/             # Execution layer
-    │   ├── fetcher.py       # Async HTTP + rate limiting
-    │   ├── parser.py        # BeautifulSoup parsing
-    │   ├── pipeline.py      # Full crawl pipeline
-    │   └── sources.py       # Source configuration
+    │   ├── fetcher.py       # Async HTTP
+    │   ├── parser.py        # BeautifulSoup
+    │   ├── pipeline.py      # Full pipeline
+    │   └── sources.py       # Source config
     │
-    ├── collectors/          # API-based collectors
-    │   ├── fear_greed.py    # Fear & Greed Index
-    │   ├── price.py         # CoinGecko prices
-    │   ├── reddit.py        # Reddit API (backup)
-    │   └── twitter.py       # Twitter collector
+    ├── collectors/          # API collectors
+    │   ├── fear_greed.py
+    │   ├── price.py
+    │   ├── reddit.py
+    │   └── twitter.py
     │
     ├── processing/          # Content processing
-    │   └── sentiment.py     # VADER + crypto lexicon
+    │   └── sentiment.py     # VADER + FinBERT
     │
     └── storage/             # Database layer
-        ├── models.py        # Pydantic models
-        └── db.py            # SQLite operations
+        ├── models.py
+        └── db.py
 ```
 
-## Implementation Details
+## Implementation Status
 
-### Bayesian Layer
+### Complete
 
-#### `bayesian/beliefs.py`
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Bayesian beliefs | ✅ | Beta distribution, Thompson Sampling |
+| Utility scoring | ✅ | 0.7 accuracy + 0.3 novelty |
+| Cold start | ✅ | Price autocorrelation baseline |
+| Async fetcher | ✅ | Rate limiting, UA rotation |
+| Reddit crawler | ✅ | 20+ subreddits |
+| 4chan /biz/ crawler | ✅ | JSON API |
+| Stocktwits crawler | ✅ | Public API |
+| Bitcointalk crawler | ✅ | HTML scraping |
+| Twitter/X crawler | ✅ | Requires API key |
+| Sentiment analysis | ✅ | VADER + FinBERT |
+| Granger causality | ✅ | Price leads sentiment finding |
+| Dynamic source weights | ✅ | Learned from accuracy |
+| Contrarian signals | ✅ | 4 signal types |
+| Signal alerts | ✅ | Telegram + Ntfy.sh |
+| REST API | ✅ | FastAPI endpoints |
+| Belief auto-updater | ✅ | Every 30 minutes |
+| Task manager | ✅ | Start/stop/status |
 
-The `SourceBelief` class models our uncertainty about each source:
+### Pending
 
-```python
-@dataclass
-class SourceBelief:
-    source: str
-    alpha: float = 1.0  # Informative crawls
-    beta: float = 1.0   # Non-informative crawls
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Google Trends | ❌ | Low priority (lagging indicator) |
+| Discord alerts | 📋 | Planned |
+| Email alerts | 📋 | Planned |
 
-    def sample(self) -> float:
-        """Sample from Beta posterior (for Thompson Sampling)."""
-        return np.random.beta(self.alpha, self.beta)
+## Example Output
 
-    def update(self, was_informative: bool) -> None:
-        """Bayesian update after observing outcome."""
-        if was_informative:
-            self.alpha += 1
-        else:
-            self.beta += 1
+### Inference
+
+```
+======================================================================
+CRYPTO SENTIMENT INFERENCE
+Lookback: 4h | Prediction Horizon: 4h
+======================================================================
+
+Using 32 learned weights from Bayesian beliefs (15 contrarian)
+
+BTC ➡️
+--------------------------------------------------
+  Current Price:  $78,096.00
+  Prediction:     NEUTRAL
+  Confidence:     [████░░░░░░] 43%
+  Sentiment:      -0.100
+  Reasoning:      Sentiment is neutral (-0.100). Market in Extreme Fear...
 ```
 
-The `SourceBeliefStore` manages beliefs for all sources with serialization support.
+### Signal Detection
 
-#### `bayesian/utility.py`
-
-The `UtilityScorer` computes informativeness:
-
-```python
-class UtilityScorer:
-    def compute_utility(self, content, sentiment, price_before, price_after):
-        accuracy = 1.0 if sign(sentiment) == sign(Δprice) else 0.0
-        novelty = 1.0 - max_cosine_similarity(content, recent_docs)
-        return 0.7 * accuracy + 0.3 * novelty
+```
+────────────────────────────────────────────────────────────
+[2026-02-01 08:19:21] Check #1
+────────────────────────────────────────────────────────────
+  💰 BTC: $78,095  -4.0% (24h)  -11.9% (7d)
+  📊 Sentiment: -0.241  Z-Score: -0.28σ  State: Fear
+  📈 Divergence: -0.056
+  ✅ No signal - conditions within normal ranges
 ```
 
-Novelty uses TF-IDF vectorization with cosine similarity against a sliding window of recent content.
+### Belief Update
 
-#### `bayesian/bandit.py`
-
-The `CrawlBandit` implements Thompson Sampling with:
-
-- Exploration decay (λ decreases over time)
-- Causal bonus (2x weight for Granger-causal sources)
-- Selection logging for analysis
-
-```python
-class CrawlBandit:
-    def select_source(self, sources: list[str]) -> SelectionResult:
-        samples = {}
-        for source in sources:
-            belief = self.belief_store.get(source)
-            theta = belief.sample()  # Thompson Sampling
-            bonus = self.exploration_weight * belief.std
-            causal_mult = 1.5 if belief.is_causal else 1.0
-            samples[source] = (theta + bonus) * causal_mult
-
-        return max(samples, key=samples.get)
 ```
+================================================================================
+SOURCE WEIGHTS (from Bayesian Beliefs)
+================================================================================
 
-#### `bayesian/cold_start.py`
-
-Initializes new source priors from price dynamics:
-
-```python
-def compute_baseline_informativeness(prices: pd.Series) -> float:
-    # Fit AR model to returns
-    returns = prices.pct_change()
-    model = AutoReg(returns, lags=24).fit()
-    r_squared = model.rsquared
-
-    # Baseline = unpredictability
-    return 1.0 - r_squared
-```
-
-### Crawler Layer
-
-#### `crawler/fetcher.py`
-
-Async HTTP with production-ready features:
-
-```python
-class Fetcher:
-    # Rate limiting per domain (token bucket)
-    rate_limiters: dict[str, RateLimiter]
-
-    # User-agent rotation pool
-    USER_AGENTS = [...]  # Real browser UAs
-
-    async def fetch(self, url: str) -> FetchResult:
-        await self.rate_limiter.acquire()
-        await asyncio.sleep(random.uniform(0.5, 2.0))  # Politeness
-        response = await self.client.get(url, headers=self._rotate_ua())
-        return FetchResult(...)
-```
-
-#### `crawler/parser.py`
-
-Configurable HTML parsing:
-
-```python
-class Parser:
-    def parse(self, html: str, selectors: dict) -> ParseResult:
-        soup = BeautifulSoup(html, "lxml")
-        return ParseResult(
-            title=self._extract(soup, selectors.get("title")),
-            content=self._extract(soup, selectors.get("content")),
-            timestamp=self._extract_datetime(soup, selectors.get("timestamp")),
-            ...
-        )
-```
-
-#### `crawler/pipeline.py`
-
-Full crawl pipeline:
-
-```python
-class ContentPipeline:
-    async def process_url(self, url: str, source: str) -> CrawledContent:
-        # 1. Fetch
-        fetch_result = await self.fetcher.fetch(url)
-
-        # 2. Parse
-        parse_result = self.parser.parse(fetch_result.content, selectors)
-
-        # 3. Detect coins
-        coins = detect_coins(parse_result.content)
-
-        # 4. Sentiment analysis
-        sentiment = sentiment_analyzer.analyze(parse_result.content)
-
-        return CrawledContent(...)
-```
-
-### Causal Layer
-
-#### `causal/granger.py`
-
-Granger causality testing:
-
-```python
-class GrangerAnalyzer:
-    def test_granger_causality(self, cause: Series, effect: Series) -> GrangerResult:
-        # Make stationary
-        cause = self.make_stationary(cause)
-        effect = self.make_stationary(effect)
-
-        # Test at multiple lags
-        results = grangercausalitytests(data, maxlag=24)
-
-        # Find best lag
-        best_lag = min(results, key=lambda k: results[k].pvalue)
-
-        return GrangerResult(
-            optimal_lag=best_lag,
-            pvalue=results[best_lag].pvalue,
-            is_causal=pvalue < 0.05,
-        )
-```
-
-### Sentiment Analysis
-
-#### `processing/sentiment.py`
-
-VADER with crypto-specific lexicon:
-
-```python
-CRYPTO_LEXICON = {
-    "moon": 3.0, "mooning": 3.5,
-    "rekt": -3.0, "rugpull": -4.0,
-    "hodl": 2.0, "fud": -1.5,
-    ...
-}
-
-class CryptoSentimentAnalyzer:
-    def __init__(self):
-        self.analyzer = SentimentIntensityAnalyzer()
-        self.analyzer.lexicon.update(CRYPTO_LEXICON)
+Source                         Weight     Accuracy   Type         Samples
+--------------------------------------------------------------------------------
+4chan_biz                      0.0800     37.9%      CONTRARIAN   6582
+reddit_solana                  0.0697     38.7%      CONTRARIAN   183
+stocktwits                     0.0677     40.1%      CONTRARIAN   1202
+reddit_dogecoin                0.0311     58.8%      MOMENTUM     83
+reddit_defi                    0.0292     53.6%      MOMENTUM     185
+================================================================================
 ```
 
 ## Configuration
@@ -524,212 +404,25 @@ class CryptoSentimentAnalyzer:
 
 ```bash
 # .env
-REDDIT_CLIENT_ID=...        # Optional: Reddit API backup
-REDDIT_CLIENT_SECRET=...
 DATABASE_PATH=data/sentiment.db
 TRACKED_COINS=BTC,ETH,SOL
 LOG_LEVEL=INFO
-```
 
-### Source Configuration (YAML)
+# Alerts
+TELEGRAM_BOT_TOKEN=...
+NTFY_TOPIC=my-crypto-signals
 
-```yaml
-# sources/coindesk.yaml
-name: coindesk
-base_url: https://www.coindesk.com
-type: news
+# Twitter (optional)
+TWITTER_BEARER_TOKEN=...
 
-selectors:
-  title: "h1"
-  content: "article"
-  timestamp: "time[datetime]"
-
-rate_limit: 1.0
-prior_adjustment: 0.3  # News sources get prior boost
-```
-
-### Orchestrator (Integration Layer)
-
-#### `orchestrator.py`
-
-The `CrawlerOrchestrator` integrates all components:
-
-```python
-class CrawlerOrchestrator:
-    """
-    Main loop:
-    1. Thompson Sampling selects source
-    2. Crawler fetches and parses content
-    3. Sentiment analysis scores content
-    4. Queue for utility evaluation after lag period
-    5. Update beliefs based on outcomes
-    """
-
-    async def select_and_crawl(self) -> CrawledContent:
-        # Select using Bayesian bandit
-        selection = self.bandit.select_source(available_sources)
-
-        # Crawl selected source
-        content = await self._crawl_source(selection.source)
-
-        # Queue for evaluation
-        self.pending_outcomes.append(CrawlOutcome(
-            content=content,
-            price_at_crawl=current_price,
-            timestamp=now,
-        ))
-
-        # Compute immediate novelty
-        novelty = self.utility_scorer.compute_novelty_only(content.text)
-
-        return content
-
-    async def evaluate_pending_outcomes(self):
-        # After lag period, evaluate accuracy
-        for outcome in self.pending_outcomes:
-            utility = self.utility_scorer.compute_utility(
-                content=outcome.content.text,
-                sentiment_score=outcome.content.sentiment_score,
-                price_before=outcome.price_at_crawl,
-                price_after=current_price,
-            )
-
-            # Bayesian update
-            self.bandit.update_from_outcome(outcome.source, utility)
-```
-
-**State Persistence**: Beliefs and pending evaluations are saved to JSON, allowing the crawler to resume and retain learned preferences.
-
-**CLI Usage**:
-```bash
-# Run background daemon (default, recommended)
-uv run crawler
-
-# Run background with custom intervals
-uv run crawler background --crawl-interval 60 --eval-interval 600
-
-# Run fixed iterations then exit
-uv run crawler bayesian -n 10 -d 30
-
-# View current stats
-uv run crawler stats
-
-# Run legacy API collectors
-uv run crawler collectors
-```
-
-### Background Scheduler (`scheduler.py`)
-
-The `CrawlerScheduler` runs continuous jobs using APScheduler:
-
-```python
-class CrawlerScheduler:
-    """
-    Scheduled jobs:
-    - Crawl: every 2 minutes (Bayesian selection)
-    - Price: every 5 minutes
-    - Evaluation: every 15 minutes (update beliefs)
-    - Fear & Greed: every 4 hours
-    - Stats: every 10 minutes (logging)
-    """
-
-    async def run(self):
-        # Initial collection
-        await self._job_price()
-        await self._job_fear_greed()
-        await self._job_crawl()
-
-        # Start scheduled jobs
-        self.scheduler.start()
-
-        # Run until interrupted
-        while self._running:
-            await asyncio.sleep(1)
-```
-
-**Default Intervals**:
-| Job | Interval | Purpose |
-|-----|----------|---------|
-| Crawl | 2 min | Bayesian source selection + crawl |
-| Price | 5 min | Collect BTC/ETH/SOL prices |
-| Evaluate | 15 min | Compare predictions to actual prices, update beliefs |
-| Fear & Greed | 4 hours | Market sentiment baseline |
-| Stats | 10 min | Log statistics |
-
-## Data Flow
-
-```
-1. INITIALIZATION
-   └── Compute baseline from price autocorrelation
-   └── Initialize source beliefs with type-specific priors
-
-2. CRAWL LOOP
-   ├── Thompson Sampling selects source
-   ├── Fetcher retrieves content (rate-limited)
-   ├── Parser extracts text and metadata
-   ├── Sentiment analyzer scores content
-   └── Store raw + processed data
-
-3. OUTCOME EVALUATION (after lag period)
-   ├── Compare sentiment to actual price movement
-   ├── Compute accuracy score
-   ├── Compute novelty score
-   ├── Calculate utility = 0.7*accuracy + 0.3*novelty
-   └── Update source belief (Bayesian update)
-
-4. CAUSAL DISCOVERY (weekly)
-   ├── Run Granger tests for all sources
-   ├── Identify leading indicators
-   └── Boost priors for causal sources
-```
-
-## Current Status
-
-### Working Features
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Bayesian beliefs | ✅ | Beta distribution, Thompson Sampling |
-| Utility scoring | ✅ | 0.7 accuracy + 0.3 novelty |
-| Cold start | ✅ | Price autocorrelation baseline |
-| Fetcher | ✅ | Rate limiting, UA rotation |
-| Reddit crawler | ✅ | old.reddit.com (no API needed) |
-| 4chan /biz/ crawler | ✅ | JSON API, no auth |
-| Stocktwits crawler | ✅ | Public API |
-| Bitcointalk crawler | ✅ | HTML scraping |
-| Twitter/X crawler | ✅ | Requires API key |
-| Sentiment analysis | ✅ | VADER + crypto lexicon |
-| Orchestrator | ✅ | Full integration loop |
-| State persistence | ✅ | JSON serialization |
-| Price collector | ✅ | CoinGecko API |
-| Fear & Greed | ✅ | alternative.me API |
-| Task manager | ✅ | Start/stop/monitor tasks |
-| Scheduled collector | ✅ | APScheduler multi-source |
-| Backtest analysis | ✅ | Correlation & strategy testing |
-| Contrarian signals | ✅ | Divergence detection |
-
-### Pending
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| News crawlers | 🔄 | CryptoPanic needs API key |
-| Granger causality | 🔄 | Implemented, needs more data |
-| Alert system | 📋 | Telegram/Discord notifications |
-
-### Example Output
-
-```
-Selected: reddit_cryptocurrency (sampled=0.968, mean=0.600)
-Crawled: Bitcoin reaches new high... (novelty=1.000)
-
-Selected: reddit_bitcoin (sampled=0.954, mean=0.600)
-Crawled: Buying the dip... (novelty=1.000)
-
-Current rankings:
-  reddit_cryptocurrency: mean=0.650 (α=2.5, β=1.0, n=5)
-  reddit_bitcoin: mean=0.620 (α=2.2, β=1.0, n=3)
+# Signal detection
+SIGNAL_CHECK_INTERVAL=1  # minutes
 ```
 
 ## License
 
 MIT
+
+---
+
+*Last updated: 2026-02-01*
