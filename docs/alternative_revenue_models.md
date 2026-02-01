@@ -53,27 +53,70 @@ This aligns with successful crypto-native models where:
 
 ---
 
-### 2. Exchange Affiliate Partnerships
+### 2. Affiliate Network (Exchanges, Wallets, News, Tools)
 
 **Model:**
-- Partner with exchanges (Binance, Coinbase, Bybit, etc.)
-- Embed referral links in dashboard/newsletter
-- "Trade on [Exchange] - 10% fee discount"
+- Partner with the entire crypto ecosystem
+- Contextual promo codes throughout dashboard/newsletter
+- Users get discounts, we get commission
+
+**Affiliate Categories:**
+
+| Category | Examples | Typical Commission | User Value |
+|----------|----------|-------------------|------------|
+| **Exchanges** | Binance, Coinbase, Bybit, Kraken | $50-200/signup | 10-20% fee discount |
+| **Wallets** | Ledger, Trezor, Tangem | 10-15% of sale | Hardware security |
+| **News/Research** | Messari, The Block, Delphi | $20-50/sub | Premium research |
+| **Tools** | TradingView, Coinglass, Glassnode | 20-30% recurring | Better analysis |
+| **Tax Software** | Koinly, CoinTracker, TokenTax | $20-40/signup | Tax compliance |
+| **VPNs** | NordVPN, ExpressVPN | $30-100/signup | Privacy/security |
+| **Education** | Courses, books, communities | 20-50% | Learning |
+
+**Contextual Placement:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  VOLATILITY FORECAST: HIGH                              │
+│  Expect 4%+ moves in next 5 days                        │
+│                                                         │
+│  💡 High volatility? Consider:                          │
+│  • Reduce position size on [Bybit - 10% off fees]       │
+│  • Secure profits to [Ledger - $10 off]                 │
+│  • Track moves on [TradingView - 30 day free trial]     │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Newsletter Integration:**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 THIS WEEK'S PARTNERS
+
+🔐 Secure your gains: Ledger Nano X - Use code RADAR15
+📈 Chart like a pro: TradingView Premium - 30 days free
+📰 Deep research: Messari Pro - 20% off annual
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
 
 **Why it works:**
-- Aligned incentives (we help users trade smarter)
-- No cost to user
-- Exchanges pay $50-200 per active trader
+- Contextual = higher conversion (recommend when relevant)
+- Users get real discounts (not just ads)
+- Multiple touchpoints = diversified revenue
+- No cost to user, adds value
 
 **Revenue Potential:**
-| Metric | Conservative | Aggressive |
-|--------|--------------|------------|
-| Monthly visitors | 5,000 | 20,000 |
-| Click rate | 2% | 5% |
-| Conversion rate | 10% | 20% |
-| New traders/month | 10 | 200 |
-| Revenue per trader | $75 | $100 |
-| **Monthly Revenue** | **$750** | **$20,000** |
+
+| Category | Signups/Month | Avg Commission | Monthly |
+|----------|---------------|----------------|---------|
+| Exchanges | 20 | $75 | $1,500 |
+| Wallets | 15 | $25 | $375 |
+| Tools | 30 | $15 | $450 |
+| Tax software | 10 | $30 | $300 |
+| News/Research | 20 | $30 | $600 |
+| VPN/Other | 10 | $50 | $500 |
+| **Total** | | | **$3,725/mo** |
+
+**Annual potential: $45,000** (conservative, scales with audience)
 
 ---
 
