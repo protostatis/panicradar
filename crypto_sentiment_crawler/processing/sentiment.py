@@ -169,6 +169,12 @@ CRYPTO_LEXICON = {
 
 # Patterns that indicate negative sentiment regardless of words
 NEGATIVE_PATTERNS = [
+    # Price drop patterns
+    (r"\b(down|dropped|fell|lost|crashed)\s+\d+(\.\d+)?%", -2.0),
+    (r"\b(down|dropped|fell)\s+(about\s+)?\d+(\.\d+)?%", -2.0),
+    (r"\bis\s+down\b", -1.0),
+    (r"\b(red|bleeding|dumping)\s+(day|week|month)", -1.5),
+
     # Complaint patterns
     (r"\b(issues?\s+(?:with|i\'ve|i have|we have))", -1.5),
     (r"\b(problem(?:s)?\s+(?:with|is|are))", -1.5),

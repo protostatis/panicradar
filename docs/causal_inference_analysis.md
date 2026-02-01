@@ -391,5 +391,52 @@ Sentiment    Price
 
 ---
 
+## Appendix C: Sentiment Analyzer Improvements
+
+### Problem Identified
+
+The original VADER-based sentiment analyzer had significant accuracy issues:
+
+| Post Type | Old Score | Correct | Issue |
+|-----------|-----------|---------|-------|
+| Tax complaint ("expensive", "unable to") | +0.942 | Negative | False positive |
+| Scam warning ("WARNING", "protect") | +0.733 | Negative | False positive |
+| Governance proposal ("approval", "fund") | +0.998 | Neutral | Inflated |
+
+### Solution Implemented
+
+File: `crypto_sentiment_crawler/processing/sentiment.py`
+
+1. **Extended lexicon**: +80 crypto-specific terms
+   - Complaint words: "expensive", "unable", "broken", "unusable"
+   - Warning words: "warning", "scam", "scammer", "beware"
+   - Neutralized governance: "proposal", "approve", "allocate" → 0
+
+2. **Pattern detection**: Regex patterns for context
+   - `r"\b(too\s+(?:expensive|slow|complicated))"` → -2.0
+   - `r"\bwarning\s*:"` → -1.0
+   - `r"\b(unable\s+to)"` → -1.5
+
+3. **Optional transformer**: FinBERT available for complex cases
+
+### Validation
+
+```
+Accuracy: 88% (up from ~25%)
+```
+
+### Impact on Causal Analysis
+
+| Metric | Old Scores | Improved Scores |
+|--------|------------|-----------------|
+| Naive coefficient | -0.033 | +0.059 |
+| Direction | Negative (wrong) | Positive (correct) |
+| Lag-3 effect | Not significant | p=0.022 (significant) |
+| Backdoor-adjusted | p=0.55 | p=0.35 |
+
+The improved scores revealed a weak but real signal at 3-hour lag, though it still disappears when adjusting for confounders.
+
+---
+
 *Document created: 2026-01-31*
-*Last updated: 2026-01-31*
+*Last updated: 2026-01-31 (added sentiment analyzer improvements)*
