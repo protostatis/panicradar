@@ -55,3 +55,4 @@ htmlcov/
 
 # PID
 *.pid
+data/historical_fng_price.csv
