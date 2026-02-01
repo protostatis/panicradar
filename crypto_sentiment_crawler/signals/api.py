@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from .service import SignalService
 from .subscriptions import SubscriptionManager, SubscriptionTier, TIERS
+from ..dashboard import router as dashboard_router
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -58,6 +59,9 @@ app.add_middleware(
 db_path = os.environ.get("DB_PATH", "data/sentiment.db")
 signal_service = SignalService(db_path=db_path)
 subscription_manager = SubscriptionManager()
+
+# Include dashboard routes
+app.include_router(dashboard_router)
 
 
 # Response models
