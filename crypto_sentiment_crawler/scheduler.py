@@ -19,7 +19,7 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .collectors import FearGreedCollector, PriceCollector
+from .collectors import FearGreedCollector, OnChainFreeCollector, PriceCollector
 from .config import settings
 from .confounders import ConfounderCollector
 from .logging_config import logger
@@ -39,12 +39,14 @@ class CrawlerScheduler:
         eval_interval_seconds: int = 900,        # 15 minutes
         fear_greed_interval_seconds: int = 14400,  # 4 hours
         confounder_interval_seconds: int = 900,  # 15 minutes (for causal inference)
+        onchain_interval_seconds: int = 900,     # 15 minutes (on-chain metrics)
     ):
         self.crawl_interval = crawl_interval_seconds
         self.price_interval = price_interval_seconds
         self.eval_interval = eval_interval_seconds
         self.fear_greed_interval = fear_greed_interval_seconds
         self.confounder_interval = confounder_interval_seconds
+        self.onchain_interval = onchain_interval_seconds
 
         self.scheduler = AsyncIOScheduler()
         self.db: Database | None = None
@@ -52,6 +54,7 @@ class CrawlerScheduler:
         self.price_collector: PriceCollector | None = None
         self.fear_greed_collector: FearGreedCollector | None = None
         self.confounder_collector: ConfounderCollector | None = None
+        self.onchain_collector: OnChainFreeCollector | None = None
 
         self._running = False
         self._stats = {
@@ -59,6 +62,7 @@ class CrawlerScheduler:
             "price_updates": 0,
             "evaluations": 0,
             "confounder_snapshots": 0,
+            "onchain_updates": 0,
             "errors": 0,
             "started_at": None,
         }
@@ -80,6 +84,7 @@ class CrawlerScheduler:
         self.fear_greed_collector = FearGreedCollector(self.db)
         self.confounder_collector = ConfounderCollector()
         await self.confounder_collector.start()
+        self.onchain_collector = OnChainFreeCollector(self.db)
 
         logger.info("Scheduler initialized")
 
@@ -102,6 +107,9 @@ class CrawlerScheduler:
 
         if self.confounder_collector:
             await self.confounder_collector.close()
+
+        if self.onchain_collector:
+            await self.onchain_collector.close()
 
         if self.db:
             await self.db.close()
@@ -167,6 +175,15 @@ class CrawlerScheduler:
             logger.error(f"Confounder job error: {e}")
             self._stats["errors"] += 1
 
+    async def _job_onchain(self) -> None:
+        """Job: Collect on-chain metrics from free APIs."""
+        try:
+            await self.onchain_collector.collect()
+            self._stats["onchain_updates"] += 1
+        except Exception as e:
+            logger.error(f"On-chain job error: {e}")
+            self._stats["errors"] += 1
+
     async def _job_stats(self) -> None:
         """Job: Log statistics periodically."""
         uptime = datetime.now(timezone.utc) - self._stats["started_at"]
@@ -178,6 +195,7 @@ class CrawlerScheduler:
             f"prices: {self._stats['price_updates']} | "
             f"evals: {self._stats['evaluations']} | "
             f"confounders: {self._stats['confounder_snapshots']} | "
+            f"onchain: {self._stats['onchain_updates']} | "
             f"errors: {self._stats['errors']}"
         )
 
@@ -228,6 +246,15 @@ class CrawlerScheduler:
             max_instances=1,
         )
 
+        # On-chain metrics job
+        self.scheduler.add_job(
+            self._job_onchain,
+            IntervalTrigger(seconds=self.onchain_interval),
+            id="onchain",
+            name="On-Chain Metrics",
+            max_instances=1,
+        )
+
         # Stats job - every 10 minutes
         self.scheduler.add_job(
             self._job_stats,
@@ -250,6 +277,7 @@ class CrawlerScheduler:
         await self._job_price()
         await self._job_fear_greed()
         await self._job_confounders()
+        await self._job_onchain()
         await self._job_crawl()
 
         logger.info(
