@@ -32,6 +32,7 @@ class ScheduledCollector:
             "reddit_runs": 0,
             "bitcointalk_runs": 0,
             "backtest_runs": 0,
+            "belief_updates": 0,
             "last_run": {},
             "errors": 0,
         }
@@ -79,6 +80,13 @@ class ScheduledCollector:
             IntervalTrigger(hours=24),
             id="daily_backtest",
             name="Daily backtest analysis",
+        )
+
+        self.scheduler.add_job(
+            self.run_belief_update,
+            IntervalTrigger(hours=6),
+            id="belief_update",
+            name="Bayesian belief update",
         )
 
         self.scheduler.add_job(
@@ -218,6 +226,34 @@ class ScheduledCollector:
 
         except Exception as e:
             logger.error(f"[Scheduled] Backtest error: {e}")
+            self.stats["errors"] += 1
+
+    async def run_belief_update(self):
+        """Update Bayesian beliefs based on observed performance."""
+        logger.info("[Scheduled] Updating Bayesian beliefs...")
+        try:
+            from .analysis.belief_updater import update_orchestrator_beliefs
+
+            updated = await update_orchestrator_beliefs()
+
+            self.stats["belief_updates"] += 1
+            self.stats["last_run"]["belief_update"] = datetime.now(timezone.utc).isoformat()
+            logger.info(f"[Scheduled] Beliefs updated: {len(updated)} sources")
+
+            # Log top sources
+            sorted_beliefs = sorted(
+                [(s, b) for s, b in updated.items() if 'accuracy' in b],
+                key=lambda x: x[1].get('accuracy', 0),
+                reverse=True
+            )
+            for source, belief in sorted_beliefs[:3]:
+                logger.info(
+                    f"  Top: {source} - accuracy={belief['accuracy']:.1%}, "
+                    f"contrarian={belief.get('is_contrarian', False)}"
+                )
+
+        except Exception as e:
+            logger.error(f"[Scheduled] Belief update error: {e}")
             self.stats["errors"] += 1
 
     async def log_status(self):

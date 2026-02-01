@@ -50,6 +50,7 @@ dev = [
 crawler = "crypto_sentiment_crawler.main:main"
 signals = "crypto_sentiment_crawler.signals.cli:main"
 tasks = "crypto_sentiment_crawler.taskmanager:main"
+beliefs = "crypto_sentiment_crawler.live_beliefs:main"
 
 [tool.ruff]
 line-length = 100

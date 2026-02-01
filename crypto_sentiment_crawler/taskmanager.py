@@ -90,6 +90,16 @@ class TaskManager:
             "description": "Run backtest analysis",
             "log_prefix": "backtest",
         },
+        "update_beliefs": {
+            "command": "uv run python -m crypto_sentiment_crawler.analysis.belief_updater",
+            "description": "Update Bayesian beliefs from performance",
+            "log_prefix": "belief_update",
+        },
+        "live_beliefs": {
+            "command": "uv run python -m crypto_sentiment_crawler.live_beliefs",
+            "description": "Live Bayesian beliefs monitor",
+            "log_prefix": "live_beliefs",
+        },
         "price_backfill": {
             "command": "uv run python -m crypto_sentiment_crawler.price_backfill",
             "description": "Historical price data backfill",
