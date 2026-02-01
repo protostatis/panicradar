@@ -80,6 +80,16 @@ class TaskManager:
             "description": "Stocktwits crypto sentiment backfill",
             "log_prefix": "stocktwits_backfill",
         },
+        "collector": {
+            "command": "uv run python -m crypto_sentiment_crawler.scheduled_collector",
+            "description": "Scheduled multi-source collector",
+            "log_prefix": "collector",
+        },
+        "backtest": {
+            "command": "uv run python -m crypto_sentiment_crawler.analysis.backtest_analysis",
+            "description": "Run backtest analysis",
+            "log_prefix": "backtest",
+        },
         "price_backfill": {
             "command": "uv run python -m crypto_sentiment_crawler.price_backfill",
             "description": "Historical price data backfill",

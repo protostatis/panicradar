@@ -77,6 +77,127 @@ uv run crawler demo
 
 > **See [pipeline.md](pipeline.md) for detailed documentation on the background pipeline, scheduled jobs, and deployment options.**
 
+## Data Sources
+
+The crawler collects sentiment from multiple sources:
+
+| Source | Type | Update Frequency | Auth Required |
+|--------|------|------------------|---------------|
+| Reddit | Forum | Every 6 hours | No |
+| 4chan /biz/ | Forum | Every 2 hours | No |
+| Stocktwits | Social | Every 4 hours | No |
+| Bitcointalk | Forum | Every 12 hours | No |
+| Twitter/X | Social | Every 4 hours | Yes (API key) |
+| CryptoPanic | News | Every 4 hours | Optional |
+
+## Task Manager
+
+Monitor and control all crawler tasks:
+
+```bash
+# List all tasks and their status
+uv run tasks list
+
+# Start a specific task
+uv run tasks start <task_name>
+
+# Stop a running task
+uv run tasks stop <task_name>
+
+# View task logs
+uv run tasks logs <task_name>
+
+# Auto-discover running tasks
+uv run tasks discover
+```
+
+### Available Tasks
+
+| Task | Command | Description |
+|------|---------|-------------|
+| `crawler` | `uv run tasks start crawler` | Live Reddit sentiment crawler |
+| `collector` | `uv run tasks start collector` | Scheduled multi-source collector |
+| `backfill` | `uv run tasks start backfill` | Historical Reddit backfill |
+| `biz_backfill` | `uv run tasks start biz_backfill` | 4chan /biz/ backfill |
+| `stocktwits_backfill` | `uv run tasks start stocktwits_backfill` | Stocktwits backfill |
+| `bitcointalk_backfill` | `uv run tasks start bitcointalk_backfill` | Bitcointalk forum backfill |
+| `twitter_backfill` | `uv run tasks start twitter_backfill` | Twitter/X backfill (needs API key) |
+| `price_backfill` | `uv run tasks start price_backfill` | Historical price data |
+| `signals` | `uv run tasks start signals` | Contrarian signal detector |
+| `backtest` | `uv run tasks start backtest` | Run backtest analysis |
+
+## Backtest & Analysis
+
+Run sentiment vs price backtests:
+
+```bash
+# Run comprehensive backtest analysis
+uv run python -m crypto_sentiment_crawler.analysis.backtest_analysis
+
+# Run contrarian signal backtest
+uv run python -m crypto_sentiment_crawler.signals.backtest
+
+# View backtest results log
+cat data/backtest_results.log
+```
+
+### Analysis Output
+
+The backtest analyzes:
+- Correlation at different time lags (1h to 48h)
+- Performance by data source
+- Extreme sentiment events
+- Momentum vs contrarian strategies
+
+## Scheduled Collector
+
+For continuous data collection, use the scheduled collector:
+
+```bash
+# Start scheduled collector (runs all backfills on schedule)
+uv run tasks start collector
+
+# Or run directly
+uv run python -m crypto_sentiment_crawler.scheduled_collector
+```
+
+### Collection Schedule
+
+| Job | Interval | Description |
+|-----|----------|-------------|
+| 4chan /biz/ | Every 2 hours | Threads expire quickly |
+| Stocktwits | Every 4 hours | Social sentiment |
+| Reddit | Every 6 hours | Forum discussions |
+| Bitcointalk | Every 12 hours | Classic crypto forum |
+| Backtest | Every 24 hours | Daily analysis |
+| Status Log | Every 1 hour | Progress tracking |
+
+## Monitoring
+
+```bash
+# View collector logs
+tail -f logs/collector_*.log
+
+# Check database stats
+sqlite3 data/sentiment.db "SELECT source, COUNT(*) FROM sentiment_raw GROUP BY source ORDER BY 2 DESC;"
+
+# View running processes
+ps aux | grep -E "collector|backfill" | grep python
+```
+
+## Twitter/X Setup (Optional)
+
+To enable Twitter data collection:
+
+1. Create a developer account at https://developer.twitter.com/
+2. Create a project and get a Bearer Token
+3. Add to `.env`:
+   ```bash
+   TWITTER_BEARER_TOKEN=your_token_here
+   ```
+
+The free tier provides 10,000 tweets/month.
+
 ## Core Concepts
 
 ### 1. Utility Function
@@ -153,16 +274,35 @@ crypto_sentiment_crawler/
 ├── roadmap.md               # Development roadmap
 ├── .env.example             # Environment template
 │
-├── sources/                 # Source YAML configs (future)
-│   ├── reddit.yaml
-│   └── coindesk.yaml
+├── data/                    # Data storage
+│   ├── sentiment.db         # SQLite database
+│   └── backtest_results.log # Backtest history
+│
+├── logs/                    # Log files
+│   ├── collector_*.log      # Scheduled collector logs
+│   └── backfill_*.log       # Backfill logs
 │
 └── crypto_sentiment_crawler/
     ├── __init__.py
     ├── config.py            # Settings from env vars
     ├── logging_config.py    # Logging setup
     ├── main.py              # Entry point
-    ├── demo.py              # Demo script
+    ├── taskmanager.py       # Task manager CLI
+    ├── scheduled_collector.py # Multi-source scheduler
+    │
+    ├── backfill.py          # Reddit historical backfill
+    ├── biz_backfill.py      # 4chan /biz/ backfill
+    ├── stocktwits_backfill.py # Stocktwits backfill
+    ├── bitcointalk_backfill.py # Bitcointalk backfill
+    ├── twitter_backfill.py  # Twitter/X backfill
+    │
+    ├── analysis/            # Backtest & analysis
+    │   └── backtest_analysis.py # Correlation analysis
+    │
+    ├── signals/             # Signal detection
+    │   ├── detector.py      # Contrarian signal detector
+    │   ├── backtest.py      # Signal backtester
+    │   └── models.py        # Signal models
     │
     ├── bayesian/            # Decision layer
     │   ├── beliefs.py       # SourceBelief model
@@ -179,11 +319,11 @@ crypto_sentiment_crawler/
     │   ├── pipeline.py      # Full crawl pipeline
     │   └── sources.py       # Source configuration
     │
-    ├── collectors/          # API-based collectors (fallback)
+    ├── collectors/          # API-based collectors
     │   ├── fear_greed.py    # Fear & Greed Index
     │   ├── price.py         # CoinGecko prices
     │   ├── reddit.py        # Reddit API (backup)
-    │   └── onchain.py       # Whale Alert (future)
+    │   └── twitter.py       # Twitter collector
     │
     ├── processing/          # Content processing
     │   └── sentiment.py     # VADER + crypto lexicon
@@ -554,20 +694,27 @@ class CrawlerScheduler:
 | Cold start | ✅ | Price autocorrelation baseline |
 | Fetcher | ✅ | Rate limiting, UA rotation |
 | Reddit crawler | ✅ | old.reddit.com (no API needed) |
+| 4chan /biz/ crawler | ✅ | JSON API, no auth |
+| Stocktwits crawler | ✅ | Public API |
+| Bitcointalk crawler | ✅ | HTML scraping |
+| Twitter/X crawler | ✅ | Requires API key |
 | Sentiment analysis | ✅ | VADER + crypto lexicon |
 | Orchestrator | ✅ | Full integration loop |
 | State persistence | ✅ | JSON serialization |
 | Price collector | ✅ | CoinGecko API |
 | Fear & Greed | ✅ | alternative.me API |
+| Task manager | ✅ | Start/stop/monitor tasks |
+| Scheduled collector | ✅ | APScheduler multi-source |
+| Backtest analysis | ✅ | Correlation & strategy testing |
+| Contrarian signals | ✅ | Divergence detection |
 
 ### Pending
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| News crawlers | 🔄 | Need RSS feeds or JS rendering |
-| Granger causality | 🔄 | Implemented, needs data |
-| Scheduled jobs | 📋 | APScheduler integration |
-| Database beliefs | 📋 | Currently JSON-based |
+| News crawlers | 🔄 | CryptoPanic needs API key |
+| Granger causality | 🔄 | Implemented, needs more data |
+| Alert system | 📋 | Telegram/Discord notifications |
 
 ### Example Output
 
