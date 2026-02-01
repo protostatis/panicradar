@@ -6,134 +6,192 @@
 
 ## Executive Summary
 
-After rigorous backtesting on 8 years of Fear & Greed Index data with complete daily coverage, we find:
+After comprehensive validation across 11 different tests, the key finding is:
 
-| Strategy | Return | Sharpe | Best Use Case |
-|----------|--------|--------|---------------|
-| **Buy & Hold** | +378% | 0.74 | Bull markets (default) |
-| Regime-Adaptive | +204% | 0.65 | Bear market protection |
-| Pure Momentum | +37% | 0.12 | Limited value |
-| Pure Contrarian | -37% | -0.12 | **AVOID** |
+**Sentiment is a VOLATILITY indicator, not a RETURN predictor.**
 
-**Key Insight:** Sentiment is primarily a **momentum** signal, not contrarian. Both extreme fear AND extreme greed precede positive returns on average.
+| Use Case | Validity | Evidence |
+|----------|----------|----------|
+| **Volatility Prediction** | ✅ STRONG | r=0.30, p<0.0001 |
+| Directional Trading | ❌ WEAK | Out-of-sample degrades, unstable |
+| Contrarian Signals | ❌ FAILS | Loses money historically |
 
-## Key Findings
+## Validation Results
 
-### 1. Sentiment is Momentum, Not Contrarian
+### 1. Time Horizon Analysis
 
-| Condition | N | Next 1-Day | Next 5-Day |
-|-----------|---|------------|------------|
-| Extreme Greed (F&G > 75) | 330 | +0.43% | +2.38% |
-| Neutral | 2,260 | +0.06% | +0.38% |
-| Extreme Fear (F&G < 20) | 328 | +0.32% | +0.99% |
+F&G → Future Returns (all statistically significant):
 
-**Implication:** Fading sentiment loses money historically. Following sentiment (momentum) generates small positive returns.
+| Horizon | Correlation | P-value |
+|---------|-------------|---------|
+| 1 day | +0.04 | 0.033 |
+| 5 days | +0.07 | 0.0001 |
+| 14 days | +0.09 | <0.0001 |
+| **30 days** | **+0.14** | **<0.0001** |
 
-### 2. Volatility Regime Effect
+**Interpretation:** Sentiment is a slow signal. Stronger effect at longer horizons.
 
-| Volatility Regime | N | Correlation | P-value | Interpretation |
-|-------------------|---|-------------|---------|----------------|
-| High Volatility | 1,444 | +0.057 | **0.031** | Momentum works |
-| Low Volatility | 1,469 | -0.004 | 0.873 | No signal |
+### 2. Volatility Prediction (STRONGEST FINDING)
 
-**Fisher Z-test for difference:** p = 0.13 (marginally different)
+| Metric | Value |
+|--------|-------|
+| F&G Extremeness → Next 5d Vol | r = +0.30 |
+| P-value | < 0.0001 |
+| T-statistic | 16.7 |
 
-In high volatility periods, sentiment has weak but statistically significant predictive power (momentum direction).
+| Sentiment Level | Avg Next 5d Volatility |
+|-----------------|------------------------|
+| Extreme (|F&G-50| > 30) | 4.08% |
+| Neutral (|F&G-50| < 15) | 2.35% |
 
-### 3. Trend Regime Effect (Stronger Signal)
+**74% higher volatility following extreme sentiment readings.**
 
-| Trend Regime | N | 5-Day Correlation | P-value |
-|--------------|---|-------------------|---------|
-| **Strong Bull** | 578 | **+0.14** | **0.0005** |
-| Bull | 630 | +0.06 | 0.14 |
-| Sideways | 766 | -0.01 | 0.83 |
-| Bear | 674 | +0.01 | 0.90 |
-| **Strong Bear** | 235 | **-0.15** | **0.02** |
+### 3. Consecutive Extreme Days
 
-**Key Finding:** Trend regime matters more than volatility regime:
-- In **strong bull markets**: High sentiment → even higher returns (momentum)
-- In **strong bear markets**: High sentiment → smaller losses (contrarian works here)
+| Consecutive Greed Days | Avg Next Day Return |
+|------------------------|---------------------|
+| 1 day | +0.43% |
+| 3 days | +0.66% |
+| 7 days | +0.75% |
+| 10 days | +0.90% |
 
-### 4. Year-by-Year Strategy Performance
+**Extended greed periods show momentum continuation, not reversal.**
 
-| Year | Market | B&H | Contrarian | Momentum | Regime-Adaptive | Winner |
-|------|--------|-----|------------|----------|-----------------|--------|
-| 2018 | Bear | -61% | +12% | -12% | **+38%** | Regime |
-| 2019 | Recovery | **+86%** | +11% | -11% | +29% | B&H |
-| 2020 | Bull | **+169%** | -49% | +49% | +45% | B&H |
-| 2021 | Bull | **+81%** | -4% | +4% | +27% | B&H |
-| 2022 | Bear | -85% | +3% | -3% | **+68%** | Regime |
-| 2023 | Recovery | **+107%** | +1% | -1% | +1% | B&H |
-| 2024 | Bull | **+90%** | -27% | +27% | -9% | B&H |
-| 2025 | Mixed | +3% | **+20%** | -20% | +10% | Contrarian |
-| 2026 | Bear | -11% | -4% | **+4%** | -4% | Momentum |
+### 4. Out-of-Sample Testing
 
-**Pattern:** Regime-adaptive wins in bear markets (2018, 2022), B&H wins in bull markets (majority).
+| Period | Buy & Hold | Strategy |
+|--------|------------|----------|
+| Train (2018-2022) | +189.6% | +132.6% |
+| **Test (2023-2026)** | **+195.3%** | **+71.2%** |
 
-## Data Coverage Assessment
+- Win Rate in test period: 49.2%
+- **Significant degradation out-of-sample**
 
-### Regime Distribution (n=2,918 days)
+### 5. Rolling Correlation Stability
 
-| Regime | Days | Percentage | Avg F&G | Avg Daily Return |
-|--------|------|------------|---------|------------------|
-| Strong Bull | 578 | 19.8% | 69.0 | +0.88% |
-| Bull | 630 | 21.6% | 56.2 | +0.49% |
-| Sideways | 770 | 26.4% | 44.0 | +0.02% |
-| Bear | 675 | 23.1% | 33.2 | -0.45% |
-| Strong Bear | 235 | 8.1% | 18.3 | -0.75% |
+| Metric | Value |
+|--------|-------|
+| Mean correlation | +0.006 |
+| Std deviation | 0.053 |
+| Range | -0.10 to +0.12 |
+| % Significant windows | **3.5%** |
 
-**Assessment:** Good balance across regimes. Slightly underweight strong bear (8.1%) but sufficient sample (n=235).
+**Only 3.5% of 1-year rolling windows show significant F&G → Return correlation.**
 
-### Major Market Events Coverage
+### 6. Extreme Threshold Analysis
 
-| Event | Period | Coverage |
-|-------|--------|----------|
-| ✅ 2018 Crypto Winter | Jan-Dec 2018 | 91% |
-| ✅ COVID Crash | Mar 2020 | 100% |
-| ✅ 2020-2021 Bull Run | Oct 2020 - Apr 2021 | 100% |
-| ✅ May 2021 Crash | May-Jul 2021 | 100% |
-| ✅ Nov 2021 ATH | Nov 2021 | 100% |
-| ✅ 2022 Bear (Luna, FTX) | Jan-Dec 2022 | 100% |
-| ✅ 2023-2024 Recovery | Jan 2023 - Dec 2024 | 100% |
-| ❌ 2017 Bull Peak | Dec 2017 | **Missing** (F&G starts Feb 2018) |
+| Threshold | N Low | N High | Return Low | Return High | Diff | P-value |
+|-----------|-------|--------|------------|-------------|------|---------|
+| 5%/95% | 164 | 149 | +0.19% | +0.84% | +0.66% | 0.20 |
+| 10%/90% | 327 | 330 | +0.32% | +0.43% | +0.11% | 0.75 |
+| 20%/80% | 612 | 586 | +0.16% | +0.32% | +0.16% | 0.46 |
 
-### Remaining Gap: 2017 Bull Market
+**No threshold produces statistically significant directional signal.**
 
-The Fear & Greed Index began in February 2018, missing the iconic December 2017 peak ($19,783).
+### 7. Market Events Analysis
 
-**Backfill Options:**
-1. **Google Trends** - "bitcoin" search volume as sentiment proxy (available 2004+)
-2. **Reddit Archives** - Pushshift dataset for r/Bitcoin sentiment
-3. **Accept Limitation** - 8 years is statistically sufficient for most analyses
+| Event | N | Avg F&G | F&G→Ret r | P-value |
+|-------|---|---------|-----------|---------|
+| 2018 Jan Crash | 29 | 42.5 | -0.13 | 0.50 |
+| COVID Crash | 61 | 23.7 | -0.11 | 0.41 |
+| 2021 Bull Peak | 61 | 64.2 | -0.02 | 0.86 |
+| Luna Collapse | 61 | 12.9 | -0.12 | 0.37 |
+| FTX Collapse | 61 | 26.6 | -0.16 | 0.22 |
+| 2023 Recovery | 181 | 52.9 | **-0.24** | **0.001** |
 
-## Conclusions
+**Only one event period (2023 Recovery) shows significant correlation.**
 
-### What Works
-1. **Buy & Hold** remains the best strategy in secular bull markets
-2. **Regime-Adaptive** provides value for risk management in bear markets
-3. **Trend detection first, then sentiment** - use sentiment to confirm, not predict
+### 8. Drawdown Context
 
-### What Doesn't Work
-1. **Pure contrarian** trading based on sentiment
-2. **Sentiment as standalone alpha source**
-3. **Ignoring market regime** when interpreting sentiment
+| Drawdown Level | N | F&G→Ret Correlation |
+|----------------|---|---------------------|
+| ATH Region | 602 | +0.08 |
+| Light DD (-10% to 0) | 387 | +0.13 |
+| Moderate DD (-20% to -10%) | 461 | +0.01 |
+| Severe DD (-30% to -20%) | 739 | +0.05 |
+| Extreme DD (<-30%) | 728 | +0.02 |
 
-### Recommended Use Cases
-1. **Portfolio Hedging:** Increase hedges when sentiment is extreme
-2. **Volatility Prediction:** Extreme sentiment → expect higher volatility
-3. **Signal Confirmation:** Use sentiment to filter other signals, not generate them
-4. **Bear Market Protection:** Regime-adaptive approach can reduce drawdowns
+**Drawdown context doesn't materially change predictive power.**
 
-## Statistical Validation Summary
+### 9. Technical Indicator Combinations
 
-| Test | Result | Interpretation |
-|------|--------|----------------|
-| F&G → Return (overall) | r = 0.03, p = 0.08 | Weak, marginal |
-| F&G → Return (high vol) | r = 0.06, p = **0.03** | Significant momentum |
-| F&G → Return (strong bull) | r = 0.14, p = **0.0005** | Strong momentum |
-| F&G → Return (strong bear) | r = -0.15, p = **0.02** | Contrarian works here |
-| Vol regime difference | z = 1.52, p = 0.13 | Marginal difference |
+| Model | R² |
+|-------|-----|
+| F&G alone | 0.0014 |
+| F&G + Momentum + Volatility + Interaction | 0.0037 |
+
+**Improvement: +0.24 percentage points (marginal)**
+
+### 10. F&G Rate of Change
+
+| Metric | Correlation | Significant |
+|--------|-------------|-------------|
+| F&G Level | +0.037 | YES |
+| F&G 1-day change | +0.010 | NO |
+| F&G 5-day change | +0.034 | NO |
+| F&G 10-day change | +0.033 | NO |
+
+**Rate of change doesn't improve signal.**
+
+### 11. Google Trends Backfill Attempt
+
+| Validation | Result |
+|------------|--------|
+| Google Trends vs F&G (2018) | r = 0.16 |
+| Shared variance | 16% |
+
+**Google Trends is NOT a valid proxy for sentiment backfilling.**
+
+## Actionable Conclusions
+
+### What To Use Sentiment For ✅
+
+1. **Volatility Prediction**
+   - Extreme sentiment → expect 74% higher volatility
+   - Use for: position sizing, options pricing, hedging
+   - Confidence: HIGH
+
+2. **Long-Term Momentum Confirmation**
+   - Extended greed (7+ days) shows continuation
+   - Use for: confirming positions, not entries
+   - Confidence: MODERATE
+
+3. **Risk Management Trigger**
+   - Extreme readings → increase hedges
+   - Not for trading, but for protection
+
+### What NOT To Use Sentiment For ❌
+
+1. **Directional Trading**
+   - Out-of-sample degrades significantly
+   - Rolling correlation is unstable
+   - Win rate ≈ 50%
+
+2. **Contrarian Signals**
+   - Loses money historically (-37%)
+   - Only works 8% of the time
+
+3. **Short-Term Timing**
+   - Daily correlation near zero
+   - Too noisy for tactical trading
+
+## Data Quality Summary
+
+| Dataset | Status |
+|---------|--------|
+| Fear & Greed (2018-2026) | ✅ 99.9% coverage |
+| BTC Price (daily) | ✅ Complete |
+| 2017 Bull Peak | ❌ Missing (F&G starts Feb 2018) |
+| On-chain Metrics | ⏳ Just started collecting |
+
+## Final Verdict
+
+> **Sentiment is a VOLATILITY indicator, not a RETURN predictor.**
+>
+> The most robust finding: Extreme F&G → Higher future volatility (r=0.30, p<0.0001)
+>
+> This is statistically significant, economically meaningful, and consistent across time.
 
 ---
 
-*Report based on 2,918 daily observations with 99.9% coverage. Analysis performed 2026-02-01.*
+*Report based on 2,918 daily observations with 11 validation tests. Generated 2026-02-01.*
