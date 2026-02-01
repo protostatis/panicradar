@@ -92,8 +92,13 @@ class TaskManager:
         },
         "update_beliefs": {
             "command": "uv run python -m crypto_sentiment_crawler.analysis.belief_updater",
-            "description": "Update Bayesian beliefs from performance",
+            "description": "Update Bayesian beliefs (one-time)",
             "log_prefix": "belief_update",
+        },
+        "belief_auto": {
+            "command": "uv run python -m crypto_sentiment_crawler.analysis.belief_auto_updater --interval 30",
+            "description": "Auto-update beliefs every 30 min",
+            "log_prefix": "belief_auto",
         },
         "live_beliefs": {
             "command": "uv run python -m crypto_sentiment_crawler.live_beliefs",

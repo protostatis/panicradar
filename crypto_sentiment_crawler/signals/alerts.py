@@ -86,6 +86,87 @@ class TelegramChannel(AlertChannel):
             return False
 
 
+class NtfyChannel(AlertChannel):
+    """Ntfy.sh push notifications - free, no account needed."""
+
+    def __init__(self, topic: str, server: str = "https://ntfy.sh"):
+        self.topic = topic
+        self.server = server
+        self.url = f"{server}/{topic}"
+
+    async def send(self, subscriber: Subscriber, signal: Signal) -> bool:
+        """Send signal alert via Ntfy."""
+        # Determine priority and emoji based on signal type
+        if "BULLISH" in signal.signal_type.value:
+            emoji = "📈"
+            priority = "high"
+            tags = "chart_with_upwards_trend,money_with_wings"
+        elif "BEARISH" in signal.signal_type.value:
+            emoji = "📉"
+            priority = "high"
+            tags = "chart_with_downwards_trend,warning"
+        elif signal.signal_type.value == "CAPITULATION":
+            emoji = "💀"
+            priority = "urgent"
+            tags = "skull,rotating_light"
+        elif signal.signal_type.value == "EUPHORIA":
+            emoji = "🚀"
+            priority = "urgent"
+            tags = "rocket,warning"
+        else:
+            emoji = "🔔"
+            priority = "default"
+            tags = "bell"
+
+        title = f"{emoji} {signal.signal_type.value.replace('_', ' ')} - {signal.coin}"
+        message = (
+            f"Strength: {signal.strength.value}\n"
+            f"Confidence: {signal.confidence:.0%}\n"
+            f"Sentiment: {signal.sentiment_score:+.2f} ({signal.sentiment_zscore:+.1f}σ)\n"
+            f"Price 24h: {signal.price_change_24h:+.1f}%\n\n"
+            f"{signal.description}"
+        )
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.url,
+                    data=message.encode('utf-8'),
+                    headers={
+                        "Title": title,
+                        "Priority": priority,
+                        "Tags": tags,
+                    },
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info(f"Sent alert to Ntfy topic: {self.topic}")
+                        return True
+                    else:
+                        error = await resp.text()
+                        logger.error(f"Ntfy error: {error}")
+                        return False
+        except Exception as e:
+            logger.error(f"Failed to send Ntfy alert: {e}")
+            return False
+
+    async def send_message(self, title: str, message: str, priority: str = "default") -> bool:
+        """Send a plain message to the topic."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.url,
+                    data=message.encode('utf-8'),
+                    headers={
+                        "Title": title,
+                        "Priority": priority,
+                    },
+                ) as resp:
+                    return resp.status == 200
+        except Exception as e:
+            logger.error(f"Failed to send Ntfy message: {e}")
+            return False
+
+
 class DiscordChannel(AlertChannel):
     """Discord webhook for sending alerts."""
 

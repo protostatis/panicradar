@@ -15,6 +15,7 @@ import pandas as pd
 from scipy import stats
 
 from .logging_config import logger
+from .analysis.source_weights import load_weights_from_db_sync
 
 
 @dataclass
@@ -56,9 +57,9 @@ class PredictionResult:
 class SentimentAnalyzer:
     """Analyze sentiment data and compute aggregate signals."""
 
-    # Source weights based on expected informativeness
-    SOURCE_WEIGHTS = {
-        "fear_greed": 0.25,        # Market-wide baseline
+    # Default source weights (fallback if database table not available)
+    DEFAULT_WEIGHTS = {
+        "fear_greed": 0.25,
         "reddit_cryptocurrency": 0.20,
         "reddit_bitcoin": 0.15,
         "reddit_ethereum": 0.15,
@@ -70,6 +71,54 @@ class SentimentAnalyzer:
 
     def __init__(self, db_path: str = "data/sentiment.db"):
         self.db_path = db_path
+        self._load_weights()
+
+    def _load_weights(self):
+        """Load weights from database, falling back to defaults if unavailable."""
+        try:
+            weight_data = load_weights_from_db_sync(self.db_path)
+            self.source_weights = weight_data.get("weights", {})
+            self.contrarian_sources = weight_data.get("contrarian_sources", set())
+
+            if self.source_weights:
+                logger.info(
+                    f"Loaded {len(self.source_weights)} dynamic source weights "
+                    f"({len(self.contrarian_sources)} contrarian)"
+                )
+            else:
+                # No weights in database yet, use defaults
+                self.source_weights = self.DEFAULT_WEIGHTS.copy()
+                self.contrarian_sources = set()
+                logger.info("Using default source weights (no learned weights yet)")
+        except Exception as e:
+            # Database table might not exist yet
+            logger.warning(f"Could not load source weights from database: {e}")
+            self.source_weights = self.DEFAULT_WEIGHTS.copy()
+            self.contrarian_sources = set()
+
+    def reload_weights(self):
+        """Reload weights from database (for long-running processes)."""
+        self._load_weights()
+
+    def get_weights_summary(self) -> str:
+        """Get a summary of current weights for display."""
+        if not self.source_weights:
+            return "No weights loaded"
+
+        lines = []
+        sorted_weights = sorted(
+            self.source_weights.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        for source, weight in sorted_weights[:5]:  # Top 5
+            marker = " (C)" if source in self.contrarian_sources else ""
+            lines.append(f"  {source}: {weight:.3f}{marker}")
+
+        if len(self.source_weights) > 5:
+            lines.append(f"  ... and {len(self.source_weights) - 5} more")
+
+        return "\n".join(lines)
 
     def get_connection(self) -> sqlite3.Connection:
         """Get database connection."""
@@ -105,7 +154,7 @@ class SentimentAnalyzer:
         conn.close()
 
         if not df.empty:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
 
         return df
 
@@ -137,7 +186,7 @@ class SentimentAnalyzer:
         conn.close()
 
         if not df.empty:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
 
         return df
 
@@ -171,19 +220,29 @@ class SentimentAnalyzer:
         for source in df["source"].unique():
             source_df = df[df["source"] == source]
             avg_score = source_df["score"].mean()
+            is_contrarian = source in self.contrarian_sources
             by_source[source] = {
                 "score": avg_score,
                 "n": len(source_df),
-                "weight": self.SOURCE_WEIGHTS.get(source, 0.05),
+                "weight": self.source_weights.get(source, 0.01),
+                "is_contrarian": is_contrarian,
             }
 
         # Compute weighted average
+        # For contrarian sources, invert their sentiment contribution
         total_weight = 0
         weighted_sum = 0
 
         for source, data in by_source.items():
             weight = data["weight"]
-            weighted_sum += data["score"] * weight
+            score = data["score"]
+
+            # Invert sentiment for contrarian sources
+            # (historically worse than random = inverse signal)
+            if data["is_contrarian"]:
+                score = -score
+
+            weighted_sum += score * weight
             total_weight += weight
 
         composite = weighted_sum / total_weight if total_weight > 0 else 0.0
@@ -202,12 +261,15 @@ class SentimentAnalyzer:
 
         confidence = min(1.0, (n_sources / 5) * 0.5 + agreement * 0.5)
 
+        n_contrarian = sum(1 for d in by_source.values() if d.get("is_contrarian"))
+
         return {
             "composite_score": composite,
             "by_source": by_source,
             "confidence": confidence,
             "signal_strength": abs(composite),
             "n_sources": n_sources,
+            "n_contrarian": n_contrarian,
         }
 
     def compute_price_momentum(self, hours: int = 4, coin: str = "BTC") -> dict:
@@ -380,6 +442,14 @@ def run_inference(lookback_hours: int = 4, horizon_hours: int = 4) -> dict:
     print("CRYPTO SENTIMENT INFERENCE")
     print(f"Lookback: {lookback_hours}h | Prediction Horizon: {horizon_hours}h")
     print("=" * 70)
+
+    # Show weight source
+    n_weights = len(predictor.analyzer.source_weights)
+    n_contrarian = len(predictor.analyzer.contrarian_sources)
+    if n_weights > len(SentimentAnalyzer.DEFAULT_WEIGHTS):
+        print(f"\nUsing {n_weights} learned weights from Bayesian beliefs ({n_contrarian} contrarian)")
+    else:
+        print("\nUsing default source weights")
 
     results = {}
 

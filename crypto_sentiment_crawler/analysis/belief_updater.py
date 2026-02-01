@@ -218,6 +218,17 @@ async def update_orchestrator_beliefs(
 
         logger.info(f"Saved {len(updated_beliefs)} updated beliefs")
 
+        # Update source weights for inference
+        from .source_weights import (
+            compute_weights_from_beliefs,
+            save_weights_to_db,
+            print_weights_table,
+        )
+
+        weights = compute_weights_from_beliefs(updated_beliefs)
+        await save_weights_to_db(db, weights)
+        logger.info(f"Updated {len(weights)} source weights")
+
         # Print summary
         print("\n" + "=" * 60)
         print("BELIEF UPDATE SUMMARY")
@@ -242,6 +253,9 @@ async def update_orchestrator_beliefs(
             print(f"{source:<28} {acc:>6.1%}     {alpha:>6.1f}   {beta:>6.1f}   {mean:>6.3f}   {type_str}")
 
         print("=" * 60)
+
+        # Print weights table
+        print_weights_table(weights)
 
         return updated_beliefs
 

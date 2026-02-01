@@ -149,9 +149,10 @@ class SignalService:
 
         return signal
 
-    async def run_forever(self) -> None:
+    async def run_forever(self, verbose: bool = True) -> None:
         """Run signal detection in a loop."""
         self._running = True
+        self._check_count = 0
         logger.info(f"Starting signal service (check every {self.check_interval}s)")
 
         # Set up Telegram if configured
@@ -161,12 +162,68 @@ class SignalService:
             )
 
         while self._running:
+            self._check_count += 1
             try:
-                await self.run_once()
+                if verbose:
+                    await self._run_once_verbose()
+                else:
+                    await self.run_once()
             except Exception as e:
                 logger.error(f"Signal service error: {e}")
+                if verbose:
+                    print(f"\n❌ Error: {e}")
 
             await asyncio.sleep(self.check_interval)
+
+    async def _run_once_verbose(self) -> None:
+        """Run signal detection once with verbose status output."""
+        from datetime import datetime as dt
+
+        timestamp = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n{'─' * 60}")
+        print(f"[{timestamp}] Check #{self._check_count}")
+        print(f"{'─' * 60}")
+
+        try:
+            summary = await self.get_market_summary()
+            if "error" in summary:
+                print(f"  ⚠️  {summary['error']}")
+                return
+
+            # Price info
+            price = summary.get('current_price', 0)
+            change_24h = summary.get('price_change_24h', 0)
+            change_7d = summary.get('price_change_7d', 0)
+
+            # Sentiment info
+            sentiment = summary.get('sentiment_score', 0)
+            zscore = summary.get('sentiment_zscore', 0)
+            state = summary.get('sentiment_state', 'Unknown')
+            divergence = summary.get('divergence_score', 0)
+
+            # Color coding for terminal
+            price_color = "\033[32m" if change_24h >= 0 else "\033[31m"
+            sent_color = "\033[32m" if sentiment >= 0 else "\033[31m"
+            reset = "\033[0m"
+
+            print(f"  💰 BTC: ${price:,.0f}  {price_color}{change_24h:+.1f}% (24h){reset}  {change_7d:+.1f}% (7d)")
+            print(f"  📊 Sentiment: {sent_color}{sentiment:+.3f}{reset}  Z-Score: {zscore:+.2f}σ  State: {state}")
+            print(f"  📈 Divergence: {divergence:+.3f}")
+
+            # Check for signal
+            signal = await self.check_signals()
+
+            if signal:
+                print(f"\n  🚨 \033[1;33mSIGNAL: {signal.signal_type.value}\033[0m")
+                print(f"     Strength: {signal.strength.value}")
+                print(f"     Confidence: {signal.confidence:.0%}")
+                print(f"     {signal.description[:80]}...")
+                await self.alert_manager.broadcast_signal(signal)
+            else:
+                print(f"  ✅ No signal - conditions within normal ranges")
+
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
 
     def stop(self) -> None:
         """Stop the service."""

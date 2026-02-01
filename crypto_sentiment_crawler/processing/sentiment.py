@@ -426,8 +426,8 @@ class CryptoSentimentAnalyzer:
 # Singleton instance
 # VADER + patterns is faster and better for crypto-specific content (88% accuracy)
 # Transformer (FinBERT) is slower but better for general financial context (75% accuracy on crypto)
-# Recommendation: Use VADER+patterns for crypto, transformer for traditional finance
-sentiment_analyzer = CryptoSentimentAnalyzer(use_transformer=False)
+# Transformer enabled by default - blends 70% FinBERT + 30% crypto lexicon
+sentiment_analyzer = CryptoSentimentAnalyzer(use_transformer=True)
 
 
 def test_analyzer():
