@@ -218,3 +218,81 @@ rm -rf ./data/*
 docker compose build --no-cache
 docker compose up -d
 ```
+
+## AWS EC2 Deployment
+
+Deploy to AWS EC2 using the provided scripts in `deploy/`.
+
+### Prerequisites
+
+1. **AWS CLI** installed and configured:
+   ```bash
+   # Install (macOS)
+   brew install awscli
+
+   # Configure credentials
+   aws configure
+   ```
+
+2. **AWS IAM permissions** for:
+   - EC2 (create/terminate instances, key pairs, security groups)
+   - VPC (describe VPCs)
+
+### Quick Deploy
+
+```bash
+# 1. Create EC2 instance with Docker
+./deploy/ec2-deploy.sh
+
+# 2. Note the public IP from output
+
+# 3. Wait 2-3 minutes, then push application
+./deploy/push-to-ec2.sh <PUBLIC_IP>
+
+# 4. SSH and configure .env
+ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<PUBLIC_IP>
+nano /opt/crypto-sentiment/.env  # Add your API keys
+cd /opt/crypto-sentiment && docker-compose restart
+```
+
+### Deployment Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `deploy/ec2-deploy.sh` | Create EC2 instance with Docker |
+| `deploy/push-to-ec2.sh` | Deploy application to EC2 |
+| `deploy/ec2-teardown.sh` | Terminate EC2 instance |
+
+### Configuration
+
+Environment variables for `ec2-deploy.sh`:
+
+```bash
+# Instance type (default: t3.small)
+INSTANCE_TYPE=t3.medium ./deploy/ec2-deploy.sh
+
+# AWS region (default: us-east-1)
+AWS_REGION=us-west-2 ./deploy/ec2-deploy.sh
+
+# Custom key name
+KEY_NAME=my-key ./deploy/ec2-deploy.sh
+```
+
+### Estimated Costs
+
+| Resource | Cost (us-east-1) |
+|----------|-----------------|
+| t3.small | ~$15/month |
+| t3.medium | ~$30/month |
+| EBS (20GB) | ~$2/month |
+| Data transfer | ~$0.09/GB |
+
+### Teardown
+
+```bash
+# Terminate instance
+./deploy/ec2-teardown.sh
+
+# Or specify instance ID
+./deploy/ec2-teardown.sh i-0abc123def456
+```

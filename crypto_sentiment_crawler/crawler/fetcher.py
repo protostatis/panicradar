@@ -1,6 +1,7 @@
-"""Async HTTP fetcher with rate limiting, retries, and UA rotation."""
+"""Async HTTP fetcher with rate limiting, retries, UA rotation, and proxy support."""
 
 import asyncio
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -8,6 +9,14 @@ from urllib.parse import urlparse
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+# Domains that require proxy (blocked from datacenter IPs)
+PROXY_REQUIRED_DOMAINS = {
+    "old.reddit.com",
+    "www.reddit.com",
+    "reddit.com",
+    "oauth.reddit.com",
+}
 
 # Pool of realistic user agents
 USER_AGENTS = [
@@ -72,7 +81,18 @@ class FetchResult:
 
 class Fetcher:
     """
-    Async HTTP fetcher with rate limiting, retries, and user-agent rotation.
+    Async HTTP fetcher with rate limiting, retries, user-agent rotation, and proxy support.
+
+    Proxy Configuration:
+        Set PROXY_URL environment variable for proxy support.
+        Examples:
+            - HTTP proxy: http://user:pass@proxy.example.com:8080
+            - SOCKS5 proxy: socks5://user:pass@proxy.example.com:1080
+
+        Multiple proxies can be comma-separated for rotation:
+            PROXY_URL=http://proxy1:8080,http://proxy2:8080
+
+        Proxies are automatically used for blocked domains (Reddit, etc.)
     """
 
     def __init__(
@@ -82,6 +102,7 @@ class Fetcher:
         max_retries: int = 3,
         randomize_delay: bool = True,
         delay_range: tuple[float, float] = (0.5, 2.0),
+        proxy_url: str | None = None,
     ):
         self.default_rate_limit = default_rate_limit
         self.timeout = timeout
@@ -92,8 +113,14 @@ class Fetcher:
         # Rate limiters per domain
         self.rate_limiters: dict[str, RateLimiter] = {}
 
-        # HTTP client
+        # Proxy configuration
+        proxy_env = proxy_url or os.environ.get("PROXY_URL", "")
+        self.proxies = [p.strip() for p in proxy_env.split(",") if p.strip()]
+        self.proxy_index = 0
+
+        # HTTP clients (with and without proxy)
         self.client: httpx.AsyncClient | None = None
+        self.proxy_client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
         await self.start()
@@ -103,17 +130,55 @@ class Fetcher:
         await self.close()
 
     async def start(self) -> None:
-        """Initialize the HTTP client."""
+        """Initialize HTTP clients (regular and proxy)."""
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout),
             follow_redirects=True,
         )
 
+        # Initialize proxy client if proxies configured
+        if self.proxies:
+            proxy = self._get_next_proxy()
+            self.proxy_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+                proxy=proxy,
+            )
+
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close HTTP clients."""
         if self.client:
             await self.client.aclose()
             self.client = None
+        if self.proxy_client:
+            await self.proxy_client.aclose()
+            self.proxy_client = None
+
+    def _get_next_proxy(self) -> str | None:
+        """Get next proxy URL (rotating through list)."""
+        if not self.proxies:
+            return None
+        proxy = self.proxies[self.proxy_index % len(self.proxies)]
+        self.proxy_index += 1
+        return proxy
+
+    def _needs_proxy(self, url: str) -> bool:
+        """Check if URL requires proxy (blocked domains)."""
+        domain = self._get_domain(url)
+        return domain in PROXY_REQUIRED_DOMAINS
+
+    async def _rotate_proxy(self) -> None:
+        """Rotate to next proxy (recreate proxy client)."""
+        if not self.proxies or len(self.proxies) <= 1:
+            return
+        if self.proxy_client:
+            await self.proxy_client.aclose()
+        proxy = self._get_next_proxy()
+        self.proxy_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout),
+            follow_redirects=True,
+            proxy=proxy,
+        )
 
     def _get_domain(self, url: str) -> str:
         """Extract domain from URL."""
@@ -152,8 +217,11 @@ class Fetcher:
         self,
         url: str,
         headers: dict,
+        use_proxy: bool = False,
     ) -> httpx.Response:
         """Fetch URL with automatic retry on failure."""
+        if use_proxy and self.proxy_client:
+            return await self.proxy_client.get(url, headers=headers)
         if not self.client:
             raise RuntimeError("Fetcher not started. Call start() first.")
         return await self.client.get(url, headers=headers)
@@ -163,14 +231,16 @@ class Fetcher:
         url: str,
         rate_limit: float | None = None,
         extra_headers: dict | None = None,
+        force_proxy: bool = False,
     ) -> FetchResult:
         """
-        Fetch a URL with rate limiting and retries.
+        Fetch a URL with rate limiting, retries, and automatic proxy for blocked domains.
 
         Args:
             url: URL to fetch
             rate_limit: Override rate limit for this domain
             extra_headers: Additional headers to include
+            force_proxy: Force proxy usage even for non-blocked domains
 
         Returns:
             FetchResult with content or error
@@ -187,14 +257,43 @@ class Fetcher:
         headers = self._get_headers(extra_headers)
         start_time = time.monotonic()
 
+        # Determine if proxy should be used
+        use_proxy = force_proxy or (self._needs_proxy(url) and self.proxy_client is not None)
+
         try:
-            response = await self._fetch_with_retry(url, headers)
+            response = await self._fetch_with_retry(url, headers, use_proxy=use_proxy)
             elapsed = time.monotonic() - start_time
+
+            # Check if blocked (Reddit returns HTML with "Blocked" title)
+            content = response.text
+            is_blocked = (
+                response.status_code == 200
+                and "<title>Blocked</title>" in content[:500]
+            )
+
+            if is_blocked and self.proxy_client and not use_proxy:
+                # Retry with proxy
+                response = await self._fetch_with_retry(url, headers, use_proxy=True)
+                content = response.text
+                is_blocked = "<title>Blocked</title>" in content[:500]
+
+            if is_blocked:
+                # Rotate proxy and mark as failed
+                await self._rotate_proxy()
+                return FetchResult(
+                    url=url,
+                    status_code=403,
+                    content="",
+                    headers=dict(response.headers),
+                    elapsed_seconds=elapsed,
+                    success=False,
+                    error="Blocked by site (need working proxy)",
+                )
 
             return FetchResult(
                 url=url,
                 status_code=response.status_code,
-                content=response.text,
+                content=content,
                 headers=dict(response.headers),
                 elapsed_seconds=elapsed,
                 success=response.status_code == 200,
@@ -203,6 +302,9 @@ class Fetcher:
 
         except Exception as e:
             elapsed = time.monotonic() - start_time
+            # Rotate proxy on failure
+            if use_proxy:
+                await self._rotate_proxy()
             return FetchResult(
                 url=url,
                 status_code=0,
