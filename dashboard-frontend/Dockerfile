@@ -18,7 +18,8 @@ RUN npm ci
 COPY . .
 
 # Build for production
-ARG VITE_API_URL=/api
+# VITE_API_URL is empty because client.js paths already include /api/
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build
