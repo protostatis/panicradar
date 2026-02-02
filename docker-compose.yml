@@ -1,0 +1,148 @@
+services:
+  # ============================================
+  # Crawler Service - Background sentiment crawler
+  # ============================================
+  crawler:
+    build:
+      context: .
+      target: crawler
+    container_name: crypto-crawler
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_PATH=/app/data/sentiment.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-crypto_sentiment_crawler/1.0}
+      - WHALE_ALERT_API_KEY=${WHALE_ALERT_API_KEY:-}
+      - ETHERSCAN_API_KEY=${ETHERSCAN_API_KEY:-}
+    depends_on:
+      - api
+    networks:
+      - crypto-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/data/sentiment.db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # API Service - FastAPI backend
+  # ============================================
+  api:
+    build:
+      context: .
+      target: api
+    container_name: crypto-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_PATH=/app/data/sentiment.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - crypto-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Frontend - React Dashboard
+  # ============================================
+  frontend:
+    build:
+      context: ./dashboard-frontend
+      target: production
+      args:
+        - VITE_API_URL=/api
+    container_name: crypto-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    networks:
+      - crypto-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Backfill Service - One-time historical data
+  # ============================================
+  backfill:
+    build:
+      context: .
+      target: backfill
+    container_name: crypto-backfill
+    profiles:
+      - backfill  # Only run with: docker compose --profile backfill up backfill
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_PATH=/app/data/sentiment.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - crypto-net
+
+  # ============================================
+  # Gap Backfill - Fill missing daily data
+  # ============================================
+  gap-backfill:
+    build:
+      context: .
+      target: base
+    container_name: crypto-gap-backfill
+    profiles:
+      - backfill
+    command: ["uv", "run", "python", "-m", "crypto_sentiment_crawler.backfill_gaps"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_PATH=/app/data/sentiment.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - crypto-net
+
+  # ============================================
+  # User Score Backfill - Score existing posts
+  # ============================================
+  score-backfill:
+    build:
+      context: .
+      target: base
+    container_name: crypto-score-backfill
+    profiles:
+      - backfill
+    command: >
+      uv run python -c "
+      from crypto_sentiment_crawler.processing.user_sentiment import backfill_user_scores;
+      backfill_user_scores('/app/data/sentiment.db')
+      "
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_PATH=/app/data/sentiment.db
+    networks:
+      - crypto-net
+
+networks:
+  crypto-net:
+    driver: bridge
+
+volumes:
+  data:
+  logs:
