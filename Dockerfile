@@ -16,10 +16,10 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /app
 
 # Copy dependency files first for better caching
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml uv.lock* roadmap.md ./
 
-# Install dependencies
-RUN uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
+# Install dependencies (non-editable for production)
+RUN uv sync --frozen --no-dev --no-editable 2>/dev/null || uv sync --no-dev --no-editable
 
 # Copy application code
 COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/

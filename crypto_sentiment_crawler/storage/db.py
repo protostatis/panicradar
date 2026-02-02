@@ -214,6 +214,16 @@ class Database:
         await self.conn.commit()
         return cursor.lastrowid or 0
 
+    async def insert_sentiment_score(self, data) -> int:
+        """Stub for deprecated sentiment_scores table.
+
+        This method is kept for backwards compatibility with collectors
+        that haven't been updated to use user_sentiment_scores yet.
+        Data is not stored - use UserSentimentScorer for new scoring.
+        """
+        logger.debug(f"insert_sentiment_score called (deprecated) - data not stored")
+        return 0
+
     async def get_latest_prices(self, coin: str, limit: int = 100) -> list[PriceData]:
         """Get latest prices for a coin."""
         cursor = await self.conn.execute(
