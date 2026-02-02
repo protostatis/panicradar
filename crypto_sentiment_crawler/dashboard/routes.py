@@ -236,12 +236,31 @@ async def get_bayesian_beliefs():
     """
     state = load_bayesian_beliefs(STATE_PATH)
 
+    # Load accuracy data from source_weights table
+    conn = get_db_connection(DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT source, accuracy, is_contrarian FROM source_weights"
+        )
+        source_weights = {
+            row["source"]: {
+                "accuracy": row["accuracy"],
+                "is_contrarian": bool(row["is_contrarian"]),
+            }
+            for row in cursor.fetchall()
+        }
+    finally:
+        conn.close()
+
     beliefs = []
     for source, belief in state.get("beliefs", {}).items():
         alpha = belief.get("alpha", 1.0)
         beta = belief.get("beta", 1.0)
-        accuracy = belief.get("accuracy")
-        is_contrarian = belief.get("is_contrarian", False)
+        # Get accuracy from source_weights table, fallback to belief
+        sw = source_weights.get(source, {})
+        accuracy = sw.get("accuracy") or belief.get("accuracy")
+        is_contrarian = sw.get("is_contrarian", belief.get("is_contrarian", False))
 
         beliefs.append(
             SourceBelief(
