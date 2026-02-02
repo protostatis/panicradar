@@ -359,7 +359,7 @@ async def view_live_stats() -> None:
 
     # Counts
     counts = {}
-    for table in ["sentiment_raw", "sentiment_scores", "price_data"]:
+    for table in ["sentiment_raw", "user_sentiment_scores", "price_data"]:
         counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
     # Recent activity
@@ -383,7 +383,7 @@ async def view_live_stats() -> None:
     print("=" * 50)
     print(f"Total crawls: {state.get('total_crawls', 0)}")
     print(f"Raw records: {counts['sentiment_raw']}")
-    print(f"Scores: {counts['sentiment_scores']}")
+    print(f"User scores: {counts['user_sentiment_scores']}")
     print(f"Prices: {counts['price_data']}")
     if recent:
         print(f"Last crawl: {recent[0]} at {recent[1][:19]}")

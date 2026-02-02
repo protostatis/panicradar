@@ -9,7 +9,7 @@ import aiosqlite
 
 from ..config import settings
 from ..logging_config import logger
-from .models import OnChainMetric, PriceData, SentimentRaw, SentimentScore
+from .models import OnChainMetric, PriceData, SentimentRaw
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sentiment_raw (
@@ -19,17 +19,6 @@ CREATE TABLE IF NOT EXISTS sentiment_raw (
     coin VARCHAR(10),
     raw_data JSON NOT NULL,
     content_hash VARCHAR(64),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS sentiment_scores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME NOT NULL,
-    coin VARCHAR(10) NOT NULL,
-    source VARCHAR(50) NOT NULL,
-    score FLOAT NOT NULL,
-    confidence FLOAT,
-    sample_size INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -53,7 +42,6 @@ CREATE TABLE IF NOT EXISTS on_chain_metrics (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_sentiment_scores_time ON sentiment_scores(timestamp, coin);
 CREATE INDEX IF NOT EXISTS idx_price_data_time ON price_data(timestamp, coin);
 CREATE INDEX IF NOT EXISTS idx_on_chain_time ON on_chain_metrics(timestamp, coin);
 CREATE INDEX IF NOT EXISTS idx_sentiment_raw_time ON sentiment_raw(timestamp, source);
@@ -189,25 +177,6 @@ class Database:
         await self.conn.commit()
         return cursor.lastrowid or 0
 
-    async def insert_sentiment_score(self, data: SentimentScore) -> int:
-        """Insert a processed sentiment score."""
-        cursor = await self.conn.execute(
-            """
-            INSERT INTO sentiment_scores (timestamp, coin, source, score, confidence, sample_size)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                data.timestamp.isoformat(),
-                data.coin,
-                data.source,
-                data.score,
-                data.confidence,
-                data.sample_size,
-            ),
-        )
-        await self.conn.commit()
-        return cursor.lastrowid or 0
-
     async def insert_price_data(self, data: PriceData) -> int:
         """Insert price data."""
         cursor = await self.conn.execute(
@@ -244,33 +213,6 @@ class Database:
         )
         await self.conn.commit()
         return cursor.lastrowid or 0
-
-    async def get_latest_sentiment_scores(
-        self, coin: str, limit: int = 100
-    ) -> list[SentimentScore]:
-        """Get latest sentiment scores for a coin."""
-        cursor = await self.conn.execute(
-            """
-            SELECT timestamp, coin, source, score, confidence, sample_size
-            FROM sentiment_scores
-            WHERE coin = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            (coin, limit),
-        )
-        rows = await cursor.fetchall()
-        return [
-            SentimentScore(
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                coin=row["coin"],
-                source=row["source"],
-                score=row["score"],
-                confidence=row["confidence"],
-                sample_size=row["sample_size"],
-            )
-            for row in rows
-        ]
 
     async def get_latest_prices(self, coin: str, limit: int = 100) -> list[PriceData]:
         """Get latest prices for a coin."""

@@ -16,30 +16,71 @@ def get_db_connection(db_path: str = "data/sentiment.db") -> sqlite3.Connection:
 
 
 def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
-    """Get the latest aggregated sentiment metrics."""
-    # Get recent user sentiment scores (last 24 hours)
+    """Get the latest aggregated sentiment metrics from user_sentiment_scores, weighted by learned beliefs.
+
+    Panic/FOMO indices are calculated as:
+    - Percentage of posts with non-zero fear/euphoria signals
+    - Weighted by the intensity of those signals
+    This makes the indices more dynamic and meaningful than simple averaging.
+    """
+    # Join user_sentiment_scores with sentiment_raw to get source, then apply source weights
+    # Contrarian sources have their sentiment inverted
     cursor = conn.execute(
         """
+        WITH source_averages AS (
+            SELECT
+                sr.source,
+                AVG(uss.final_score) as avg_score,
+                -- Calculate percentage of posts with fear signals, weighted by intensity
+                SUM(CASE WHEN uss.fear_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as fear_pct,
+                AVG(CASE WHEN uss.fear_index > 0 THEN uss.fear_index ELSE NULL END) as fear_intensity,
+                -- Calculate percentage of posts with euphoria signals, weighted by intensity
+                SUM(CASE WHEN uss.euphoria_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as euphoria_pct,
+                AVG(CASE WHEN uss.euphoria_index > 0 THEN uss.euphoria_index ELSE NULL END) as euphoria_intensity,
+                AVG(uss.activity_level) as avg_activity,
+                COUNT(*) as sample_count,
+                MAX(uss.timestamp) as latest_timestamp
+            FROM user_sentiment_scores uss
+            JOIN sentiment_raw sr ON uss.raw_id = sr.id
+            WHERE uss.timestamp >= datetime('now', '-4 hours')
+              AND uss.final_score IS NOT NULL
+            GROUP BY sr.source
+        )
         SELECT
-            AVG(final_score) as sentiment_score,
-            AVG(fear_index) as fear_index,
-            AVG(euphoria_index) as euphoria_index,
-            AVG(activity_level) as activity_level,
-            MAX(timestamp) as latest_timestamp
-        FROM user_sentiment_scores
-        WHERE timestamp >= datetime('now', '-24 hours')
-          AND final_score IS NOT NULL
+            SUM(
+                CASE WHEN COALESCE(sw.is_contrarian, 0) = 1
+                     THEN -sa.avg_score
+                     ELSE sa.avg_score
+                END * COALESCE(sw.weight, 0.01) * sa.sample_count
+            ) / NULLIF(SUM(COALESCE(sw.weight, 0.01) * sa.sample_count), 0) as sentiment_score,
+            -- Combine percentage and intensity: sqrt(pct * intensity) gives balanced signal
+            AVG(sa.fear_pct * COALESCE(sa.fear_intensity, 0.5)) as fear_index,
+            AVG(sa.euphoria_pct * COALESCE(sa.euphoria_intensity, 0.5)) as euphoria_index,
+            -- Also provide raw percentages for display
+            AVG(sa.fear_pct) as fear_pct,
+            AVG(sa.euphoria_pct) as euphoria_pct,
+            AVG(sa.avg_activity) as activity_level,
+            MAX(sa.latest_timestamp) as latest_timestamp,
+            SUM(sa.sample_count) as sample_count
+        FROM source_averages sa
+        LEFT JOIN source_weights sw ON sa.source = sw.source
         """
     )
     row = cursor.fetchone()
 
     if row and row["sentiment_score"] is not None:
+        # Use percentage-based calculation for more dynamic indices
+        fear_pct = row["fear_pct"] or 0.0
+        euphoria_pct = row["euphoria_pct"] or 0.0
+
         return {
             "sentiment_score": row["sentiment_score"],
-            "fear_index": row["fear_index"] or 0.0,
-            "euphoria_index": row["euphoria_index"] or 0.0,
+            # Show percentage of posts with fear/euphoria signals (more intuitive)
+            "fear_index": fear_pct,
+            "euphoria_index": euphoria_pct,
             "activity_level": row["activity_level"] or 0.0,
             "timestamp": row["latest_timestamp"],
+            "sample_count": row["sample_count"] or 0,
         }
 
     return {
@@ -48,6 +89,7 @@ def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
         "euphoria_index": 0.0,
         "activity_level": 0.0,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sample_count": 0,
     }
 
 
@@ -147,15 +189,20 @@ def get_price_change(
 def get_sentiment_history(
     conn: sqlite3.Connection, days: int = 30
 ) -> list[dict]:
-    """Get daily sentiment history for charts including bull/bear indices."""
+    """Get daily sentiment history for charts including bull/bear indices.
+
+    Uses percentage-based calculation for fear/euphoria to show more dynamic values.
+    """
     cursor = conn.execute(
         """
         SELECT
             date(timestamp) as date,
             AVG(final_score) as sentiment_score,
-            AVG(fear_index) as fear_index,
-            AVG(euphoria_index) as euphoria_index,
-            AVG(activity_level) as activity_level
+            -- Percentage of posts with fear/euphoria signals (more meaningful than avg)
+            SUM(CASE WHEN fear_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as fear_index,
+            SUM(CASE WHEN euphoria_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as euphoria_index,
+            AVG(activity_level) as activity_level,
+            COUNT(*) as sample_count
         FROM user_sentiment_scores
         WHERE timestamp >= datetime('now', '-' || ? || ' days')
           AND final_score IS NOT NULL
@@ -172,6 +219,7 @@ def get_sentiment_history(
             "fear_index": row["fear_index"] or 0,
             "euphoria_index": row["euphoria_index"] or 0,
             "activity_level": row["activity_level"] or 0,
+            "sample_count": row["sample_count"] or 0,
         }
         for row in cursor.fetchall()
     ]
@@ -334,15 +382,19 @@ def get_source_type_label(accuracy: Optional[float], is_contrarian: bool) -> str
 def get_source_sentiment_history(
     conn: sqlite3.Connection, source: str, days: int = 30
 ) -> list[dict]:
-    """Get daily sentiment history for a specific source including bull/bear indices."""
+    """Get daily sentiment history for a specific source including bull/bear indices.
+
+    Uses percentage-based calculation for fear/euphoria.
+    """
     # Query from user_sentiment_scores joined with sentiment_raw to get source-specific data
     cursor = conn.execute(
         """
         SELECT
             date(uss.timestamp) as date,
             AVG(uss.final_score) as sentiment_score,
-            AVG(uss.fear_index) as fear_index,
-            AVG(uss.euphoria_index) as euphoria_index,
+            -- Percentage of posts with fear/euphoria signals
+            SUM(CASE WHEN uss.fear_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as fear_index,
+            SUM(CASE WHEN uss.euphoria_index > 0 THEN 1.0 ELSE 0 END) / COUNT(*) as euphoria_index,
             AVG(uss.activity_level) as activity_level,
             COUNT(*) as sample_size
         FROM user_sentiment_scores uss
@@ -358,61 +410,33 @@ def get_source_sentiment_history(
 
     results = cursor.fetchall()
 
-    if results:
-        return [
-            {
-                "date": row["date"],
-                "timestamp": f"{row['date']}T00:00:00Z",
-                "sentiment_score": row["sentiment_score"] or 0,
-                "fear_index": row["fear_index"] or 0,
-                "euphoria_index": row["euphoria_index"] or 0,
-                "activity_level": row["activity_level"] or 0,
-                "sample_size": row["sample_size"] or 0,
-            }
-            for row in results
-        ]
-
-    # Fallback to sentiment_scores table if no user-level data
-    cursor = conn.execute(
-        """
-        SELECT
-            date(timestamp) as date,
-            AVG(score) as sentiment_score,
-            SUM(sample_size) as sample_size
-        FROM sentiment_scores
-        WHERE source = ?
-          AND timestamp >= datetime('now', '-' || ? || ' days')
-        GROUP BY date(timestamp)
-        ORDER BY date ASC
-        """,
-        (source, days),
-    )
-
     return [
         {
             "date": row["date"],
             "timestamp": f"{row['date']}T00:00:00Z",
             "sentiment_score": row["sentiment_score"] or 0,
-            "fear_index": 0,
-            "euphoria_index": 0,
-            "activity_level": 0,
+            "fear_index": row["fear_index"] or 0,
+            "euphoria_index": row["euphoria_index"] or 0,
+            "activity_level": row["activity_level"] or 0,
             "sample_size": row["sample_size"] or 0,
         }
-        for row in cursor.fetchall()
+        for row in results
     ]
 
 
 def get_all_sources_sentiment_history(
     conn: sqlite3.Connection, days: int = 30, min_samples: int = 10
 ) -> dict[str, list[dict]]:
-    """Get daily sentiment history for all sources with sufficient data."""
-    # Get all sources with data
+    """Get daily sentiment history for all sources with sufficient data (user-based scoring only)."""
+    # Get all sources with user_sentiment_scores data
     cursor = conn.execute(
         """
-        SELECT DISTINCT source
-        FROM sentiment_scores
-        WHERE timestamp >= datetime('now', '-' || ? || ' days')
-        GROUP BY source
+        SELECT DISTINCT sr.source
+        FROM user_sentiment_scores uss
+        JOIN sentiment_raw sr ON uss.raw_id = sr.id
+        WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+          AND uss.final_score IS NOT NULL
+        GROUP BY sr.source
         HAVING COUNT(*) >= ?
         """,
         (days, min_samples),
@@ -430,13 +454,15 @@ def get_all_sources_sentiment_history(
 
 
 def get_available_sources(conn: sqlite3.Connection) -> list[str]:
-    """Get list of all available sources with sentiment data."""
+    """Get list of all available sources with user-based sentiment data."""
     cursor = conn.execute(
         """
-        SELECT DISTINCT source, COUNT(*) as count
-        FROM sentiment_scores
-        WHERE timestamp >= datetime('now', '-30 days')
-        GROUP BY source
+        SELECT DISTINCT sr.source, COUNT(*) as count
+        FROM user_sentiment_scores uss
+        JOIN sentiment_raw sr ON uss.raw_id = sr.id
+        WHERE uss.timestamp >= datetime('now', '-30 days')
+          AND uss.final_score IS NOT NULL
+        GROUP BY sr.source
         ORDER BY count DESC
         """
     )

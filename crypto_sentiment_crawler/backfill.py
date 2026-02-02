@@ -13,8 +13,9 @@ from pathlib import Path
 from .crawler.fetcher import Fetcher
 from .crawler.pipeline import RedditPipeline, CrawledContent
 from .logging_config import logger
+from .processing.user_sentiment import UserSentimentScorer
 from .storage.db import Database
-from .storage.models import SentimentRaw, SentimentScore
+from .storage.models import SentimentRaw
 
 
 # Subreddits to backfill - comprehensive historical data
@@ -103,9 +104,11 @@ class HistoricalBackfiller:
         self.db = db
         self.fetcher: Fetcher | None = None
         self.pipeline: RedditPipeline | None = None
+        self.user_scorer = UserSentimentScorer(db_path=str(db.db_path))
         self.stats = {
             "posts_fetched": 0,
             "posts_stored": 0,
+            "posts_scored": 0,
             "comments_total": 0,
             "errors": 0,
         }
@@ -254,35 +257,49 @@ class HistoricalBackfiller:
         return posts, next_after
 
     async def store_post(self, post: CrawledContent) -> None:
-        """Store a backfilled post to database."""
+        """Store a backfilled post to database and compute user sentiment score."""
+        # Prepare raw data
+        raw_data = {
+            "url": post.url,
+            "title": post.title,
+            "content": (post.content or "")[:2000],
+            "author": post.author,
+            "metadata": post.metadata,
+        }
+
         # Store raw
         raw = SentimentRaw(
             timestamp=post.published_at or post.crawled_at,
             source=post.source,
             coin=post.coins_mentioned[0] if post.coins_mentioned else None,
-            raw_data={
-                "url": post.url,
-                "title": post.title,
-                "content": (post.content or "")[:2000],
-                "author": post.author,
-                "metadata": post.metadata,
-            },
+            raw_data=raw_data,
         )
-        await self.db.insert_sentiment_raw(raw)
+        raw_id = await self.db.insert_sentiment_raw(raw)
 
-        # Store sentiment scores
-        for coin in post.coins_mentioned or ["MARKET"]:
-            score = SentimentScore(
-                timestamp=post.published_at or post.crawled_at,
-                coin=coin,
-                source=post.source,
-                score=post.sentiment_score,
-                confidence=0.8,
-                sample_size=1 + len(post.metadata.get("comments", [])),
-            )
-            await self.db.insert_sentiment_score(score)
+        # Skip if duplicate
+        if raw_id == 0:
+            return
 
         self.stats["posts_stored"] += 1
+
+        # Score with user sentiment scorer (multi-dimensional)
+        coin = post.coins_mentioned[0] if post.coins_mentioned else None
+        timestamp = (post.published_at or post.crawled_at).isoformat()
+
+        try:
+            post_score = self.user_scorer.score_post(
+                raw_data=raw_data,
+                raw_id=raw_id,
+                timestamp=timestamp,
+                source=post.source,
+                coin=coin,
+            )
+            if post_score:
+                score_id = self.user_scorer.save_post_score(post_score)
+                if score_id > 0:
+                    self.stats["posts_scored"] += 1
+        except Exception as e:
+            logger.debug(f"User scoring failed: {e}")
 
     async def backfill_subreddit(
         self,

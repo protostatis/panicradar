@@ -58,15 +58,16 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const getSentimentCardType = (state) => {
-    switch (state) {
-      case 'Bullish':
-        return 'bullish';
-      case 'Bearish':
-        return 'bearish';
-      default:
-        return 'neutral';
-    }
+  const getPanicIndexType = (value) => {
+    if (value >= 0.3) return 'bearish';
+    if (value >= 0.1) return 'moderate';
+    return 'low';
+  };
+
+  const getFomoIndexType = (value) => {
+    if (value >= 0.3) return 'bullish';
+    if (value >= 0.1) return 'moderate';
+    return 'low';
   };
 
   const getFearGreedCardType = (label) => {
@@ -100,12 +101,18 @@ const Dashboard = () => {
   return (
     <div className="space-y-6">
       {/* Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard
-          title="Sentiment"
-          value={summary.sentiment_score.toFixed(2)}
-          subtitle={summary.sentiment_state}
-          type={getSentimentCardType(summary.sentiment_state)}
+          title="Panic Index"
+          value={`${((summary.fear_index || 0) * 100).toFixed(1)}%`}
+          subtitle={summary.fear_index >= 0.3 ? 'High Panic' : summary.fear_index >= 0.1 ? 'Moderate' : 'Low'}
+          type={getPanicIndexType(summary.fear_index || 0)}
+        />
+        <MetricCard
+          title="FOMO Index"
+          value={`${((summary.euphoria_index || 0) * 100).toFixed(1)}%`}
+          subtitle={summary.euphoria_index >= 0.3 ? 'High FOMO' : summary.euphoria_index >= 0.1 ? 'Moderate' : 'Low'}
+          type={getFomoIndexType(summary.euphoria_index || 0)}
         />
         <MetricCard
           title="Fear & Greed"
@@ -126,7 +133,7 @@ const Dashboard = () => {
       </div>
 
       {/* Coin Price Card with Chart */}
-      <CoinPriceCard historyData={history?.data || []} />
+      <CoinPriceCard />
 
       {/* Bull vs Bear Chart */}
       <BullBearChart

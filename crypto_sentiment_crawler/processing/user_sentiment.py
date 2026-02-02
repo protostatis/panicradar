@@ -254,9 +254,24 @@ class UserSentimentScorer:
             return "neutral"
 
     def _extract_user_info(self, raw_data: dict) -> tuple[Optional[str], str, str]:
-        """Extract username, title, content from raw_data."""
+        """Extract username, title, content from raw_data.
+
+        Handles different source formats:
+        - Reddit: author, title, content/body
+        - Stocktwits: username, body
+        - 4chan: anonymous (use post_id as pseudo-user), thread_subject, text
+        """
+        # Try standard username fields
         username = raw_data.get('author') or raw_data.get('username')
-        title = raw_data.get('title', '') or ''
+
+        # For anonymous sources like 4chan, use post_id as pseudo-user
+        if not username and raw_data.get('post_id'):
+            username = f"anon_{raw_data['post_id']}"
+
+        # Title: try standard field, then 4chan's thread_subject
+        title = raw_data.get('title') or raw_data.get('thread_subject') or ''
+
+        # Content: try multiple fields
         content = (
             raw_data.get('content') or
             raw_data.get('body') or
@@ -698,17 +713,31 @@ class UserSentimentScorer:
         }
 
 
-def backfill_user_scores(db_path: str = "data/sentiment.db", limit: int = None, update_existing: bool = False):
-    """Backfill existing raw data into user sentiment scores with multi-dimensional signals."""
+def backfill_user_scores(db_path: str = "data/sentiment.db", limit: int = None, update_existing: bool = False, sources: list = None):
+    """Backfill existing raw data into user sentiment scores with multi-dimensional signals.
+
+    Args:
+        db_path: Path to SQLite database
+        limit: Max number of posts to process (None for all)
+        update_existing: Whether to update already-scored posts
+        sources: List of source patterns to include (None for all social sources)
+    """
     scorer = UserSentimentScorer(db_path=db_path)
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    query = """
+    # Default to all social media sources
+    if sources is None:
+        sources = ['reddit%', 'stocktwits', '4chan%', 'bitcointalk%', 'twitter%']
+
+    # Build source filter
+    source_conditions = ' OR '.join([f"source LIKE '{s}'" if '%' in s else f"source = '{s}'" for s in sources])
+
+    query = f"""
         SELECT id, source, raw_data, timestamp, coin
         FROM sentiment_raw
-        WHERE source LIKE 'reddit%' OR source = 'stocktwits'
+        WHERE ({source_conditions})
         ORDER BY timestamp
     """
     if limit:

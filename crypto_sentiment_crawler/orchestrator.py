@@ -17,8 +17,9 @@ from .crawler import ContentPipeline, Fetcher
 from .crawler.pipeline import CrawledContent, RedditPipeline
 from .crawler.sources import DEFAULT_SOURCES, SourceConfig, get_all_sources
 from .logging_config import logger
+from .processing.user_sentiment import UserSentimentScorer
 from .storage.db import Database
-from .storage.models import PriceData, SentimentRaw, SentimentScore
+from .storage.models import PriceData, SentimentRaw
 
 
 @dataclass
@@ -92,6 +93,9 @@ class CrawlerOrchestrator:
         self.fetcher = Fetcher()
         self.pipeline: ContentPipeline | None = None
         self.reddit_pipeline: RedditPipeline | None = None
+
+        # User sentiment scorer for multi-dimensional scoring
+        self.user_scorer = UserSentimentScorer(db_path=str(db.db_path))
 
         # State
         self.state = OrchestratorState()
@@ -201,12 +205,14 @@ class CrawlerOrchestrator:
             return prices[0].price_usd
         return 0.0
 
-    async def select_and_crawl(self) -> CrawledContent | None:
+    async def select_and_crawl(self) -> list[CrawledContent]:
         """
         Main loop iteration:
         1. Select source using Thompson Sampling
         2. Crawl the selected source
-        3. Store content and queue for evaluation
+        3. Store ALL content and queue for evaluation
+
+        Returns list of all crawled content.
         """
         if not self.bandit:
             raise RuntimeError("Orchestrator not initialized")
@@ -223,80 +229,77 @@ class CrawlerOrchestrator:
             f"mean={selection.belief.mean:.3f})"
         )
 
-        # Crawl based on source type
-        content = await self._crawl_source(source_name, source_config)
+        # Crawl based on source type - get ALL posts
+        contents = await self._crawl_source_batch(source_name, source_config)
 
-        if content:
-            # Get current price for later evaluation
-            price = await self._get_current_price("BTC")
+        if not contents:
+            return []
 
-            # Queue for evaluation
-            outcome = CrawlOutcome(
-                content=content,
-                price_at_crawl=price,
-                timestamp=datetime.now(timezone.utc),
-            )
-            self.pending_outcomes.append(outcome)
+        # Get current price for later evaluation
+        price = await self._get_current_price("BTC")
+        stored_count = 0
+
+        for content in contents:
+            # Queue for evaluation (only first post for belief update)
+            if stored_count == 0:
+                outcome = CrawlOutcome(
+                    content=content,
+                    price_at_crawl=price,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                self.pending_outcomes.append(outcome)
 
             # Store to database
             await self._store_content(content)
 
-            # Compute immediate novelty (before accuracy is known)
+            # Compute immediate novelty
             text = content.content or content.title or ""
-            novelty = self.utility_scorer.compute_novelty_only(text, add_to_recent=True)
-            title_preview = (content.title or "No title")[:50]
+            self.utility_scorer.compute_novelty_only(text, add_to_recent=True)
 
-            # Log post age and content stats
-            if content.published_at:
-                age_hours = (content.crawled_at - content.published_at).total_seconds() / 3600
-                age_str = f"age={age_hours:.1f}h"
-            else:
-                age_str = "age=?"
-
-            # Content stats
-            content_len = len(content.content) if content.content else 0
-            n_comments = len(content.metadata.get("comments", []))
-            content_str = f"content={content_len}ch/{n_comments}cmt"
-
-            logger.info(f"Crawled: {title_preview}... ({age_str}, {content_str})")
-
+            stored_count += 1
             self.state.total_crawls += 1
 
-        return content
+        # Log summary
+        if contents:
+            logger.info(f"Stored {stored_count} posts from {source_name}")
 
-    async def _crawl_source(
+        return contents
+
+    async def _crawl_source_batch(
         self,
         source_name: str,
         source_config: SourceConfig,
         mode: str = "inference",
-    ) -> CrawledContent | None:
+    ) -> list[CrawledContent]:
         """
-        Crawl a specific source based on its type.
+        Crawl a specific source and return ALL posts.
 
         Args:
             source_name: Source identifier
             source_config: Source configuration
-            mode: "inference" for fresh posts (last 4 hours), "training" for all posts
+            mode: "inference" for fresh posts (last 24 hours), "training" for all posts
+
+        Returns:
+            List of all crawled content
         """
         try:
             if source_name.startswith("reddit_"):
                 # Reddit crawling
                 subreddit = source_name.replace("reddit_", "")
 
-                # Inference mode: fresh posts only, sorted by new
+                # Inference mode: recent posts, sorted by new
                 # Training mode: all posts, sorted by hot for engagement
                 if mode == "inference":
                     posts = await self.reddit_pipeline.crawl_subreddit(
                         subreddit,
                         sort="new",
-                        limit=10,  # Reduced limit since we fetch full content
-                        max_age_hours=4.0,  # Only posts from last 4 hours
+                        limit=25,  # Fetch more posts
+                        max_age_hours=24.0,  # Posts from last 24 hours (was 4)
                         fetch_content=True,  # Fetch full thread + comments
                         max_comments=10,
                     )
                     if posts:
-                        # Return freshest post with some engagement
-                        # Sort by timestamp (most recent first), then by score as tiebreaker
+                        # Sort by timestamp (most recent first)
                         posts.sort(
                             key=lambda p: (
                                 p.published_at or p.crawled_at,
@@ -304,75 +307,99 @@ class CrawlerOrchestrator:
                             ),
                             reverse=True,
                         )
-                        return posts[0]
+                        return posts  # Return ALL posts
                     else:
-                        logger.warning(f"No fresh posts (<4h old) found in r/{subreddit}")
-                        return None
+                        logger.warning(f"No fresh posts (<24h old) found in r/{subreddit}")
+                        return []
                 else:
                     # Training mode: get popular historical posts
                     posts = await self.reddit_pipeline.crawl_subreddit(
                         subreddit,
                         sort="hot",
-                        limit=10,
+                        limit=25,
                         max_age_hours=None,  # No age filter
                         fetch_content=True,
                         max_comments=15,
                     )
-                    if posts:
-                        # Return highest-engagement post
-                        posts.sort(
-                            key=lambda p: p.metadata.get("score", 0),
-                            reverse=True,
-                        )
-                        return posts[0]
+                    return posts or []
 
             else:
-                # Generic web crawling
+                # Generic web crawling - returns single item as list
                 url = source_config.get_url()
                 selectors = source_config.get_selectors()
-                return await self.pipeline.process_url(
+                result = await self.pipeline.process_url(
                     url,
                     source_name,
                     selectors,
                     source_config.rate_limit,
                 )
+                return [result] if result else []
 
         except Exception as e:
             logger.error(f"Crawl failed for {source_name}: {e}")
-            return None
+            return []
 
-    async def _store_content(self, content: CrawledContent) -> None:
-        """Store crawled content to database."""
+    async def _crawl_source(
+        self,
+        source_name: str,
+        source_config: SourceConfig,
+        mode: str = "inference",
+    ) -> CrawledContent | None:
+        """Legacy single-post crawl (for backward compatibility)."""
+        posts = await self._crawl_source_batch(source_name, source_config, mode)
+        return posts[0] if posts else None
+
+    async def _store_content(self, content: CrawledContent) -> int:
+        """Store crawled content to database and compute user-based sentiment score.
+
+        Returns the raw_id (0 if duplicate).
+        """
         # Store raw
+        raw_data = {
+            "url": content.url,
+            "title": content.title,
+            "content": (content.content or "")[:1000] if content.content else None,
+            "author": content.author,
+            "metadata": content.metadata or {},
+        }
         raw = SentimentRaw(
             timestamp=content.crawled_at,
             source=content.source,
             coin=content.coins_mentioned[0] if content.coins_mentioned else None,
-            raw_data={
-                "url": content.url,
-                "title": content.title,
-                "content": (content.content or "")[:1000] if content.content else None,
-                "author": content.author,
-                "metadata": content.metadata or {},
-            },
+            raw_data=raw_data,
         )
         raw_id = await self.db.insert_sentiment_raw(raw)
 
-        # Skip sentiment score if duplicate (raw_id=0)
+        # Skip if duplicate (raw_id=0)
         if raw_id == 0:
-            return
+            return 0
 
-        # Store sentiment score if coins detected
-        for coin in content.coins_mentioned or ["MARKET"]:
-            score = SentimentScore(
-                timestamp=content.crawled_at,
-                coin=coin,
+        # Score with user-based sentiment scorer (multi-dimensional)
+        coin = content.coins_mentioned[0] if content.coins_mentioned else None
+        try:
+            post_score = self.user_scorer.score_post(
+                raw_data=raw_data,
+                raw_id=raw_id,
+                timestamp=content.crawled_at.isoformat(),
                 source=content.source,
-                score=content.sentiment_score,
-                confidence=0.8,  # TODO: compute from content quality
-                sample_size=1,
+                coin=coin,
             )
-            await self.db.insert_sentiment_score(score)
+            if post_score:
+                score_id = self.user_scorer.save_post_score(post_score)
+                if score_id > 0:
+                    # Update user profile
+                    user_id = self.user_scorer.get_or_create_user(
+                        post_score.username, post_score.source, post_score.timestamp
+                    )
+                    self.user_scorer.update_user_profile(user_id)
+                    logger.debug(
+                        f"User scored: {content.source} final={post_score.final_score:.3f} "
+                        f"fear={post_score.fear_index:.2f} euphoria={post_score.euphoria_index:.2f}"
+                    )
+        except Exception as e:
+            logger.warning(f"User scoring failed for {content.source}: {e}")
+
+        return raw_id
 
     async def evaluate_pending_outcomes(self) -> int:
         """
@@ -448,14 +475,14 @@ class CrawlerOrchestrator:
     async def run_loop(
         self,
         iterations: int = 10,
-        delay_seconds: float = 60.0,
+        delay_seconds: float = 15.0,
     ) -> None:
         """
         Run the main crawl loop.
 
         Args:
             iterations: Number of crawl iterations (0 for infinite)
-            delay_seconds: Delay between iterations
+            delay_seconds: Delay between iterations (default 15s)
         """
         logger.info(f"Starting crawl loop: {iterations} iterations")
 
@@ -516,8 +543,14 @@ class CrawlerOrchestrator:
         }
 
 
-async def run_orchestrator(iterations: int = 10, delay: float = 30.0) -> None:
-    """Main entry point for running the orchestrator."""
+async def run_orchestrator(iterations: int = 10, delay: float = 15.0) -> None:
+    """
+    Main entry point for running the orchestrator.
+
+    Args:
+        iterations: Number of crawl iterations (0 for infinite)
+        delay: Delay between iterations in seconds (default 15s)
+    """
     from .storage.db import Database
 
     db = Database()
