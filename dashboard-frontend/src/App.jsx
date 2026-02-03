@@ -20,7 +20,7 @@ function App() {
         </main>
         <footer className="border-t border-slate-800 py-6 mt-12">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-slate-500 text-sm">
-            <p>Volatility Radar &mdash; Crypto Sentiment Analysis</p>
+            <p>Panic Radar &mdash; Crypto Sentiment Analysis</p>
             <p className="mt-1">Data updated hourly. Not financial advice.</p>
           </div>
         </footer>

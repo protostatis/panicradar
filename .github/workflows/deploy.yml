@@ -1,0 +1,160 @@
+name: Deploy
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/crypto-sentiment
+
+jobs:
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push crawler image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: crawler
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard-frontend
+          target: production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /home/ec2-user/crypto_sentiment_crawler
+
+            # Pull latest code
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+
+            # Login to GitHub Container Registry
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull new images
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
+
+            # Tag images for docker-compose
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest crypto-sentiment-crawler:latest
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto_sentiment_crawler-frontend:latest
+
+            # Restart services
+            docker stop crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
+            docker rm crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
+
+            # Start API first (others depend on it)
+            docker run -d --name crypto-api --restart unless-stopped \
+              -p 8000:8000 \
+              --network crypto-sentiment_crypto-net \
+              -v /opt/crypto-sentiment/data:/app/data \
+              -v /opt/crypto-sentiment/logs:/app/logs \
+              -e DATABASE_PATH=/app/data/sentiment.db \
+              crypto-sentiment-api:latest
+
+            # Wait for API to be healthy
+            sleep 5
+
+            # Add API alias to network
+            docker network disconnect crypto-sentiment_crypto-net crypto-api 2>/dev/null || true
+            docker network connect --alias api crypto-sentiment_crypto-net crypto-api
+
+            # Start frontend
+            docker run -d --name crypto-frontend --restart unless-stopped \
+              -p 80:80 \
+              --network crypto-sentiment_crypto-net \
+              crypto_sentiment_crawler-frontend:latest
+
+            # Start crawler with proxy
+            docker run -d --name crypto-crawler --restart unless-stopped \
+              --network crypto-sentiment_crypto-net \
+              -v /opt/crypto-sentiment/data:/app/data \
+              -v /opt/crypto-sentiment/logs:/app/logs \
+              -e DATABASE_PATH=/app/data/sentiment.db \
+              -e PROXY_URL=http://172.18.0.1:18889 \
+              crypto-sentiment-crawler:latest \
+              uv run crawler background --crawl-interval 12
+
+            # Clean up old images
+            docker image prune -f
+
+            echo "Deployment complete!"
+            docker ps

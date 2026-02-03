@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import {
   BarChart,
   Bar,
@@ -6,7 +6,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Cell,
   ReferenceLine,
 } from 'recharts';
@@ -71,6 +70,20 @@ const CustomTooltip = ({ active, payload }) => {
 const BeliefsChart = ({ beliefs, onSourceClick, showInactive = false }) => {
   const [sortBy, setSortBy] = useState('accuracy'); // 'accuracy', 'samples', 'name'
   const [filterType, setFilterType] = useState('all'); // 'all', 'Momentum', 'Contrarian', 'Neutral'
+  const containerRef = useRef(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // Track container width
+  useEffect(() => {
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.offsetWidth);
+      }
+    };
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, []);
 
   // Process and sort data
   const chartData = useMemo(() => {
@@ -181,12 +194,15 @@ const BeliefsChart = ({ beliefs, onSourceClick, showInactive = false }) => {
             </div>
           </div>
 
-          <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 28)}>
-            <BarChart
-              data={chartData}
-              layout="vertical"
-              margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
-            >
+          <div ref={containerRef} style={{ width: '100%', minWidth: 0 }}>
+            {containerWidth > 0 && (
+              <BarChart
+                data={chartData}
+                layout="vertical"
+                width={containerWidth}
+                height={Math.max(300, chartData.length * 28)}
+                margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+              >
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
               <XAxis
                 type="number"
@@ -217,8 +233,9 @@ const BeliefsChart = ({ beliefs, onSourceClick, showInactive = false }) => {
                   <Cell key={`cell-${index}`} fill={getBarColor(entry.type_label)} />
                 ))}
               </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+              </BarChart>
+            )}
+          </div>
 
           {/* Legend */}
           <div className="flex items-center justify-center gap-6 mt-4 text-sm">

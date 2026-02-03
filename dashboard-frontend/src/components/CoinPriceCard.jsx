@@ -1,16 +1,19 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   AreaChart,
   Area,
   XAxis,
   YAxis,
   Tooltip,
-  ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts';
 import { fetchCoinsList, fetchCoinPrice, fetchCoinHistory } from '../api/client';
+import { useChartSync } from '../context/ChartSyncContext';
 
 const formatDate = (dateStr) => {
-  const date = new Date(dateStr);
+  // Parse as local date to avoid timezone shift
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
@@ -46,6 +49,25 @@ const CoinPriceCard = () => {
   const [coinPrice, setCoinPrice] = useState(null);
   const [coinHistory, setCoinHistory] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const { activeDate, handleMouseMove, handleMouseLeave } = useChartSync();
+  const resizeObserverRef = useRef(null);
+
+  // Callback ref to set up ResizeObserver when element mounts
+  const containerRef = useCallback((node) => {
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+    }
+
+    if (node) {
+      resizeObserverRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      });
+      resizeObserverRef.current.observe(node);
+    }
+  }, []);
 
   // Fetch available coins on mount
   useEffect(() => {
@@ -170,11 +192,15 @@ const CoinPriceCard = () => {
           <p className="text-slate-500 text-sm">Loading...</p>
         </div>
       ) : chartData.length > 0 ? (
-        <div className="h-24">
-          <ResponsiveContainer width="100%" height="100%">
+        <div ref={containerRef} style={{ width: '100%', height: 96, minWidth: 0 }}>
+          {containerWidth > 0 && (
             <AreaChart
               data={chartData}
+              width={containerWidth}
+              height={96}
               margin={{ top: 5, right: 5, left: 5, bottom: 0 }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
             >
               <defs>
                 <linearGradient id={`priceGradient-${selectedCoin}`} x1="0" y1="0" x2="0" y2="1">
@@ -185,6 +211,9 @@ const CoinPriceCard = () => {
               <XAxis dataKey="date" hide />
               <YAxis domain={[minPrice - padding, maxPrice + padding]} hide />
               <Tooltip content={<CustomTooltip />} />
+              {activeDate && chartData.some((d) => d.date === activeDate) && (
+                <ReferenceLine x={activeDate} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 3" />
+              )}
               <Area
                 type="monotone"
                 dataKey="price"
@@ -193,7 +222,7 @@ const CoinPriceCard = () => {
                 fill={`url(#priceGradient-${selectedCoin})`}
               />
             </AreaChart>
-          </ResponsiveContainer>
+          )}
         </div>
       ) : (
         <div className="h-24 flex items-center justify-center">

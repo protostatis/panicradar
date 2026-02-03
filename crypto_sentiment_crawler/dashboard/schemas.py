@@ -144,3 +144,24 @@ class AllSourcesHistory(BaseModel):
 
     days: int
     sources: dict[str, list[SourceSentimentPoint]]
+
+
+class RecentPost(BaseModel):
+    """A recently crawled post."""
+
+    id: int
+    source: str
+    title: str
+    content: Optional[str] = None
+    url: Optional[str] = None
+    author: Optional[str] = None
+    score: Optional[int] = None
+    created_at: str
+    crawled_at: str
+
+
+class RecentPostsResponse(BaseModel):
+    """Response containing recent posts."""
+
+    posts: list[RecentPost]
+    total: int

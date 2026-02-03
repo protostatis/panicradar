@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import {
   BarChart,
   Bar,
@@ -6,12 +6,15 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
+  ReferenceLine,
 } from 'recharts';
+import { useChartSync } from '../context/ChartSyncContext';
 
 const formatDate = (dateStr) => {
-  const date = new Date(dateStr);
+  // Parse as local date to avoid timezone shift
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
@@ -41,6 +44,25 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 const BullBearChart = ({ data, sourcesData = {} }) => {
   const [selectedSource, setSelectedSource] = useState('all');
+  const [containerWidth, setContainerWidth] = useState(0);
+  const { activeDate, handleMouseMove, handleMouseLeave } = useChartSync();
+  const resizeObserverRef = useRef(null);
+
+  // Callback ref to set up ResizeObserver when element mounts
+  const containerRef = useCallback((node) => {
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+    }
+
+    if (node) {
+      resizeObserverRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      });
+      resizeObserverRef.current.observe(node);
+    }
+  }, []);
 
   // Get available sources from sourcesData
   const availableSources = useMemo(() => {
@@ -120,7 +142,7 @@ const BullBearChart = ({ data, sourcesData = {} }) => {
     <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Chart */}
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h3 className="text-lg font-semibold text-slate-200">
               Bull vs Bear (30 days)
@@ -157,12 +179,20 @@ const BullBearChart = ({ data, sourcesData = {} }) => {
             </div>
           </div>
 
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart
-              data={chartData}
-              margin={{ top: 20, right: 20, left: 0, bottom: 0 }}
-            >
+          <div ref={containerRef} style={{ width: '100%', height: 280, minWidth: 0 }}>
+            {containerWidth > 0 && (
+              <BarChart
+                data={chartData}
+                width={containerWidth}
+                height={280}
+                margin={{ top: 20, right: 20, left: 0, bottom: 0 }}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+              >
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+              {activeDate && chartData.some((d) => d.date === activeDate) && (
+                <ReferenceLine x={activeDate} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 3" />
+              )}
               <XAxis
                 dataKey="date"
                 tickFormatter={formatDate}
@@ -205,7 +235,8 @@ const BullBearChart = ({ data, sourcesData = {} }) => {
                 maxBarSize={16}
               />
             </BarChart>
-          </ResponsiveContainer>
+            )}
+          </div>
         </div>
 
         {/* Stats Panel */}

@@ -1,0 +1,73 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+.eggs/
+*.egg-info/
+*.egg
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data files (mounted as volumes)
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.spec
+
+# Documentation
+docs/
+*.md
+!README.md
+!roadmap.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Node (for frontend, handled separately)
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak

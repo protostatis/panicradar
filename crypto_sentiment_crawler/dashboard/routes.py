@@ -33,6 +33,8 @@ from .schemas import (
     DashboardHistory,
     DashboardSummary,
     HistoryPoint,
+    RecentPost,
+    RecentPostsResponse,
     SourceBelief,
     SourceRanking,
     SourceRankings,
@@ -236,12 +238,43 @@ async def get_bayesian_beliefs():
     """
     state = load_bayesian_beliefs(STATE_PATH)
 
+    # Load accuracy data from source_weights table and per-source crawl counts from DB
+    conn = get_db_connection(DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT source, accuracy, is_contrarian FROM source_weights"
+        )
+        source_weights = {
+            row["source"]: {
+                "accuracy": row["accuracy"],
+                "is_contrarian": bool(row["is_contrarian"]),
+            }
+            for row in cursor.fetchall()
+        }
+
+        # Get per-source crawl counts from sentiment_raw (has source column)
+        cursor.execute(
+            "SELECT source, COUNT(*) as count FROM sentiment_raw GROUP BY source"
+        )
+        source_crawl_counts = {row["source"]: row["count"] for row in cursor.fetchall()}
+
+        # Get global total from sentiment_raw
+        cursor.execute("SELECT COUNT(*) FROM sentiment_raw")
+        db_total_crawls = cursor.fetchone()[0]
+    finally:
+        conn.close()
+
     beliefs = []
     for source, belief in state.get("beliefs", {}).items():
         alpha = belief.get("alpha", 1.0)
         beta = belief.get("beta", 1.0)
-        accuracy = belief.get("accuracy")
-        is_contrarian = belief.get("is_contrarian", False)
+        # Get accuracy from source_weights table, fallback to belief
+        sw = source_weights.get(source, {})
+        accuracy = sw.get("accuracy") or belief.get("accuracy")
+        is_contrarian = sw.get("is_contrarian", belief.get("is_contrarian", False))
+        # Get per-source count from database, fallback to state file
+        total_crawls = source_crawl_counts.get(source, belief.get("total_crawls", 0))
 
         beliefs.append(
             SourceBelief(
@@ -253,7 +286,7 @@ async def get_bayesian_beliefs():
                 if belief.get("correlation") is not None
                 else None,
                 is_contrarian=is_contrarian,
-                total_crawls=belief.get("total_crawls", 0),
+                total_crawls=total_crawls,
                 last_updated=belief.get("last_updated"),
                 belief_mean=round(alpha / (alpha + beta), 4) if (alpha + beta) > 0 else 0.5,
                 belief_std=round(compute_beta_std(alpha, beta), 4),
@@ -267,7 +300,7 @@ async def get_bayesian_beliefs():
     return BeliefsResponse(
         beliefs=beliefs,
         baseline_informativeness=state.get("baseline_informativeness", 0.5),
-        total_crawls=state.get("total_crawls", 0),
+        total_crawls=db_total_crawls,
         last_belief_update=state.get("last_belief_update"),
     )
 
@@ -418,5 +451,76 @@ async def get_coin_price_history(
                 for p in prices
             ],
         }
+    finally:
+        conn.close()
+
+
+@router.get("/dashboard/posts/recent", response_model=RecentPostsResponse)
+async def get_recent_posts(
+    limit: int = Query(20, ge=1, le=100, description="Number of posts to return"),
+    source: str | None = Query(None, description="Filter by source"),
+):
+    """
+    Get recently crawled posts.
+
+    Returns the most recent posts from the sentiment_raw table,
+    optionally filtered by source.
+    """
+    import json
+
+    conn = get_db_connection(DB_PATH)
+    try:
+        if source:
+            cursor = conn.execute(
+                """
+                SELECT id, source, raw_data, created_at
+                FROM sentiment_raw
+                WHERE source = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (source, limit),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, source, raw_data, created_at
+                FROM sentiment_raw
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        posts = []
+        for row in cursor.fetchall():
+            try:
+                data = json.loads(row["raw_data"])
+                posts.append(
+                    RecentPost(
+                        id=row["id"],
+                        source=row["source"],
+                        title=data.get("title", data.get("text", "")[:100]),
+                        content=data.get("text") or data.get("selftext") or data.get("body"),
+                        url=data.get("url") or data.get("permalink"),
+                        author=data.get("author"),
+                        score=data.get("score") or data.get("ups"),
+                        created_at=data.get("created_utc", row["created_at"]),
+                        crawled_at=row["created_at"],
+                    )
+                )
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        # Get total count
+        if source:
+            count_cursor = conn.execute(
+                "SELECT COUNT(*) FROM sentiment_raw WHERE source = ?", (source,)
+            )
+        else:
+            count_cursor = conn.execute("SELECT COUNT(*) FROM sentiment_raw")
+        total = count_cursor.fetchone()[0]
+
+        return RecentPostsResponse(posts=posts, total=total)
     finally:
         conn.close()
