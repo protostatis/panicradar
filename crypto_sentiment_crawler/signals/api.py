@@ -1,6 +1,7 @@
 """REST API for the Contrarian Signal Service."""
 
 import os
+import sqlite3
 from datetime import datetime
 from typing import Optional
 
@@ -11,6 +12,28 @@ from pydantic import BaseModel
 from .service import SignalService
 from .subscriptions import SubscriptionManager, SubscriptionTier, TIERS
 from ..dashboard import router as dashboard_router
+from ..storage.db import SCHEMA
+
+
+def init_database_schema(db_path: str) -> None:
+    """Initialize database schema on startup."""
+    from pathlib import Path
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA)
+    conn.commit()
+    conn.close()
+    print(f"Database schema initialized: {db_path}")
+
+
+# Initialize services
+db_path = os.environ.get("DATABASE_PATH", os.environ.get("DB_PATH", "data/sentiment.db"))
+
+# Initialize database schema before starting
+init_database_schema(db_path)
+
+signal_service = SignalService(db_path=db_path)
+subscription_manager = SubscriptionManager()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -54,11 +77,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize services
-db_path = os.environ.get("DB_PATH", "data/sentiment.db")
-signal_service = SignalService(db_path=db_path)
-subscription_manager = SubscriptionManager()
 
 # Include dashboard routes
 app.include_router(dashboard_router)
