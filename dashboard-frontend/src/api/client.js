@@ -73,4 +73,11 @@ export const fetchCoinHistory = async (coin, days = 30) => {
   return response.data;
 };
 
+export const fetchRecentPosts = async (limit = 20, source = null) => {
+  const params = { limit };
+  if (source) params.source = source;
+  const response = await client.get('/api/dashboard/posts/recent', { params });
+  return response.data;
+};
+
 export default client;

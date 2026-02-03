@@ -33,6 +33,8 @@ from .schemas import (
     DashboardHistory,
     DashboardSummary,
     HistoryPoint,
+    RecentPost,
+    RecentPostsResponse,
     SourceBelief,
     SourceRanking,
     SourceRankings,
@@ -449,5 +451,76 @@ async def get_coin_price_history(
                 for p in prices
             ],
         }
+    finally:
+        conn.close()
+
+
+@router.get("/dashboard/posts/recent", response_model=RecentPostsResponse)
+async def get_recent_posts(
+    limit: int = Query(20, ge=1, le=100, description="Number of posts to return"),
+    source: str | None = Query(None, description="Filter by source"),
+):
+    """
+    Get recently crawled posts.
+
+    Returns the most recent posts from the sentiment_raw table,
+    optionally filtered by source.
+    """
+    import json
+
+    conn = get_db_connection(DB_PATH)
+    try:
+        if source:
+            cursor = conn.execute(
+                """
+                SELECT id, source, raw_data, created_at
+                FROM sentiment_raw
+                WHERE source = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (source, limit),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, source, raw_data, created_at
+                FROM sentiment_raw
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        posts = []
+        for row in cursor.fetchall():
+            try:
+                data = json.loads(row["raw_data"])
+                posts.append(
+                    RecentPost(
+                        id=row["id"],
+                        source=row["source"],
+                        title=data.get("title", data.get("text", "")[:100]),
+                        content=data.get("text") or data.get("selftext") or data.get("body"),
+                        url=data.get("url") or data.get("permalink"),
+                        author=data.get("author"),
+                        score=data.get("score") or data.get("ups"),
+                        created_at=data.get("created_utc", row["created_at"]),
+                        crawled_at=row["created_at"],
+                    )
+                )
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        # Get total count
+        if source:
+            count_cursor = conn.execute(
+                "SELECT COUNT(*) FROM sentiment_raw WHERE source = ?", (source,)
+            )
+        else:
+            count_cursor = conn.execute("SELECT COUNT(*) FROM sentiment_raw")
+        total = count_cursor.fetchone()[0]
+
+        return RecentPostsResponse(posts=posts, total=total)
     finally:
         conn.close()

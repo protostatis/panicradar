@@ -6,6 +6,7 @@ import CrowdGauges from '../components/CrowdGauges';
 import VolatilityOutlook from '../components/VolatilityOutlook';
 import BeliefsSummary from '../components/BeliefsSummary';
 import AffiliateBox from '../components/AffiliateBox';
+import RecentPostsFeed from '../components/RecentPostsFeed';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { ChartSyncProvider } from '../context/ChartSyncContext';
@@ -137,11 +138,18 @@ const Dashboard = () => {
       {/* Coin Price Card with Chart */}
       <CoinPriceCard />
 
-      {/* Bull vs Bear Chart */}
-      <BullBearChart
-        data={history?.data || []}
-        sourcesData={sourcesHistory?.sources || {}}
-      />
+      {/* Bull vs Bear Chart and Live Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <BullBearChart
+            data={history?.data || []}
+            sourcesData={sourcesHistory?.sources || {}}
+          />
+        </div>
+        <div className="lg:col-span-1">
+          <RecentPostsFeed />
+        </div>
+      </div>
 
       {/* Bayesian Beliefs Summary */}
       {beliefs && (
