@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   AreaChart,
   Area,
@@ -49,20 +49,24 @@ const CoinPriceCard = () => {
   const [coinPrice, setCoinPrice] = useState(null);
   const [coinHistory, setCoinHistory] = useState(null);
   const [loading, setLoading] = useState(false);
-  const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const { activeDate, handleMouseMove, handleMouseLeave } = useChartSync();
+  const resizeObserverRef = useRef(null);
 
-  // Track container width
-  useEffect(() => {
-    const updateWidth = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth);
-      }
-    };
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
+  // Callback ref to set up ResizeObserver when element mounts
+  const containerRef = useCallback((node) => {
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+    }
+
+    if (node) {
+      resizeObserverRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      });
+      resizeObserverRef.current.observe(node);
+    }
   }, []);
 
   // Fetch available coins on mount

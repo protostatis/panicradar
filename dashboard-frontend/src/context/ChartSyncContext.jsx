@@ -22,12 +22,16 @@ export const ChartSyncProvider = ({ children }) => {
   );
 };
 
+// Default no-op functions for when used outside provider
+const defaultValue = {
+  activeDate: null,
+  handleMouseMove: () => {},
+  handleMouseLeave: () => {},
+};
+
 export const useChartSync = () => {
   const context = useContext(ChartSyncContext);
-  if (!context) {
-    throw new Error('useChartSync must be used within a ChartSyncProvider');
-  }
-  return context;
+  return context || defaultValue;
 };
 
 export default ChartSyncContext;
