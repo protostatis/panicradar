@@ -8,6 +8,7 @@ import BeliefsSummary from '../components/BeliefsSummary';
 import AffiliateBox from '../components/AffiliateBox';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { ChartSyncProvider } from '../context/ChartSyncContext';
 import {
   fetchDashboardSummary,
   fetchDashboardHistory,
@@ -99,6 +100,7 @@ const Dashboard = () => {
   }
 
   return (
+    <ChartSyncProvider>
     <div className="space-y-6">
       {/* Metric Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -170,6 +172,7 @@ const Dashboard = () => {
         />
       )}
     </div>
+    </ChartSyncProvider>
   );
 };
 

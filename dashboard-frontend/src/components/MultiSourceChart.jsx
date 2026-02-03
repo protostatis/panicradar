@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -6,7 +7,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
 
@@ -22,7 +22,9 @@ const COLORS = [
 ];
 
 const formatDate = (dateStr) => {
-  const date = new Date(dateStr);
+  // Parse as local date to avoid timezone shift
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
@@ -52,6 +54,21 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 const MultiSourceChart = ({ sourcesData, selectedSources }) => {
+  const containerRef = useRef(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // Track container width
+  useEffect(() => {
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.offsetWidth);
+      }
+    };
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, []);
+
   if (!sourcesData || Object.keys(sourcesData).length === 0) {
     return (
       <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 h-80 flex items-center justify-center">
@@ -88,13 +105,35 @@ const MultiSourceChart = ({ sourcesData, selectedSources }) => {
           .slice(0, 5)
           .map(([source]) => source);
 
+  // Calculate Y-axis domain based on actual data
+  const yDomain = useMemo(() => {
+    const values = [];
+    mergedData.forEach((point) => {
+      sourcesToShow.forEach((source) => {
+        if (point[source] != null) {
+          values.push(point[source]);
+        }
+      });
+    });
+    if (values.length === 0) return [-1, 1];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min;
+    const padding = Math.max(0.05, range * 0.15);
+    return [
+      Math.max(-1, Math.floor((min - padding) * 10) / 10),
+      Math.min(1, Math.ceil((max + padding) * 10) / 10),
+    ];
+  }, [mergedData, sourcesToShow]);
+
   return (
     <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
       <h3 className="text-lg font-semibold text-slate-200 mb-4">
         Source Sentiment Comparison
       </h3>
-      <ResponsiveContainer width="100%" height={350}>
-        <LineChart data={mergedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+      <div ref={containerRef} style={{ width: '100%', height: 350, minWidth: 0 }}>
+        {containerWidth > 0 && (
+          <LineChart data={mergedData} width={containerWidth} height={350} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
           <XAxis
             dataKey="date"
@@ -103,7 +142,7 @@ const MultiSourceChart = ({ sourcesData, selectedSources }) => {
             tick={{ fill: '#64748b', fontSize: 11 }}
           />
           <YAxis
-            domain={[-1, 1]}
+            domain={yDomain}
             stroke="#64748b"
             tick={{ fill: '#64748b', fontSize: 11 }}
             tickFormatter={(v) => v.toFixed(1)}
@@ -128,7 +167,8 @@ const MultiSourceChart = ({ sourcesData, selectedSources }) => {
             />
           ))}
         </LineChart>
-      </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 };

@@ -236,7 +236,7 @@ async def get_bayesian_beliefs():
     """
     state = load_bayesian_beliefs(STATE_PATH)
 
-    # Load accuracy data from source_weights table
+    # Load accuracy data from source_weights table and per-source crawl counts from DB
     conn = get_db_connection(DB_PATH)
     try:
         cursor = conn.cursor()
@@ -250,6 +250,16 @@ async def get_bayesian_beliefs():
             }
             for row in cursor.fetchall()
         }
+
+        # Get per-source crawl counts from sentiment_raw (has source column)
+        cursor.execute(
+            "SELECT source, COUNT(*) as count FROM sentiment_raw GROUP BY source"
+        )
+        source_crawl_counts = {row["source"]: row["count"] for row in cursor.fetchall()}
+
+        # Get global total from sentiment_raw
+        cursor.execute("SELECT COUNT(*) FROM sentiment_raw")
+        db_total_crawls = cursor.fetchone()[0]
     finally:
         conn.close()
 
@@ -261,6 +271,8 @@ async def get_bayesian_beliefs():
         sw = source_weights.get(source, {})
         accuracy = sw.get("accuracy") or belief.get("accuracy")
         is_contrarian = sw.get("is_contrarian", belief.get("is_contrarian", False))
+        # Get per-source count from database, fallback to state file
+        total_crawls = source_crawl_counts.get(source, belief.get("total_crawls", 0))
 
         beliefs.append(
             SourceBelief(
@@ -272,7 +284,7 @@ async def get_bayesian_beliefs():
                 if belief.get("correlation") is not None
                 else None,
                 is_contrarian=is_contrarian,
-                total_crawls=belief.get("total_crawls", 0),
+                total_crawls=total_crawls,
                 last_updated=belief.get("last_updated"),
                 belief_mean=round(alpha / (alpha + beta), 4) if (alpha + beta) > 0 else 0.5,
                 belief_std=round(compute_beta_std(alpha, beta), 4),
@@ -286,7 +298,7 @@ async def get_bayesian_beliefs():
     return BeliefsResponse(
         beliefs=beliefs,
         baseline_informativeness=state.get("baseline_informativeness", 0.5),
-        total_crawls=state.get("total_crawls", 0),
+        total_crawls=db_total_crawls,
         last_belief_update=state.get("last_belief_update"),
     )
 
