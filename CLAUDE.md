@@ -1,5 +1,10 @@
 # Claude Code Reminders
 
+## Git Workflow
+
+- **Never push directly to main.** Always create a feature branch and open a PR.
+- Use descriptive branch names (e.g., `fix/vader-removal`, `feat/new-collector`)
+
 ## IMPORTANT: Proxy Server for Reddit Access
 
 Reddit blocks AWS/EC2 IP addresses. The crawler requires a proxy tunnel through the local Mac.
@@ -14,19 +19,19 @@ Reddit blocks AWS/EC2 IP addresses. The crawler requires a proxy tunnel through 
 
 2. **Create SSH tunnel** (if not running):
    ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem -R 18888:127.0.0.1:18888 -N -f ec2-user@23.20.148.59
+   ssh -i ~/.ssh/panicradar-ec2.pem -R 18888:127.0.0.1:18888 -N -f ec2-user@34.236.47.243
    # Check: ps aux | grep "ssh.*18888"
    ```
 
 3. **Start socat on EC2** (if not running):
    ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@23.20.148.59 \
+   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@34.236.47.243 \
      "nohup socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888 &"
    ```
 
 4. **Verify proxy works**:
    ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@23.20.148.59 \
+   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@34.236.47.243 \
      "curl -x http://172.18.0.1:18889 https://httpbin.org/ip"
    # Should show local Mac IP (24.x.x.x), NOT EC2 IP
    ```
