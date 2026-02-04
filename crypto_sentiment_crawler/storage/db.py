@@ -93,6 +93,32 @@ CREATE INDEX IF NOT EXISTS idx_user_scores_user ON user_sentiment_scores(user_id
 CREATE INDEX IF NOT EXISTS idx_user_scores_timestamp ON user_sentiment_scores(timestamp);
 CREATE INDEX IF NOT EXISTS idx_user_scores_raw ON user_sentiment_scores(raw_id);
 CREATE INDEX IF NOT EXISTS idx_user_scores_final ON user_sentiment_scores(final_score);
+
+-- Source weights for Bayesian inference
+CREATE TABLE IF NOT EXISTS source_weights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source VARCHAR(50) NOT NULL UNIQUE,
+    weight FLOAT NOT NULL,
+    accuracy FLOAT,
+    is_contrarian BOOLEAN DEFAULT FALSE,
+    alpha FLOAT,
+    beta FLOAT,
+    sample_size INTEGER,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_source_weights_source ON source_weights(source);
+
+-- Confounders (Fear & Greed, VIX, etc.)
+CREATE TABLE IF NOT EXISTS confounders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME NOT NULL,
+    fear_greed_index INTEGER,
+    fear_greed_label VARCHAR(20),
+    vix FLOAT,
+    news_sentiment FLOAT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_confounders_timestamp ON confounders(timestamp);
 """
 
 MIGRATIONS = [
