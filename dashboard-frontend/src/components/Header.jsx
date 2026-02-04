@@ -1,5 +1,28 @@
 import { Link, useLocation } from 'react-router-dom';
 
+const RadarIcon = ({ className = "w-10 h-10" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Outer ring */}
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" className="text-green-400" />
+    {/* Middle ring */}
+    <circle cx="12" cy="12" r="6.5" stroke="currentColor" strokeWidth="1" className="text-green-400/70" />
+    {/* Inner ring */}
+    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1" className="text-green-400/50" />
+    {/* Center dot */}
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" className="text-green-300" />
+    {/* Sweep line */}
+    <line x1="12" y1="12" x2="12" y2="2" stroke="url(#sweepGradient)" strokeWidth="2" strokeLinecap="round" />
+    {/* Blip */}
+    <circle cx="15" cy="7" r="1.5" fill="currentColor" className="text-red-500 animate-pulse" />
+    <defs>
+      <linearGradient id="sweepGradient" x1="12" y1="12" x2="12" y2="2" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stopColor="#4ade80" stopOpacity="0.2" />
+        <stop offset="100%" stopColor="#4ade80" stopOpacity="1" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
 const Header = () => {
   const location = useLocation();
 
@@ -15,7 +38,7 @@ const Header = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <Link to="/" className="flex items-center gap-2">
-            <span className="text-2xl">🚨</span>
+            <RadarIcon className="w-10 h-10" />
             <span className="text-xl font-bold text-slate-100">
               Panic Radar
             </span>

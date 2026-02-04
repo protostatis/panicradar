@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 
-const MetricCard = ({ title, value, subtitle, type = 'default' }) => {
+const MetricCard = ({ title, value, subtitle, type = 'default', href }) => {
   const colorClasses = useMemo(() => {
     switch (type) {
       case 'bullish':
@@ -24,10 +25,8 @@ const MetricCard = ({ title, value, subtitle, type = 'default' }) => {
     }
   }, [type]);
 
-  return (
-    <div
-      className={`rounded-xl border p-4 ${colorClasses} transition-all hover:scale-[1.02]`}
-    >
+  const content = (
+    <>
       <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
         {title}
       </h3>
@@ -35,6 +34,38 @@ const MetricCard = ({ title, value, subtitle, type = 'default' }) => {
       {subtitle && (
         <div className="text-sm text-slate-400">{subtitle}</div>
       )}
+    </>
+  );
+
+  const cardClasses = `block rounded-xl border p-4 ${colorClasses} transition-all hover:scale-[1.02] cursor-pointer`;
+
+  if (href) {
+    // Internal link (starts with /)
+    if (href.startsWith('/')) {
+      return (
+        <Link to={href} className={cardClasses}>
+          {content}
+        </Link>
+      );
+    }
+    // External link
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cardClasses}
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return (
+    <div
+      className={`rounded-xl border p-4 ${colorClasses} transition-all hover:scale-[1.02]`}
+    >
+      {content}
     </div>
   );
 };

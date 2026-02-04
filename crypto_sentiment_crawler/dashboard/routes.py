@@ -10,6 +10,7 @@ from .queries import (
     compute_beta_std,
     get_all_sources_sentiment_history,
     get_available_sources,
+    get_daily_sentiment_counts,
     get_db_connection,
     get_fear_greed_history,
     get_latest_confounders,
@@ -17,6 +18,7 @@ from .queries import (
     get_latest_sentiment,
     get_price_change,
     get_price_history,
+    get_reddit_panic_score,
     get_sentiment_history,
     get_source_sentiment_history,
     get_source_type_label as get_source_type_label_query,
@@ -524,5 +526,43 @@ async def get_recent_posts(
         total = count_cursor.fetchone()[0]
 
         return RecentPostsResponse(posts=posts, total=total)
+    finally:
+        conn.close()
+
+
+@router.get("/dashboard/sentiment/daily")
+async def get_daily_sentiment(
+    days: int = Query(30, ge=1, le=90, description="Number of days of history"),
+    source: str | None = Query(None, description="Filter by source"),
+):
+    """
+    Get daily sentiment counts for bull/bear visualization.
+
+    Returns daily counts of bullish, bearish, mixed, and neutral posts.
+    Useful for diverging bar charts showing sentiment distribution.
+    """
+    conn = get_db_connection(DB_PATH)
+    try:
+        data = get_daily_sentiment_counts(conn, days, source)
+        return {
+            "days": days,
+            "source": source,
+            "data": data,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/dashboard/panic-score")
+async def get_panic_score():
+    """
+    Get Reddit-based panic score for the last 24 hours.
+
+    Returns a panic score (0-100) calculated from Reddit post sentiment,
+    along with supporting metrics like fear post count and overall sentiment.
+    """
+    conn = get_db_connection(DB_PATH)
+    try:
+        return get_reddit_panic_score(conn)
     finally:
         conn.close()

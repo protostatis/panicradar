@@ -16,6 +16,7 @@ import {
   fetchAffiliates,
   fetchBayesianBeliefs,
   fetchAllSourcesHistory,
+  fetchPanicScore,
 } from '../api/client';
 
 const Dashboard = () => {
@@ -24,6 +25,7 @@ const Dashboard = () => {
   const [affiliates, setAffiliates] = useState(null);
   const [beliefs, setBeliefs] = useState(null);
   const [sourcesHistory, setSourcesHistory] = useState(null);
+  const [panicScore, setPanicScore] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -32,12 +34,13 @@ const Dashboard = () => {
     setError(null);
 
     try {
-      const [summaryData, historyData, affiliateData, beliefsData, sourcesData] = await Promise.all([
+      const [summaryData, historyData, affiliateData, beliefsData, sourcesData, panicData] = await Promise.all([
         fetchDashboardSummary(),
         fetchDashboardHistory(30),
         fetchAffiliates(),
         fetchBayesianBeliefs(),
         fetchAllSourcesHistory(30),
+        fetchPanicScore(),
       ]);
 
       setSummary(summaryData);
@@ -45,6 +48,7 @@ const Dashboard = () => {
       setAffiliates(affiliateData);
       setBeliefs(beliefsData);
       setSourcesHistory(sourcesData);
+      setPanicScore(panicData);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
       setError('Failed to load dashboard data. Please try again.');
@@ -59,18 +63,6 @@ const Dashboard = () => {
     const interval = setInterval(loadData, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
-
-  const getPanicIndexType = (value) => {
-    if (value >= 0.3) return 'bearish';
-    if (value >= 0.1) return 'moderate';
-    return 'low';
-  };
-
-  const getFomoIndexType = (value) => {
-    if (value >= 0.3) return 'bullish';
-    if (value >= 0.1) return 'moderate';
-    return 'low';
-  };
 
   const getFearGreedCardType = (label) => {
     if (label.includes('Fear')) return 'fear';
@@ -92,6 +84,13 @@ const Dashboard = () => {
     }
   };
 
+  const getPanicCardType = (score) => {
+    if (score >= 60) return 'high';
+    if (score >= 40) return 'moderate';
+    if (score >= 20) return 'low';
+    return 'default';
+  };
+
   if (loading) {
     return <LoadingSpinner message="Loading dashboard data..." />;
   }
@@ -104,24 +103,20 @@ const Dashboard = () => {
     <ChartSyncProvider>
     <div className="space-y-6">
       {/* Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <MetricCard
-          title="Panic Index"
-          value={`${((summary.fear_index || 0) * 100).toFixed(1)}%`}
-          subtitle={summary.fear_index >= 0.3 ? 'High Panic' : summary.fear_index >= 0.1 ? 'Moderate' : 'Low'}
-          type={getPanicIndexType(summary.fear_index || 0)}
-        />
-        <MetricCard
-          title="FOMO Index"
-          value={`${((summary.euphoria_index || 0) * 100).toFixed(1)}%`}
-          subtitle={summary.euphoria_index >= 0.3 ? 'High FOMO' : summary.euphoria_index >= 0.1 ? 'Moderate' : 'Low'}
-          type={getFomoIndexType(summary.euphoria_index || 0)}
+          title="Panic Score"
+          value={panicScore?.panic_score ?? 'N/A'}
+          subtitle={panicScore?.sentiment_label || 'Loading...'}
+          type={getPanicCardType(panicScore?.panic_score || 0)}
+          href="/about#panic-score"
         />
         <MetricCard
           title="Fear & Greed"
           value={summary.fear_greed_index ?? 'N/A'}
           subtitle={summary.fear_greed_label}
           type={getFearGreedCardType(summary.fear_greed_label)}
+          href="https://alternative.me/crypto/fear-and-greed-index/"
         />
         <MetricCard
           title="Volatility (24h)"
@@ -132,24 +127,22 @@ const Dashboard = () => {
           }
           subtitle={summary.volatility_state}
           type={getVolatilityCardType(summary.volatility_state)}
+          href="https://www.coinglass.com/volatility"
         />
+      </div>
+
+      {/* Live Feed and Bull vs Bear Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-1">
+          <RecentPostsFeed />
+        </div>
+        <div className="lg:col-span-2">
+          <BullBearChart />
+        </div>
       </div>
 
       {/* Coin Price Card with Chart */}
       <CoinPriceCard />
-
-      {/* Bull vs Bear Chart and Live Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <BullBearChart
-            data={history?.data || []}
-            sourcesData={sourcesHistory?.sources || {}}
-          />
-        </div>
-        <div className="lg:col-span-1">
-          <RecentPostsFeed />
-        </div>
-      </div>
 
       {/* Bayesian Beliefs Summary */}
       {beliefs && (

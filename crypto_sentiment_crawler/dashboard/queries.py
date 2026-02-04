@@ -520,3 +520,152 @@ def get_available_sources(conn: sqlite3.Connection) -> list[str]:
     )
 
     return [row["source"] for row in cursor.fetchall()]
+
+
+def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
+    """Calculate panic score from Reddit posts in the last 24 hours.
+
+    Panic score is based on:
+    - Percentage of bearish posts (final_score < -0.1)
+    - Intensity of negative sentiment
+    - Pattern-based fear signals as a boost
+    - Only from Reddit sources
+
+    Returns a score from 0-100 where higher = more panic.
+    """
+    cursor = conn.execute(
+        """
+        SELECT
+            COUNT(*) as total_posts,
+            SUM(CASE WHEN uss.final_score < -0.1 THEN 1 ELSE 0 END) as bearish_posts,
+            SUM(CASE WHEN uss.final_score > 0.1 THEN 1 ELSE 0 END) as bullish_posts,
+            SUM(CASE WHEN uss.fear_index > 0 THEN 1 ELSE 0 END) as explicit_fear_posts,
+            AVG(uss.final_score) as avg_sentiment,
+            AVG(CASE WHEN uss.final_score < 0 THEN uss.final_score ELSE NULL END) as avg_negative_sentiment,
+            MIN(uss.final_score) as most_negative
+        FROM user_sentiment_scores uss
+        JOIN sentiment_raw sr ON uss.raw_id = sr.id
+        WHERE uss.timestamp >= datetime('now', '-24 hours')
+          AND uss.final_score IS NOT NULL
+          AND sr.source LIKE 'reddit_%'
+        """
+    )
+    row = cursor.fetchone()
+
+    if not row or row["total_posts"] == 0:
+        return {
+            "panic_score": 0,
+            "total_posts": 0,
+            "bearish_posts": 0,
+            "bullish_posts": 0,
+            "avg_sentiment": 0,
+            "sentiment_label": "No Data"
+        }
+
+    total = row["total_posts"]
+    bearish_posts = row["bearish_posts"] or 0
+    bullish_posts = row["bullish_posts"] or 0
+    explicit_fear = row["explicit_fear_posts"] or 0
+    avg_sentiment = row["avg_sentiment"] or 0
+    avg_negative = row["avg_negative_sentiment"] or 0
+    most_negative = row["most_negative"] or 0
+
+    # Calculate panic score (0-100)
+    # 1. Base: percentage of bearish posts (0-50 points)
+    bearish_pct = bearish_posts / total if total > 0 else 0
+    base_panic = bearish_pct * 50
+
+    # 2. Intensity: how negative are the negative posts (0-30 points)
+    # avg_negative is negative, so we negate it. Scale: -0.5 = max intensity
+    intensity = min(1.0, abs(avg_negative) / 0.5) if avg_negative else 0
+    intensity_panic = intensity * 30
+
+    # 3. Overall sentiment shift (0-15 points)
+    # If overall sentiment is negative, add more panic
+    sentiment_panic = max(0, -avg_sentiment * 30)  # -0.5 sentiment = +15 points
+
+    # 4. Explicit fear mentions bonus (0-5 points)
+    fear_bonus = min(5, (explicit_fear / total) * 20) if total > 0 else 0
+
+    panic_score = min(100, base_panic + intensity_panic + sentiment_panic + fear_bonus)
+
+    # Determine label
+    if panic_score >= 60:
+        label = "High Panic"
+    elif panic_score >= 40:
+        label = "Elevated"
+    elif panic_score >= 20:
+        label = "Moderate"
+    else:
+        label = "Calm"
+
+    return {
+        "panic_score": round(panic_score, 1),
+        "total_posts": total,
+        "bearish_posts": bearish_posts,
+        "bullish_posts": bullish_posts,
+        "avg_sentiment": round(avg_sentiment, 3) if avg_sentiment else 0,
+        "sentiment_label": label
+    }
+
+
+def get_daily_sentiment_counts(
+    conn: sqlite3.Connection, days: int = 30, source: Optional[str] = None
+) -> list[dict]:
+    """Get daily counts of bullish vs bearish posts.
+
+    Returns raw counts per day for diverging bar chart visualization.
+    Bull = posts with euphoria_index > 0
+    Bear = posts with fear_index > 0
+    Neutral = posts with neither
+    """
+    if source:
+        cursor = conn.execute(
+            """
+            SELECT
+                date(uss.timestamp) as date,
+                SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as bull_count,
+                SUM(CASE WHEN uss.fear_index > 0 AND uss.euphoria_index <= 0 THEN 1 ELSE 0 END) as bear_count,
+                SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index > 0 THEN 1 ELSE 0 END) as mixed_count,
+                SUM(CASE WHEN uss.euphoria_index <= 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as neutral_count,
+                COUNT(*) as total_count
+            FROM user_sentiment_scores uss
+            JOIN sentiment_raw sr ON uss.raw_id = sr.id
+            WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+              AND uss.final_score IS NOT NULL
+              AND sr.source = ?
+            GROUP BY date(uss.timestamp)
+            ORDER BY date ASC
+            """,
+            (days, source),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT
+                date(uss.timestamp) as date,
+                SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as bull_count,
+                SUM(CASE WHEN uss.fear_index > 0 AND uss.euphoria_index <= 0 THEN 1 ELSE 0 END) as bear_count,
+                SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index > 0 THEN 1 ELSE 0 END) as mixed_count,
+                SUM(CASE WHEN uss.euphoria_index <= 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as neutral_count,
+                COUNT(*) as total_count
+            FROM user_sentiment_scores uss
+            WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+              AND uss.final_score IS NOT NULL
+            GROUP BY date(uss.timestamp)
+            ORDER BY date ASC
+            """,
+            (days,),
+        )
+
+    return [
+        {
+            "date": row["date"],
+            "bull_count": row["bull_count"] or 0,
+            "bear_count": row["bear_count"] or 0,
+            "mixed_count": row["mixed_count"] or 0,
+            "neutral_count": row["neutral_count"] or 0,
+            "total_count": row["total_count"] or 0,
+        }
+        for row in cursor.fetchall()
+    ]
