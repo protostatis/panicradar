@@ -9,6 +9,7 @@ import aiosqlite
 
 from ..config import settings
 from ..logging_config import logger
+from .migrations import run_all_migrations
 from .models import OnChainMetric, PriceData, SentimentRaw
 
 SCHEMA = """
@@ -142,13 +143,16 @@ class Database:
         await self._connection.executescript(SCHEMA)
         await self._connection.commit()
 
-        # Run migrations for existing databases
+        # Run schema migrations for existing databases
         for migration in MIGRATIONS:
             try:
                 await self._connection.execute(migration)
                 await self._connection.commit()
             except Exception:
                 pass  # Column already exists
+
+        # Run data migrations (one-time cleanups, etc.)
+        await run_all_migrations(self._connection)
 
         logger.info(f"Connected to database: {self.db_path}")
 
