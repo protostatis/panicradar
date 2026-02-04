@@ -29,6 +29,61 @@ const About = () => {
           </p>
         </section>
 
+        <section id="panic-score" className="scroll-mt-20">
+          <h2 className="text-lg font-semibold text-slate-200 mb-3">
+            Panic Score
+          </h2>
+          <p className="text-slate-400 mb-4">
+            Our proprietary Panic Score (0-100) measures real-time fear levels
+            across Reddit crypto communities over the last 24 hours, using
+            FinBERT-based sentiment analysis.
+          </p>
+          <div className="bg-slate-900/50 rounded-lg p-4 mb-4">
+            <h3 className="text-sm font-semibold text-slate-300 mb-2">
+              How It&apos;s Calculated
+            </h3>
+            <ul className="list-disc list-inside text-slate-400 space-y-2 text-sm">
+              <li>
+                <strong className="text-slate-300">Bearish Ratio (0-50 pts)</strong>:
+                Percentage of posts with negative sentiment score (&lt; -0.1)
+              </li>
+              <li>
+                <strong className="text-slate-300">Negative Intensity (0-30 pts)</strong>:
+                How strongly negative the bearish posts are (scaled by avg negative score)
+              </li>
+              <li>
+                <strong className="text-slate-300">Sentiment Shift (0-15 pts)</strong>:
+                Overall sentiment drift into negative territory
+              </li>
+              <li>
+                <strong className="text-slate-300">Fear Signals (0-5 pts)</strong>:
+                Bonus for explicit panic language (capitulation, loss mentions)
+              </li>
+            </ul>
+            <p className="text-slate-500 text-xs mt-3">
+              Data source: user_sentiment_scores table (FinBERT semantic analysis on Reddit posts)
+            </p>
+          </div>
+          <div className="grid grid-cols-4 gap-2 text-center text-sm">
+            <div className="bg-green-900/30 rounded p-2">
+              <div className="text-green-400 font-semibold">0-20</div>
+              <div className="text-slate-500 text-xs">Calm</div>
+            </div>
+            <div className="bg-yellow-900/30 rounded p-2">
+              <div className="text-yellow-400 font-semibold">20-40</div>
+              <div className="text-slate-500 text-xs">Moderate</div>
+            </div>
+            <div className="bg-orange-900/30 rounded p-2">
+              <div className="text-orange-400 font-semibold">40-60</div>
+              <div className="text-slate-500 text-xs">Elevated</div>
+            </div>
+            <div className="bg-red-900/30 rounded p-2">
+              <div className="text-red-400 font-semibold">60-100</div>
+              <div className="text-slate-500 text-xs">High Panic</div>
+            </div>
+          </div>
+        </section>
+
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-3">
             Multi-Dimensional Signals

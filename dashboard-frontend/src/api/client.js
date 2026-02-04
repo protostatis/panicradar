@@ -80,4 +80,16 @@ export const fetchRecentPosts = async (limit = 20, source = null) => {
   return response.data;
 };
 
+export const fetchDailySentiment = async (days = 30, source = null) => {
+  const params = { days };
+  if (source) params.source = source;
+  const response = await client.get('/api/dashboard/sentiment/daily', { params });
+  return response.data;
+};
+
+export const fetchPanicScore = async () => {
+  const response = await client.get('/api/dashboard/panic-score');
+  return response.data;
+};
+
 export default client;

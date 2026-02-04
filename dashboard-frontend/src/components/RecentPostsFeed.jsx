@@ -50,6 +50,45 @@ const getScoreTextColor = (score) => {
   return 'text-slate-500';
 };
 
+const CopyButton = ({ url }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e) => {
+    e.stopPropagation();
+    if (url) {
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`p-1.5 rounded transition-colors ${
+        copied
+          ? 'bg-green-600 text-white'
+          : 'bg-slate-600/50 text-slate-400 hover:bg-slate-600 hover:text-slate-200'
+      }`}
+      title={copied ? 'Copied!' : 'Copy link'}
+    >
+      {copied ? (
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      )}
+    </button>
+  );
+};
+
 const PostCard = ({ post }) => {
   const [expanded, setExpanded] = useState(false);
   const hasContent = post.content && post.content.length > 0;
@@ -60,6 +99,11 @@ const PostCard = ({ post }) => {
     if (post.url) {
       window.open(post.url, '_blank', 'noopener,noreferrer');
     }
+  };
+
+  const handleExpandClick = (e) => {
+    e.stopPropagation();
+    setExpanded(!expanded);
   };
 
   return (
@@ -81,11 +125,8 @@ const PostCard = ({ post }) => {
                 {post.score > 0 ? '+' : ''}{post.score.toFixed(2)}
               </span>
             )}
-            {post.url && (
-              <span className="text-xs text-slate-600">↗</span>
-            )}
           </div>
-          <h4 className="text-sm text-slate-200 font-medium leading-tight hover:text-purple-300 transition-colors">
+          <h4 className="text-sm text-slate-200 font-medium leading-tight">
             {post.title}
           </h4>
           {hasContent && (
@@ -96,7 +137,7 @@ const PostCard = ({ post }) => {
               </p>
               {needsTruncation && (
                 <button
-                  onClick={() => setExpanded(!expanded)}
+                  onClick={handleExpandClick}
                   className="text-xs text-purple-400 hover:text-purple-300 mt-1"
                 >
                   {expanded ? 'Show less' : 'Read more'}
@@ -105,6 +146,11 @@ const PostCard = ({ post }) => {
             </div>
           )}
         </div>
+        {post.url && (
+          <div className="flex-shrink-0">
+            <CopyButton url={post.url} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -147,7 +193,7 @@ const RecentPostsFeed = () => {
   ];
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4">
+    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 h-[520px] flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-slate-200">Live Feed</h3>
@@ -188,7 +234,7 @@ const RecentPostsFeed = () => {
       ) : posts.length === 0 ? (
         <div className="text-center py-8 text-slate-500">No posts found</div>
       ) : (
-        <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+        <div className="space-y-2 flex-1 overflow-y-auto pr-1">
           {posts.map((post) => (
             <PostCard key={post.id} post={post} />
           ))}
