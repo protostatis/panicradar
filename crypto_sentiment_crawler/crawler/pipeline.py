@@ -468,15 +468,9 @@ class RedditPipeline(ContentPipeline):
                 if fetch_content and permalink:
                     thread = await self.fetch_thread(permalink, max_comments=max_comments)
                     if thread:
-                        # Build content from selftext + comments
-                        content_parts = []
-                        if thread.selftext:
-                            content_parts.append(thread.selftext)
-
-                        for c in thread.comments:
-                            content_parts.append(c.body)
-
-                        content = "\n\n".join(content_parts) if content_parts else None
+                        # Use only selftext for content (don't include comments)
+                        # Comments are stored separately in metadata for optional analysis
+                        content = thread.selftext if thread.selftext else None
 
                         # Store comment metadata
                         comments_data = [
