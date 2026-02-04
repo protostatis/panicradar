@@ -473,10 +473,11 @@ async def get_recent_posts(
         if source:
             cursor = conn.execute(
                 """
-                SELECT id, source, raw_data, created_at
-                FROM sentiment_raw
-                WHERE source = ?
-                ORDER BY created_at DESC
+                SELECT sr.id, sr.source, sr.raw_data, sr.created_at, uss.final_score
+                FROM sentiment_raw sr
+                LEFT JOIN user_sentiment_scores uss ON sr.id = uss.raw_id
+                WHERE sr.source = ?
+                ORDER BY sr.created_at DESC
                 LIMIT ?
                 """,
                 (source, limit),
@@ -484,9 +485,10 @@ async def get_recent_posts(
         else:
             cursor = conn.execute(
                 """
-                SELECT id, source, raw_data, created_at
-                FROM sentiment_raw
-                ORDER BY created_at DESC
+                SELECT sr.id, sr.source, sr.raw_data, sr.created_at, uss.final_score
+                FROM sentiment_raw sr
+                LEFT JOIN user_sentiment_scores uss ON sr.id = uss.raw_id
+                ORDER BY sr.created_at DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -504,7 +506,7 @@ async def get_recent_posts(
                         content=data.get("text") or data.get("selftext") or data.get("body"),
                         url=data.get("url") or data.get("permalink"),
                         author=data.get("author"),
-                        score=data.get("score") or data.get("ups"),
+                        score=row["final_score"],
                         created_at=data.get("created_utc", row["created_at"]),
                         crawled_at=row["created_at"],
                     )

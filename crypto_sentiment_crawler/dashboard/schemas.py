@@ -155,7 +155,7 @@ class RecentPost(BaseModel):
     content: Optional[str] = None
     url: Optional[str] = None
     author: Optional[str] = None
-    score: Optional[int] = None
+    score: Optional[float] = None  # Sentiment score (-1 to 1)
     created_at: str
     crawled_at: str
 
