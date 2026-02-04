@@ -33,6 +33,7 @@ ENV/
 
 # Database
 data/
+!data/orchestrator_state.json
 *.db
 
 # IDE
