@@ -104,9 +104,20 @@ jobs:
             git fetch origin
             git checkout ${{ github.ref_name }}
 
-            # Ensure data directory exists and seed state file if missing
-            sudo mkdir -p /opt/crypto-sentiment/data
+            # Ensure data directory and backup directory exist
+            sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
+
+            # Backup existing database before deployment (if exists)
+            if [ -f /opt/crypto-sentiment/data/sentiment.db ]; then
+              BACKUP_NAME="sentiment_predeploy_$(date +%Y%m%d_%H%M%S).db"
+              cp /opt/crypto-sentiment/data/sentiment.db /opt/crypto-sentiment/backups/$BACKUP_NAME
+              echo "Created pre-deploy backup: $BACKUP_NAME"
+              # Keep only last 14 backups
+              ls -t /opt/crypto-sentiment/backups/sentiment_*.db | tail -n +15 | xargs -r rm
+            fi
+
+            # Seed state file if missing (don't override existing)
             if [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ]; then
               cp data/orchestrator_state.json /opt/crypto-sentiment/data/
               echo "Seeded orchestrator_state.json"
@@ -163,6 +174,12 @@ jobs:
 
             # Clean up old images
             docker image prune -f
+
+            # Set up daily backup cron job (runs at midnight UTC)
+            chmod +x deploy/backup-db.sh
+            CRON_JOB="0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh >> /opt/crypto-sentiment/logs/backup.log 2>&1"
+            (crontab -l 2>/dev/null | grep -v "backup-db.sh"; echo "$CRON_JOB") | crontab -
+            echo "Daily backup cron job configured"
 
             echo "Deployment complete!"
             docker ps
