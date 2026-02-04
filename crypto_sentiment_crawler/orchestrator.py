@@ -240,28 +240,29 @@ class CrawlerOrchestrator:
         stored_count = 0
 
         for content in contents:
-            # Queue for evaluation (only first post for belief update)
-            if stored_count == 0:
-                outcome = CrawlOutcome(
-                    content=content,
-                    price_at_crawl=price,
-                    timestamp=datetime.now(timezone.utc),
-                )
-                self.pending_outcomes.append(outcome)
+            # Store to database (returns 0 if filtered or duplicate)
+            raw_id = await self._store_content(content)
 
-            # Store to database
-            await self._store_content(content)
+            if raw_id > 0:
+                stored_count += 1
+                self.state.total_crawls += 1
 
-            # Compute immediate novelty
+                # Queue first stored post for belief evaluation
+                if stored_count == 1:
+                    outcome = CrawlOutcome(
+                        content=content,
+                        price_at_crawl=price,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    self.pending_outcomes.append(outcome)
+
+            # Compute immediate novelty (for all crawled content)
             text = content.content or content.title or ""
             self.utility_scorer.compute_novelty_only(text, add_to_recent=True)
 
-            stored_count += 1
-            self.state.total_crawls += 1
-
         # Log summary
         if contents:
-            logger.info(f"Stored {stored_count} posts from {source_name}")
+            logger.info(f"Stored {stored_count}/{len(contents)} posts from {source_name}")
 
         return contents
 
