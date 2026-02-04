@@ -15,6 +15,43 @@ from .semantic_sentiment import SemanticSentimentAnalyzer
 
 logger = logging.getLogger("crypto_sentiment")
 
+# Bot authors to filter out from comment scoring
+# Note: Authors ending with 'bot' (case-insensitive) are also filtered automatically
+BOT_AUTHORS = {
+    # Reddit system bots
+    'AutoModerator',
+    'RemindMeBot',
+    'sneakpeekbot',
+    'WikiSummarizerBot',
+    'RepostSleuthBot',
+    'ImagesOfNetwork',
+    'TweetPoster',
+    'bot',  # Generic bot username
+    # Crypto-specific bots
+    'donut-bot',
+    'coinfeeds-bot',
+    'Bitty_Bot',
+    'ModToolBot',
+    'MoonsModBot',
+    'moons_bot',
+    'lntipbot',
+    'Banano_Tipbot',
+    'changetip',
+    'TipBotLite',
+    'pepetipbot',
+    'dca-bot',
+    # Content bots
+    'WikiTextBot',
+    'haikusbot',
+    'Shakespeare-Bot',
+    'alphabet_order_bot',
+    'wikipedia_answer_bot',
+    'GoodBot_BadBot',
+    'totes_meta_bot',
+    'timee_bot',
+    'the_timezone_bot',
+}
+
 
 class SegmentCategory(str, Enum):
     """Category for segment classification."""
@@ -253,13 +290,18 @@ class UserSentimentScorer:
         else:
             return "neutral"
 
-    def _extract_user_info(self, raw_data: dict) -> tuple[Optional[str], str, str]:
+    def _extract_user_info(self, raw_data: dict) -> tuple[Optional[str], str, str, int]:
         """Extract username, title, content from raw_data.
 
         Handles different source formats:
-        - Reddit: author, title, content/body
+        - Reddit: author, title, content/body + comments from metadata
         - Stocktwits: username, body
         - 4chan: anonymous (use post_id as pseudo-user), thread_subject, text
+
+        Comments are extracted from metadata and filtered to exclude bot authors.
+
+        Returns:
+            tuple: (username, title, content, human_comment_count)
         """
         # Try standard username fields
         username = raw_data.get('author') or raw_data.get('username')
@@ -271,19 +313,61 @@ class UserSentimentScorer:
         # Title: try standard field, then 4chan's thread_subject
         title = raw_data.get('title') or raw_data.get('thread_subject') or ''
 
-        # Content: try multiple fields
+        # Content: try multiple fields (selftext/body only, not comments)
         content = (
             raw_data.get('content') or
             raw_data.get('body') or
             raw_data.get('text') or ''
         )
-        return username, title, content
 
-    def score_post(self, raw_data: dict, raw_id: int, timestamp: str, source: str, coin: Optional[str] = None) -> Optional[PostScore]:
-        """Score a single post with multi-dimensional signals."""
-        username, title, content = self._extract_user_info(raw_data)
+        # Extract comments from metadata, filtering out bots
+        metadata = raw_data.get('metadata', {})
+        comments = metadata.get('comments', [])
+        human_comment_count = 0
+
+        if comments:
+            # Filter out bot comments and extract bodies
+            human_comments = [
+                c.get('body', '')
+                for c in comments
+                if c.get('author') not in BOT_AUTHORS
+                and c.get('body')
+                and not c.get('author', '').lower().endswith('bot')
+            ]
+            human_comment_count = len(human_comments)
+
+            # Append human comments to content
+            if human_comments:
+                comment_text = '\n\n'.join(human_comments)
+                if content:
+                    content = f"{content}\n\n{comment_text}"
+                else:
+                    content = comment_text
+
+        return username, title, content, human_comment_count
+
+    def score_post(self, raw_data: dict, raw_id: int, timestamp: str, source: str, coin: Optional[str] = None, min_human_comments: int = 4) -> Optional[PostScore]:
+        """Score a single post with multi-dimensional signals.
+
+        Args:
+            raw_data: Raw post data dict
+            raw_id: Database ID of raw post
+            timestamp: Post timestamp
+            source: Source identifier (e.g., 'reddit_bitcoin')
+            coin: Optional coin symbol
+            min_human_comments: Minimum number of non-bot comments required (default 4)
+
+        Returns:
+            PostScore if post meets criteria, None otherwise
+        """
+        username, title, content, human_comment_count = self._extract_user_info(raw_data)
 
         if not username:
+            return None
+
+        # Skip posts with insufficient engagement (fewer than min_human_comments)
+        if human_comment_count < min_human_comments:
+            logger.debug(f"Skipping post {raw_id}: only {human_comment_count} human comments (min: {min_human_comments})")
             return None
 
         # Score title (always included)
