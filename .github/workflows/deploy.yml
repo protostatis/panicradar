@@ -126,6 +126,12 @@ jobs:
             # Login to GitHub Container Registry
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+            # Clean up old Docker images and cache to free disk space
+            docker system prune -af --filter "until=24h" || true
+            docker builder prune -af || true
+            echo "Docker cleanup complete. Disk usage:"
+            df -h /
+
             # Pull new images
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
@@ -156,10 +162,11 @@ jobs:
             docker network disconnect crypto-sentiment_crypto-net crypto-api 2>/dev/null || true
             docker network connect --alias api crypto-sentiment_crypto-net crypto-api
 
-            # Start frontend
+            # Start frontend with SSL certificates
             docker run -d --name crypto-frontend --restart unless-stopped \
-              -p 80:80 \
+              -p 80:80 -p 443:443 \
               --network crypto-sentiment_crypto-net \
+              -v /etc/letsencrypt:/etc/letsencrypt:ro \
               crypto_sentiment_crawler-frontend:latest
 
             # Start crawler with proxy
