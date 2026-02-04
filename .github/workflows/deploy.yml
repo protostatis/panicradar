@@ -104,6 +104,14 @@ jobs:
             git fetch origin
             git checkout ${{ github.ref_name }}
 
+            # Ensure data directory exists and seed state file if missing
+            sudo mkdir -p /opt/crypto-sentiment/data
+            sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
+            if [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ]; then
+              cp data/orchestrator_state.json /opt/crypto-sentiment/data/
+              echo "Seeded orchestrator_state.json"
+            fi
+
             # Login to GitHub Container Registry
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
