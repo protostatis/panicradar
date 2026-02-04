@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..processing.sentiment import sentiment_analyzer
 from .fetcher import Fetcher, FetchResult
 from .parser import Parser, ParseResult
 
@@ -35,7 +34,11 @@ COMPILED_PATTERNS = {
 
 @dataclass
 class CrawledContent:
-    """Processed content from a crawl."""
+    """Processed content from a crawl.
+
+    Note: sentiment_score is None during crawling. Actual scoring happens
+    in user_sentiment backfill using FinBERT/sentence-transformers.
+    """
 
     url: str
     source: str
@@ -45,7 +48,7 @@ class CrawledContent:
     published_at: datetime | None
     crawled_at: datetime
     coins_mentioned: list[str]
-    sentiment_score: float
+    sentiment_score: float | None  # Populated by user_sentiment backfill
     sentiment_details: dict
     fetch_result: FetchResult
     parse_result: ParseResult
@@ -142,13 +145,9 @@ class ContentPipeline:
         # Detect coins
         coins = detect_coins(full_text)
 
-        # Sentiment analysis
-        if full_text:
-            sentiment_details = sentiment_analyzer.analyze(full_text)
-            sentiment_score = sentiment_details["compound"]
-        else:
-            sentiment_details = {"compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0}
-            sentiment_score = 0.0
+        # Sentiment scoring deferred to user_sentiment backfill (uses FinBERT)
+        sentiment_details = {}
+        sentiment_score = None
 
         return CrawledContent(
             url=url,
@@ -181,14 +180,16 @@ class ContentPipeline:
         return results
 
     def analyze_text(self, text: str) -> dict:
-        """Analyze text without fetching (for already-fetched content)."""
+        """Analyze text without fetching (for already-fetched content).
+
+        Note: Sentiment scoring is deferred to user_sentiment backfill (uses FinBERT).
+        """
         coins = detect_coins(text)
-        sentiment = sentiment_analyzer.analyze(text)
 
         return {
             "coins": coins,
-            "sentiment_score": sentiment["compound"],
-            "sentiment_details": sentiment,
+            "sentiment_score": None,
+            "sentiment_details": {},
         }
 
 
@@ -490,7 +491,7 @@ class RedditPipeline(ContentPipeline):
                 # Analyze full text (title + content)
                 full_text = " ".join(filter(None, [title, content]))
                 coins = detect_coins(full_text)
-                sentiment = sentiment_analyzer.analyze(full_text)
+                # Sentiment scoring deferred to user_sentiment backfill (uses FinBERT)
 
                 posts.append(CrawledContent(
                     url=f"https://reddit.com{permalink}" if permalink else post_url,
@@ -501,8 +502,8 @@ class RedditPipeline(ContentPipeline):
                     published_at=published_at,
                     crawled_at=crawled_at,
                     coins_mentioned=coins,
-                    sentiment_score=sentiment["compound"],
-                    sentiment_details=sentiment,
+                    sentiment_score=None,
+                    sentiment_details={},
                     fetch_result=fetch_result,
                     parse_result=ParseResult(
                         url=url,
