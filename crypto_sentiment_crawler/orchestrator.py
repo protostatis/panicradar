@@ -17,7 +17,7 @@ from .crawler import ContentPipeline, Fetcher
 from .crawler.pipeline import CrawledContent, RedditPipeline
 from .crawler.sources import DEFAULT_SOURCES, SourceConfig, get_all_sources
 from .logging_config import logger
-from .processing.user_sentiment import UserSentimentScorer
+from .processing.user_sentiment import MIN_HUMAN_COMMENTS, UserSentimentScorer, count_human_comments
 from .storage.db import Database
 from .storage.models import PriceData, SentimentRaw
 
@@ -352,15 +352,26 @@ class CrawlerOrchestrator:
     async def _store_content(self, content: CrawledContent) -> int:
         """Store crawled content to database and compute user-based sentiment score.
 
-        Returns the raw_id (0 if duplicate).
+        Returns the raw_id (0 if duplicate or skipped due to low engagement).
         """
+        metadata = content.metadata or {}
+
+        # Skip posts with insufficient human comments (don't save to raw)
+        human_comments = count_human_comments(metadata)
+        if human_comments < MIN_HUMAN_COMMENTS:
+            logger.debug(
+                f"Skipping {content.source}: only {human_comments} human comments "
+                f"(min: {MIN_HUMAN_COMMENTS})"
+            )
+            return 0
+
         # Store raw
         raw_data = {
             "url": content.url,
             "title": content.title,
             "content": (content.content or "")[:1000] if content.content else None,
             "author": content.author,
-            "metadata": content.metadata or {},
+            "metadata": metadata,
         }
         raw = SentimentRaw(
             timestamp=content.crawled_at,

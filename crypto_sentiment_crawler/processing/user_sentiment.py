@@ -15,6 +15,9 @@ from .semantic_sentiment import SemanticSentimentAnalyzer
 
 logger = logging.getLogger("crypto_sentiment")
 
+# Minimum human comments required for a post to be saved/scored
+MIN_HUMAN_COMMENTS = 4
+
 # Bot authors to filter out from comment scoring
 # Note: Authors ending with 'bot' (case-insensitive) are also filtered automatically
 BOT_AUTHORS = {
@@ -51,6 +54,27 @@ BOT_AUTHORS = {
     'timee_bot',
     'the_timezone_bot',
 }
+
+
+def count_human_comments(metadata: dict) -> int:
+    """Count non-bot comments in post metadata.
+
+    Args:
+        metadata: Post metadata dict containing 'comments' list
+
+    Returns:
+        Number of human (non-bot) comments
+    """
+    comments = metadata.get('comments', [])
+    if not comments:
+        return 0
+
+    return sum(
+        1 for c in comments
+        if c.get('author') not in BOT_AUTHORS
+        and c.get('body')
+        and not (c.get('author') or '').lower().endswith('bot')
+    )
 
 
 class SegmentCategory(str, Enum):
@@ -346,7 +370,7 @@ class UserSentimentScorer:
 
         return username, title, content, human_comment_count
 
-    def score_post(self, raw_data: dict, raw_id: int, timestamp: str, source: str, coin: Optional[str] = None, min_human_comments: int = 4) -> Optional[PostScore]:
+    def score_post(self, raw_data: dict, raw_id: int, timestamp: str, source: str, coin: Optional[str] = None, min_human_comments: int = MIN_HUMAN_COMMENTS) -> Optional[PostScore]:
         """Score a single post with multi-dimensional signals.
 
         Args:
