@@ -34,14 +34,39 @@ const getSourceColor = (source) => {
   return 'text-slate-400';
 };
 
+const getSentimentColor = (score) => {
+  if (score === null || score === undefined) return 'bg-slate-700/30';
+  if (score >= 0.3) return 'bg-green-900/40 border-l-2 border-green-500';
+  if (score >= 0.1) return 'bg-green-900/20';
+  if (score <= -0.3) return 'bg-red-900/40 border-l-2 border-red-500';
+  if (score <= -0.1) return 'bg-red-900/20';
+  return 'bg-slate-700/30';
+};
+
+const getScoreTextColor = (score) => {
+  if (score === null || score === undefined) return 'text-slate-500';
+  if (score >= 0.1) return 'text-green-400';
+  if (score <= -0.1) return 'text-red-400';
+  return 'text-slate-500';
+};
+
 const PostCard = ({ post }) => {
   const [expanded, setExpanded] = useState(false);
   const hasContent = post.content && post.content.length > 0;
   const truncatedContent = post.content?.slice(0, 200);
   const needsTruncation = post.content && post.content.length > 200;
 
+  const handleClick = () => {
+    if (post.url) {
+      window.open(post.url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
-    <div className="bg-slate-700/30 rounded-lg p-3 hover:bg-slate-700/50 transition-colors">
+    <div
+      className={`${getSentimentColor(post.score)} rounded-lg p-3 hover:brightness-110 transition-all ${post.url ? 'cursor-pointer' : ''}`}
+      onClick={handleClick}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
@@ -51,13 +76,16 @@ const PostCard = ({ post }) => {
             <span className="text-xs text-slate-500">
               {formatTimeAgo(post.crawled_at)}
             </span>
-            {post.score && (
-              <span className="text-xs text-slate-500">
-                {post.score > 0 ? '+' : ''}{post.score}
+            {post.score !== null && post.score !== undefined && (
+              <span className={`text-xs font-medium ${getScoreTextColor(post.score)}`}>
+                {post.score > 0 ? '+' : ''}{post.score.toFixed(2)}
               </span>
             )}
+            {post.url && (
+              <span className="text-xs text-slate-600">↗</span>
+            )}
           </div>
-          <h4 className="text-sm text-slate-200 font-medium leading-tight">
+          <h4 className="text-sm text-slate-200 font-medium leading-tight hover:text-purple-300 transition-colors">
             {post.title}
           </h4>
           {hasContent && (
