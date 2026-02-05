@@ -145,6 +145,9 @@ jobs:
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto_sentiment_crawler-frontend:latest
 
+            # Ensure Docker network exists
+            docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || true
+
             # Restart services
             docker stop crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
             docker rm crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
@@ -182,8 +185,11 @@ jobs:
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 12
 
-            # Clean up old images
-            docker image prune -f
+            # Clean up old/unused Docker resources
+            docker image prune -af
+            docker system prune -f --volumes=false
+            echo "Post-deploy disk usage:"
+            df -h /
 
             # Set up daily backup cron job (runs at midnight UTC)
             chmod +x deploy/backup-db.sh
