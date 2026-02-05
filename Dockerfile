@@ -19,7 +19,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* roadmap.md ./
 
 # Install dependencies (non-editable for production)
-RUN uv sync --frozen --no-dev --no-editable 2>/dev/null || uv sync --no-dev --no-editable
+# Use CPU-only PyTorch to reduce image size by ~1.2GB (no GPU on EC2 t3.small)
+RUN uv sync --frozen --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
+    uv sync --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Copy application code
 COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/
