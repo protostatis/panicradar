@@ -117,10 +117,13 @@ jobs:
               ls -t /opt/crypto-sentiment/backups/sentiment_*.db | tail -n +15 | xargs -r rm
             fi
 
-            # Seed state file if missing (don't override existing)
+            # Seed state files if missing (don't override existing)
             if [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ]; then
               cp data/orchestrator_state.json /opt/crypto-sentiment/data/
               echo "Seeded orchestrator_state.json"
+            fi
+            if [ ! -f /opt/crypto-sentiment/data/discovery_state.json ]; then
+              cp data/discovery_state.json /opt/crypto-sentiment/data/ 2>/dev/null || echo "No discovery_state.json to seed (will be auto-created)"
             fi
 
             # Login to GitHub Container Registry

@@ -168,23 +168,121 @@ DEFAULT_SOURCES = {
 }
 
 
-def load_discovered_sources(state_path: str = "data/discovery_state.json") -> dict[str, SourceConfig]:
+# Default subreddits to crawl (used to create discovery_state.json if missing)
+DEFAULT_SUBREDDITS = [
+    # Core crypto communities
+    "bitcoin",
+    "ethereum",
+    "cryptocurrency",
+    "cryptomarkets",
+    "solana",
+    "altcoin",
+    # DeFi & NFT
+    "defi",
+    "nft",
+    # Trading focused
+    "ethtrader",
+    "bitcoinmarkets",
+    "cryptomoonshots",
+    # Major alts
+    "cardano",
+    "dogecoin",
+    "ripple",
+    "litecoin",
+    # Exchanges
+    "coinbase",
+    "binance",
+    # Education & community
+    "bitcoinbeginners",
+    "cryptocurrencymemes",
+    "cryptotax",
+    "cryptotechnology",
+]
+
+
+def _get_discovery_state_path() -> Path:
+    """Get the path where discovery_state.json should be stored."""
+    from pathlib import Path
+
+    # Try Docker path first (most common in production)
+    docker_path = Path("/app/data/discovery_state.json")
+    if docker_path.parent.exists():
+        return docker_path
+
+    # Try relative path (local development)
+    relative_path = Path("data/discovery_state.json")
+    if relative_path.parent.exists():
+        return relative_path
+
+    # Fall back to relative to this file
+    return Path(__file__).parent.parent.parent / "data" / "discovery_state.json"
+
+
+def _create_default_discovery_state(path: Path) -> dict:
+    """Create a default discovery_state.json with seed subreddits."""
+    import json
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    sources = {}
+    for subreddit in DEFAULT_SUBREDDITS:
+        key = f"reddit_{subreddit}"
+        sources[key] = {
+            "name": key,
+            "source_type": "reddit",
+            "subreddit": subreddit,
+            "status": "active",
+            "added_at": now,
+            "evaluation_score": 0.5,
+            "notes": "default source",
+        }
+
+    state = {
+        "sources": sources,
+        "rejected": [],
+        "last_discovery": now,
+        "discovery_count": 0,
+    }
+
+    # Create parent directory if needed
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(path, "w") as f:
+        json.dump(state, f, indent=2)
+
+    print(f"[sources] Created default discovery_state.json at {path} with {len(sources)} sources")
+    return state
+
+
+def load_discovered_sources(state_path: str | None = None) -> dict[str, SourceConfig]:
     """
     Load sources from discovery state file.
     Returns active sources as SourceConfig objects.
+
+    If the discovery state file doesn't exist, creates one with default subreddits.
     """
     import json
     from pathlib import Path
 
-    path = Path(state_path)
-    if not path.exists():
-        return {}
+    # Determine path
+    if state_path:
+        path = Path(state_path)
+    else:
+        path = _get_discovery_state_path()
 
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except Exception:
-        return {}
+    # Create default if doesn't exist
+    if not path.exists():
+        print(f"[sources] Discovery state not found at {path}, creating default...")
+        data = _create_default_discovery_state(path)
+    else:
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[sources] Failed to load discovery state from {path}: {e}")
+            print("[sources] Creating new default discovery state...")
+            data = _create_default_discovery_state(path)
 
     sources = {}
     for key, source_data in data.get("sources", {}).items():
@@ -204,6 +302,7 @@ def load_discovered_sources(state_path: str = "data/discovery_state.json") -> di
                 prior_adjustment=0.0,
             )
 
+    print(f"[sources] Loaded {len(sources)} discovered sources from {path}")
     return sources
 
 
