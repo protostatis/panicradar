@@ -41,7 +41,7 @@ const Header = () => {
           <Link to="/" className="flex items-center gap-2">
             <RadarIcon className="w-10 h-10" />
             <span className="text-xl font-bold text-slate-100">
-              Panic Radar
+              PanicRadar.ai
             </span>
           </Link>
           <nav className="flex gap-1">

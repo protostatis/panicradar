@@ -3,7 +3,7 @@ const About = () => {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-bold text-slate-100 mb-2">
-          About Panic Radar
+          About PanicRadar.ai
         </h1>
         <p className="text-slate-400">
           A real-time crypto sentiment analysis dashboard that predicts
