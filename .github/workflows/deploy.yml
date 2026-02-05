@@ -95,8 +95,11 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
           script: |
             set -e
+
+            echo "========== DEPLOYMENT START: ${{ github.ref_name }} =========="
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
@@ -104,78 +107,98 @@ jobs:
             git fetch origin
             git checkout ${{ github.ref_name }}
 
-            # Ensure data directory and backup directory exist
-            sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups
+            # Ensure directories exist
+            sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups /opt/crypto-sentiment/logs
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
-            # Backup existing database before deployment (if exists)
+            # ========== PRE-DEPLOYMENT BACKUP ==========
             if [ -f /opt/crypto-sentiment/data/sentiment.db ]; then
               BACKUP_NAME="sentiment_predeploy_$(date +%Y%m%d_%H%M%S).db"
               cp /opt/crypto-sentiment/data/sentiment.db /opt/crypto-sentiment/backups/$BACKUP_NAME
               echo "Created pre-deploy backup: $BACKUP_NAME"
               # Keep only last 14 backups
-              ls -t /opt/crypto-sentiment/backups/sentiment_*.db | tail -n +15 | xargs -r rm
+              ls -t /opt/crypto-sentiment/backups/sentiment_*.db 2>/dev/null | tail -n +15 | xargs -r rm
             fi
 
-            # Seed state files if missing (don't override existing)
-            if [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ]; then
-              cp data/orchestrator_state.json /opt/crypto-sentiment/data/
-              echo "Seeded orchestrator_state.json"
-            fi
-            if [ ! -f /opt/crypto-sentiment/data/discovery_state.json ]; then
-              cp data/discovery_state.json /opt/crypto-sentiment/data/ 2>/dev/null || echo "No discovery_state.json to seed (will be auto-created)"
-            fi
+            # Seed state files if missing
+            [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ] && cp data/orchestrator_state.json /opt/crypto-sentiment/data/ && echo "Seeded orchestrator_state.json"
+            [ ! -f /opt/crypto-sentiment/data/discovery_state.json ] && cp data/discovery_state.json /opt/crypto-sentiment/data/ 2>/dev/null || true
 
-            # Login to GitHub Container Registry
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # Clean up old Docker images and cache to free disk space
-            docker system prune -af --filter "until=24h" || true
-            docker builder prune -af || true
-            echo "Docker cleanup complete. Disk usage:"
+            # ========== DISK SPACE CHECK & CLEANUP ==========
+            echo "Pre-cleanup disk usage:"
             df -h /
 
-            # Pull new images
+            # Aggressive cleanup - remove ALL unused images (not just old ones)
+            docker system prune -af || true
+            docker builder prune -af || true
+
+            echo "Post-cleanup disk usage:"
+            AVAIL_GB=$(df / | tail -1 | awk '{print $4}' | sed 's/G//')
+            df -h /
+
+            # Require at least 8GB free (images are ~7GB total)
+            if [ "$AVAIL_GB" -lt 8000000 ]; then
+              echo "ERROR: Insufficient disk space. Need 8GB, have ${AVAIL_GB}KB"
+              exit 1
+            fi
+            echo "Disk space OK: ${AVAIL_GB}KB available"
+
+            # ========== DOCKER LOGIN & PULL ==========
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "Pulling images..."
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
 
-            # Tag images for docker-compose
+            # Tag images for local use
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest crypto-sentiment-crawler:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
-            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto_sentiment_crawler-frontend:latest
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto-sentiment-frontend:latest
 
-            # Ensure Docker network exists
-            docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || true
+            # ========== ENSURE NETWORK EXISTS ==========
+            docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
-            # Restart services
+            # ========== STOP OLD CONTAINERS ==========
+            echo "Stopping old containers..."
             docker stop crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
             docker rm crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
 
-            # Start API first (others depend on it)
+            # ========== START SERVICES ==========
+            echo "Starting API..."
             docker run -d --name crypto-api --restart unless-stopped \
               -p 8000:8000 \
               --network crypto-sentiment_crypto-net \
+              --network-alias api \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
               crypto-sentiment-api:latest
 
-            # Wait for API to be healthy
-            sleep 5
+            # Wait for API to be healthy with actual health check
+            echo "Waiting for API to be healthy..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "API is healthy!"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "ERROR: API failed to become healthy"
+                docker logs crypto-api --tail 50
+                exit 1
+              fi
+              echo "Waiting for API... ($i/30)"
+              sleep 2
+            done
 
-            # Add API alias to network
-            docker network disconnect crypto-sentiment_crypto-net crypto-api 2>/dev/null || true
-            docker network connect --alias api crypto-sentiment_crypto-net crypto-api
-
-            # Start frontend with SSL certificates
+            echo "Starting frontend..."
             docker run -d --name crypto-frontend --restart unless-stopped \
               -p 80:80 -p 443:443 \
               --network crypto-sentiment_crypto-net \
               -v /etc/letsencrypt:/etc/letsencrypt:ro \
-              crypto_sentiment_crawler-frontend:latest
+              crypto-sentiment-frontend:latest
 
-            # Start crawler with proxy
+            echo "Starting crawler..."
             docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
               -v /opt/crypto-sentiment/data:/app/data \
@@ -185,17 +208,33 @@ jobs:
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 12
 
-            # Clean up old/unused Docker resources
+            # ========== POST-DEPLOY CLEANUP ==========
+            echo "Cleaning up unused images..."
             docker image prune -af
-            docker system prune -f --volumes=false
+
             echo "Post-deploy disk usage:"
             df -h /
 
-            # Set up daily backup cron job (runs at midnight UTC)
+            # ========== VERIFY DEPLOYMENT ==========
+            echo "Verifying all containers are running..."
+            sleep 5
+
+            RUNNING=$(docker ps --format '{{.Names}}' | grep -E '^crypto-(api|frontend|crawler)$' | wc -l)
+            if [ "$RUNNING" -ne 3 ]; then
+              echo "ERROR: Not all containers are running!"
+              docker ps -a
+              exit 1
+            fi
+
+            echo "All 3 containers running. Checking frontend..."
+            if ! curl -sf -o /dev/null https://localhost --insecure 2>/dev/null; then
+              echo "WARNING: Frontend HTTPS check failed (may be normal if cert issue)"
+            fi
+
+            # ========== SETUP CRON ==========
             chmod +x deploy/backup-db.sh
             CRON_JOB="0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh >> /opt/crypto-sentiment/logs/backup.log 2>&1"
             (crontab -l 2>/dev/null | grep -v "backup-db.sh"; echo "$CRON_JOB") | crontab -
-            echo "Daily backup cron job configured"
 
-            echo "Deployment complete!"
+            echo "========== DEPLOYMENT COMPLETE =========="
             docker ps
