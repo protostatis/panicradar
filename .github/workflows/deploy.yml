@@ -185,8 +185,11 @@ jobs:
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 12
 
-            # Clean up old images
-            docker image prune -f
+            # Clean up old/unused Docker resources
+            docker image prune -af
+            docker system prune -f --volumes=false
+            echo "Post-deploy disk usage:"
+            df -h /
 
             # Set up daily backup cron job (runs at midnight UTC)
             chmod +x deploy/backup-db.sh
