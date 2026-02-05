@@ -3,7 +3,9 @@ import { fetchRecentPosts } from '../api/client';
 
 const formatTimeAgo = (dateStr) => {
   // Parse as UTC since the server returns UTC timestamps
-  const date = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
+  // Handle both "Z" suffix and "+00:00" offset formats
+  const hasTimezone = dateStr.includes('Z') || /[+-]\d{2}:\d{2}$/.test(dateStr);
+  const date = new Date(hasTimezone ? dateStr : dateStr + 'Z');
   const now = new Date();
   const diffMs = now - date;
   const diffSecs = Math.floor(diffMs / 1000);
@@ -118,7 +120,7 @@ const PostCard = ({ post }) => {
               {formatSourceName(post.source)}
             </span>
             <span className="text-xs text-slate-500">
-              {formatTimeAgo(post.crawled_at)}
+              {formatTimeAgo(post.created_at)}
             </span>
             {post.score !== null && post.score !== undefined && (
               <span className={`text-xs font-medium ${getScoreTextColor(post.score)}`}>
