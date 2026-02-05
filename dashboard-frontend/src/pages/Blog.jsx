@@ -5,7 +5,7 @@ const blogPosts = [
     slug: 'looking-for-partners',
     title: 'Looking for Affiliate Partners',
     date: '2026-02-04',
-    excerpt: 'Panic Radar is seeking affiliate partners to help grow our crypto sentiment intelligence platform. Learn about our partnership program and how you can earn commissions.',
+    excerpt: 'PanicRadar.ai is seeking affiliate partners to help grow our crypto sentiment intelligence platform. Learn about our partnership program and how you can earn commissions.',
     category: 'Announcement',
   },
   {
@@ -23,7 +23,7 @@ const Blog = () => {
       <div>
         <h1 className="text-3xl font-bold text-slate-100">Blog</h1>
         <p className="mt-2 text-slate-400">
-          Updates, research findings, and announcements from the Panic Radar team.
+          Updates, research findings, and announcements from the PanicRadar.ai team.
         </p>
       </div>
 

@@ -6,13 +6,13 @@ const posts = {
     date: '2026-02-04',
     category: 'Announcement',
     content: `
-## Join the Panic Radar Partner Program
+## Join the PanicRadar.ai Partner Program
 
 We're building something different in the crypto space - a sentiment intelligence platform that actually tells you when the crowd might be wrong. And we're looking for partners to help spread the word.
 
-### What is Panic Radar?
+### What is PanicRadar.ai?
 
-Panic Radar tracks real-time sentiment across Reddit, StockTwits, 4chan, and other crypto communities. But here's the twist: we don't just measure sentiment - we measure *when to bet against it*.
+PanicRadar.ai tracks real-time sentiment across Reddit, StockTwits, 4chan, and other crypto communities. But here's the twist: we don't just measure sentiment - we measure *when to bet against it*.
 
 Our system uses Bayesian learning to identify "contrarian sources" - communities that consistently get it wrong. When everyone on r/CryptoCurrencyMemes is scared, that might actually be a buy signal.
 
@@ -49,13 +49,13 @@ Our system uses Bayesian learning to identify "contrarian sources" - communities
 
 We're excited to work with creators and communities who share our vision of smarter crypto analysis.
 
-**[Contact us at protostatis.dev@gmail.com](mailto:protostatis.dev@gmail.com?subject=Affiliate%20Partnership%20Inquiry%20-%20Panic%20Radar&body=Hi%20Panic%20Radar%20Team%2C%0A%0AI'm%20interested%20in%20becoming%20an%20affiliate%20partner.%0A%0ACompany%2FName%3A%20%0AWebsite%3A%20%0AHow%20I%20plan%20to%20promote%3A%20%0A%0AThanks!)**
+**[Contact us at protostatis.dev@gmail.com](mailto:protostatis.dev@gmail.com?subject=Affiliate%20Partnership%20Inquiry%20-%20PanicRadar.ai&body=Hi%20PanicRadar.ai%20Team%2C%0A%0AI'm%20interested%20in%20becoming%20an%20affiliate%20partner.%0A%0ACompany%2FName%3A%20%0AWebsite%3A%20%0AHow%20I%20plan%20to%20promote%3A%20%0A%0AThanks!)**
 
-Include your name, website/channel, and how you plan to promote Panic Radar. We'll get back to you within 48 hours.
+Include your name, website/channel, and how you plan to promote PanicRadar.ai. We'll get back to you within 48 hours.
 
 ---
 
-*Panic Radar - See through the noise. Trade the signal.*
+*PanicRadar.ai - See through the noise. Trade the signal.*
     `,
   },
   'causal-analysis-findings': {
@@ -65,7 +65,7 @@ Include your name, website/channel, and how you plan to promote Panic Radar. We'
     content: `
 ## The Big Question
 
-Here at Panic Radar, we started with a simple hypothesis: *if we can measure what the crypto crowd is feeling, we can predict where prices are going*.
+Here at PanicRadar.ai, we started with a simple hypothesis: *if we can measure what the crypto crowd is feeling, we can predict where prices are going*.
 
 Turns out, it's not that simple. But what we discovered was actually more useful.
 
@@ -178,7 +178,7 @@ Full technical documentation available in our [GitHub repo](https://github.com).
 
 ---
 
-*This analysis directly shapes how Panic Radar generates signals. We don't just aggregate sentiment - we learn which sources to trust, which to invert, and when the crowd is probably wrong.*
+*This analysis directly shapes how PanicRadar.ai generates signals. We don't just aggregate sentiment - we learn which sources to trust, which to invert, and when the crowd is probably wrong.*
     `,
   },
 };
