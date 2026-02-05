@@ -7,7 +7,7 @@ Runs the following jobs:
 - Outcome evaluation: every 15 minutes
 - Fear & Greed: every 4 hours
 - Confounder collection: every 15 minutes (for causal inference)
-- Causal discovery: weekly
+- Source discovery: weekly (finds new crypto subreddits)
 """
 
 import asyncio
@@ -17,11 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .collectors import FearGreedCollector, OnChainFreeCollector, PriceCollector
 from .config import settings
 from .confounders import ConfounderCollector
+from .crawler.sources import get_all_sources
 from .logging_config import logger
 from .orchestrator import CrawlerOrchestrator
 from .storage.db import Database
@@ -63,6 +65,7 @@ class CrawlerScheduler:
             "evaluations": 0,
             "confounder_snapshots": 0,
             "onchain_updates": 0,
+            "discoveries": 0,
             "errors": 0,
             "started_at": None,
         }
@@ -184,6 +187,47 @@ class CrawlerScheduler:
             logger.error(f"On-chain job error: {e}")
             self._stats["errors"] += 1
 
+    async def _job_discovery(self) -> None:
+        """Job: Discover new crypto subreddits (weekly)."""
+        try:
+            from .discovery.manager import SourceManager
+
+            logger.info("Starting weekly source discovery...")
+
+            async with SourceManager() as manager:
+                # Run discovery
+                await manager.run_discovery()
+
+                # Evaluate candidates
+                results = await manager.evaluate_candidates(limit=30)
+
+                # Process and categorize
+                summary = await manager.process_evaluations(results)
+
+                added = len(summary.get("added", []))
+                monitoring = len(summary.get("monitoring", []))
+                rejected = len(summary.get("rejected", []))
+
+                logger.info(
+                    f"Discovery complete: {added} added, "
+                    f"{monitoring} monitoring, {rejected} rejected"
+                )
+
+                # Reload sources in orchestrator if new ones were added
+                if added > 0:
+                    new_sources = get_all_sources(include_discovered=True)
+                    # Add new sources to orchestrator
+                    for name, config in new_sources.items():
+                        if name not in self.orchestrator.sources:
+                            self.orchestrator.sources[name] = config
+                            logger.info(f"Added new source to orchestrator: {name}")
+
+                self._stats["discoveries"] += 1
+
+        except Exception as e:
+            logger.error(f"Discovery job error: {e}")
+            self._stats["errors"] += 1
+
     async def _job_stats(self) -> None:
         """Job: Log statistics periodically."""
         uptime = datetime.now(timezone.utc) - self._stats["started_at"]
@@ -194,8 +238,7 @@ class CrawlerScheduler:
             f"crawls: {self._stats['crawls']} | "
             f"prices: {self._stats['price_updates']} | "
             f"evals: {self._stats['evaluations']} | "
-            f"confounders: {self._stats['confounder_snapshots']} | "
-            f"onchain: {self._stats['onchain_updates']} | "
+            f"discoveries: {self._stats['discoveries']} | "
             f"errors: {self._stats['errors']}"
         )
 
@@ -261,6 +304,15 @@ class CrawlerScheduler:
             IntervalTrigger(seconds=600),
             id="stats",
             name="Statistics",
+            max_instances=1,
+        )
+
+        # Source discovery job - weekly on Sunday at 3 AM UTC
+        self.scheduler.add_job(
+            self._job_discovery,
+            CronTrigger(day_of_week="sun", hour=3, minute=0),
+            id="discovery",
+            name="Source Discovery",
             max_instances=1,
         )
 
