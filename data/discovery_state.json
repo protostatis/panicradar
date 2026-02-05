@@ -1,0 +1,252 @@
+{
+  "sources": {
+    "reddit_bitcoin": {
+      "name": "reddit_bitcoin",
+      "source_type": "reddit",
+      "subreddit": "bitcoin",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760715+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760717+00:00",
+      "evaluation_score": 0.7362129794444445,
+      "notes": "Active source with recent posts (0.0h old)"
+    },
+    "reddit_ethereum": {
+      "name": "reddit_ethereum",
+      "source_type": "reddit",
+      "subreddit": "ethereum",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760817+00:00",
+      "last_evaluated": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.5376856481203703,
+      "notes": "Promoted to active - high-value source"
+    },
+    "reddit_cryptocurrency": {
+      "name": "reddit_cryptocurrency",
+      "source_type": "reddit",
+      "subreddit": "cryptocurrency",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760701+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760703+00:00",
+      "evaluation_score": 0.7517825280648148,
+      "notes": "Active source with recent posts (0.3h old)"
+    },
+    "reddit_cryptomarkets": {
+      "name": "reddit_cryptomarkets",
+      "source_type": "reddit",
+      "subreddit": "cryptomarkets",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760743+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760745+00:00",
+      "evaluation_score": 0.6545236935748793,
+      "notes": "Active source with recent posts (0.2h old)"
+    },
+    "reddit_solana": {
+      "name": "reddit_solana",
+      "source_type": "reddit",
+      "subreddit": "solana",
+      "status": "active",
+      "added_at": "2026-01-31T21:28:23.681350+00:00",
+      "evaluation_score": 0.5,
+      "notes": "seed source"
+    },
+    "reddit_altcoin": {
+      "name": "reddit_altcoin",
+      "source_type": "reddit",
+      "subreddit": "altcoin",
+      "status": "active",
+      "added_at": "2026-01-31T21:28:23.681352+00:00",
+      "evaluation_score": 0.5,
+      "notes": "seed source"
+    },
+    "reddit_defi": {
+      "name": "reddit_defi",
+      "source_type": "reddit",
+      "subreddit": "defi",
+      "status": "active",
+      "added_at": "2026-01-31T21:28:23.681353+00:00",
+      "evaluation_score": 0.5,
+      "notes": "seed source"
+    },
+    "reddit_nft": {
+      "name": "reddit_nft",
+      "source_type": "reddit",
+      "subreddit": "nft",
+      "status": "active",
+      "added_at": "2026-01-31T21:28:23.681354+00:00",
+      "evaluation_score": 0.5,
+      "notes": "seed source"
+    },
+    "reddit_ethtrader": {
+      "name": "reddit_ethtrader",
+      "source_type": "reddit",
+      "subreddit": "ethtrader",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760574+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760586+00:00",
+      "evaluation_score": 0.778647152925926,
+      "notes": "Active source with recent posts (1.6h old)"
+    },
+    "reddit_bitcoinbeginners": {
+      "name": "reddit_bitcoinbeginners",
+      "source_type": "reddit",
+      "subreddit": "bitcoinbeginners",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760680+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760682+00:00",
+      "evaluation_score": 0.7742813003796296,
+      "notes": "Active source with recent posts (1.3h old)"
+    },
+    "reddit_cryptocurrencymemes": {
+      "name": "reddit_cryptocurrencymemes",
+      "source_type": "reddit",
+      "subreddit": "cryptocurrencymemes",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760726+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760727+00:00",
+      "evaluation_score": 0.6920377195462963,
+      "notes": "Active source with recent posts (2.5h old)"
+    },
+    "reddit_cryptotax": {
+      "name": "reddit_cryptotax",
+      "source_type": "reddit",
+      "subreddit": "cryptotax",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760754+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760755+00:00",
+      "evaluation_score": 0.6078693608716932,
+      "notes": "Active source with recent posts (1.3h old)"
+    },
+    "reddit_cryptotechnology": {
+      "name": "reddit_cryptotechnology",
+      "source_type": "reddit",
+      "subreddit": "cryptotechnology",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760792+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760795+00:00",
+      "evaluation_score": 0.5665037414244639,
+      "notes": "Active source with recent posts (1.7h old)"
+    },
+    "reddit_cryptocurrencymeta": {
+      "name": "reddit_cryptocurrencymeta",
+      "source_type": "reddit",
+      "subreddit": "cryptocurrencymeta",
+      "status": "active",
+      "added_at": "2026-01-31T21:31:39.760832+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760834+00:00",
+      "evaluation_score": 0.5187293068661616,
+      "notes": "Active source with recent posts (2.2h old)"
+    },
+    "reddit_dogecoin": {
+      "name": "reddit_dogecoin",
+      "source_type": "reddit",
+      "subreddit": "dogecoin",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Popular meme coin community"
+    },
+    "reddit_cardano": {
+      "name": "reddit_cardano",
+      "source_type": "reddit",
+      "subreddit": "cardano",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Major cryptocurrency community"
+    },
+    "reddit_coinbase": {
+      "name": "reddit_coinbase",
+      "source_type": "reddit",
+      "subreddit": "coinbase",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Major exchange community"
+    },
+    "reddit_litecoin": {
+      "name": "reddit_litecoin",
+      "source_type": "reddit",
+      "subreddit": "litecoin",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Established cryptocurrency community"
+    },
+    "reddit_binance": {
+      "name": "reddit_binance",
+      "source_type": "reddit",
+      "subreddit": "binance",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Major exchange community"
+    },
+    "reddit_bitcoinmarkets": {
+      "name": "reddit_bitcoinmarkets",
+      "source_type": "reddit",
+      "subreddit": "bitcoinmarkets",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "Trading-focused Bitcoin community"
+    },
+    "reddit_cryptomoonshots": {
+      "name": "reddit_cryptomoonshots",
+      "source_type": "reddit",
+      "subreddit": "cryptomoonshots",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.5,
+      "notes": "Speculative crypto community"
+    },
+    "reddit_ripple": {
+      "name": "reddit_ripple",
+      "source_type": "reddit",
+      "subreddit": "ripple",
+      "status": "active",
+      "added_at": "2026-02-04T00:00:00+00:00",
+      "evaluation_score": 0.6,
+      "notes": "XRP community"
+    },
+    "reddit_bitcoinmining": {
+      "name": "reddit_bitcoinmining",
+      "source_type": "reddit",
+      "subreddit": "bitcoinmining",
+      "status": "monitoring",
+      "added_at": "2026-01-31T21:31:39.760849+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760850+00:00",
+      "evaluation_score": 0.40146781880756843,
+      "notes": "Potential source: newest post 8h old"
+    },
+    "reddit_ethdev": {
+      "name": "reddit_ethdev",
+      "source_type": "reddit",
+      "subreddit": "ethdev",
+      "status": "monitoring",
+      "added_at": "2026-01-31T21:31:39.760862+00:00",
+      "last_evaluated": "2026-01-31T21:31:39.760863+00:00",
+      "evaluation_score": 0.33156106520227924,
+      "notes": "Potential source: newest post 7h old"
+    }
+  },
+  "rejected": [
+    "jobs4crypto",
+    "bitcoindiscussion",
+    "ethfinance",
+    "cryptocurrencymoons",
+    "jobs4bitcoins",
+    "ethstaker",
+    "cryptotrade",
+    "bitcointechnology",
+    "cryptohelp",
+    "bitcointaxes",
+    "best_of_crypto",
+    "litecoinmining",
+    "cointestofficial",
+    "cryptorecruiting",
+    "crypto",
+    "cryptoanarchy"
+  ],
+  "last_discovery": "2026-02-04T00:00:00+00:00",
+  "discovery_count": 2
+}

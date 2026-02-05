@@ -83,6 +83,11 @@ class CrawlerOrchestrator:
         self.state_path = Path(state_path)
         self.eval_lag_hours = eval_lag_hours
 
+        # Log which sources are loaded
+        logger.info(f"Orchestrator initialized with {len(self.sources)} sources:")
+        for source_name in sorted(self.sources.keys()):
+            logger.info(f"  - {source_name}")
+
         # Components
         self.belief_store = SourceBeliefStore()
         self.bandit: CrawlBandit | None = None
