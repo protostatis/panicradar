@@ -380,7 +380,7 @@ class CrawlerOrchestrator:
             "metadata": metadata,
         }
         raw = SentimentRaw(
-            timestamp=content.crawled_at,
+            timestamp=content.published_at or content.crawled_at,
             source=content.source,
             coin=content.coins_mentioned[0] if content.coins_mentioned else None,
             raw_data=raw_data,
@@ -393,11 +393,12 @@ class CrawlerOrchestrator:
 
         # Score with user-based sentiment scorer (multi-dimensional)
         coin = content.coins_mentioned[0] if content.coins_mentioned else None
+        post_timestamp = content.published_at or content.crawled_at
         try:
             post_score = self.user_scorer.score_post(
                 raw_data=raw_data,
                 raw_id=raw_id,
-                timestamp=content.crawled_at.isoformat(),
+                timestamp=post_timestamp.isoformat(),
                 source=content.source,
                 coin=coin,
             )

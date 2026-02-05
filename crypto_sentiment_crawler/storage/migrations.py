@@ -103,6 +103,81 @@ async def cleanup_low_engagement_posts(conn: "aiosqlite.Connection") -> int:
     return deleted
 
 
+async def fix_timestamps_from_metadata(conn: "aiosqlite.Connection") -> int:
+    """Update sentiment_raw timestamps to use post creation time instead of crawl time.
+
+    The timestamp should be when the post was created, not when we crawled it.
+    The correct timestamp is stored in raw_data.metadata.created_utc (Unix timestamp).
+
+    Returns number of updated rows.
+    """
+    from datetime import datetime, timezone
+
+    migration_id = "002_fix_timestamps_from_metadata"
+
+    await ensure_migrations_table(conn)
+
+    if await is_migration_applied(conn, migration_id):
+        logger.debug(f"Migration {migration_id} already applied, skipping")
+        return 0
+
+    logger.info(f"Running migration: {migration_id}")
+
+    # Get all rows with metadata containing created_utc
+    cursor = await conn.execute("""
+        SELECT id, raw_data, timestamp
+        FROM sentiment_raw
+    """)
+    rows = await cursor.fetchall()
+
+    updated = 0
+    batch_updates = []
+
+    for row in rows:
+        raw_id = row[0]
+        try:
+            raw_data = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+            metadata = raw_data.get("metadata", {})
+            created_utc = metadata.get("created_utc")
+
+            if created_utc:
+                # Convert Unix timestamp to ISO format
+                post_time = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                batch_updates.append((post_time.isoformat(), raw_id))
+
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+    # Update in batches
+    batch_size = 500
+    for i in range(0, len(batch_updates), batch_size):
+        batch = batch_updates[i:i + batch_size]
+        await conn.executemany(
+            "UPDATE sentiment_raw SET timestamp = ? WHERE id = ?",
+            batch
+        )
+        await conn.commit()
+        updated += len(batch)
+
+    # Also update user_sentiment_scores timestamps to match
+    await conn.execute("""
+        UPDATE user_sentiment_scores
+        SET timestamp = (
+            SELECT sr.timestamp
+            FROM sentiment_raw sr
+            WHERE sr.id = user_sentiment_scores.raw_id
+        )
+        WHERE raw_id IS NOT NULL
+    """)
+    await conn.commit()
+
+    await mark_migration_applied(conn, migration_id)
+    logger.info(f"Migration {migration_id} complete: updated {updated} timestamps")
+
+    return updated
+
+
 async def run_all_migrations(conn: "aiosqlite.Connection") -> None:
     """Run all pending migrations."""
     await cleanup_low_engagement_posts(conn)
+    await fix_timestamps_from_metadata(conn)
