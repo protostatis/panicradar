@@ -30,6 +30,7 @@ const Header = () => {
     { path: '/', label: 'Dashboard' },
     { path: '/beliefs', label: 'Beliefs' },
     { path: '/sources', label: 'Sources' },
+    { path: '/blog', label: 'Blog' },
     { path: '/about', label: 'About' },
   ];
 
