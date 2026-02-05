@@ -3,6 +3,8 @@ import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import Beliefs from './pages/Beliefs';
 import Sources from './pages/Sources';
+import Blog from './pages/Blog';
+import BlogPost from './pages/BlogPost';
 import About from './pages/About';
 
 function App() {
@@ -15,6 +17,8 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/beliefs" element={<Beliefs />} />
             <Route path="/sources" element={<Sources />} />
+            <Route path="/blog" element={<Blog />} />
+            <Route path="/blog/:slug" element={<BlogPost />} />
             <Route path="/about" element={<About />} />
           </Routes>
         </main>
