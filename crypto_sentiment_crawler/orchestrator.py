@@ -41,6 +41,7 @@ class OrchestratorState:
     pending_outcomes: list = field(default_factory=list)
     baseline_informativeness: float = 0.5
     last_causal_update: str | None = None
+    last_belief_update: str | None = None
     total_crawls: int = 0
 
     def to_dict(self) -> dict:
@@ -48,6 +49,7 @@ class OrchestratorState:
             "beliefs": self.beliefs,
             "baseline_informativeness": self.baseline_informativeness,
             "last_causal_update": self.last_causal_update,
+            "last_belief_update": self.last_belief_update,
             "total_crawls": self.total_crawls,
         }
 
@@ -57,6 +59,7 @@ class OrchestratorState:
             beliefs=data.get("beliefs", {}),
             baseline_informativeness=data.get("baseline_informativeness", 0.5),
             last_causal_update=data.get("last_causal_update"),
+            last_belief_update=data.get("last_belief_update"),
             total_crawls=data.get("total_crawls", 0),
         )
 
@@ -404,6 +407,8 @@ class CrawlerOrchestrator:
             )
             if post_score:
                 score_id = self.user_scorer.save_post_score(post_score)
+                # Write score back to content for later belief evaluation
+                content.sentiment_score = post_score.final_score
                 if score_id > 0:
                     # Update user profile
                     user_id = self.user_scorer.get_or_create_user(
@@ -440,6 +445,11 @@ class CrawlerOrchestrator:
             # Check if enough time has passed
             hours_elapsed = (now - outcome.timestamp).total_seconds() / 3600
             if hours_elapsed < self.eval_lag_hours:
+                continue
+
+            # Skip if sentiment was never scored (e.g. scoring failed)
+            if outcome.content.sentiment_score is None:
+                outcome.evaluated = True
                 continue
 
             # Compute utility
