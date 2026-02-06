@@ -525,14 +525,16 @@ def get_available_sources(conn: sqlite3.Connection) -> list[str]:
 def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
     """Calculate panic score from Reddit posts in the last 24 hours.
 
-    Panic score is based on:
-    - Percentage of bearish posts (final_score < -0.1)
-    - Intensity of negative sentiment
-    - Pattern-based fear signals as a boost
-    - Only from Reddit sources
+    Uses a 5-component formula designed for dynamic range:
+    A. Absolute bearish base (0-25 pts) — percentage of bearish posts
+    B. Relative sentiment shift (0-25 pts) — today vs 7-day rolling baseline
+    C. Negative intensity (0-20 pts) — how negative the negative posts are
+    D. Market fear context (0-25 pts) — inverted crypto Fear & Greed Index
+    E. Fear keyword bonus (0-5 pts) — pattern-matched fear signals
 
     Returns a score from 0-100 where higher = more panic.
     """
+    # 1. Get current 24h Reddit sentiment data
     cursor = conn.execute(
         """
         SELECT
@@ -568,26 +570,67 @@ def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
     explicit_fear = row["explicit_fear_posts"] or 0
     avg_sentiment = row["avg_sentiment"] or 0
     avg_negative = row["avg_negative_sentiment"] or 0
-    most_negative = row["most_negative"] or 0
 
-    # Calculate panic score (0-100)
-    # 1. Base: percentage of bearish posts (0-50 points)
+    # 2. Get 7-day rolling baseline (excluding last 24h) for relative comparison
+    baseline_row = conn.execute(
+        """
+        SELECT AVG(uss.final_score) as baseline_sentiment
+        FROM user_sentiment_scores uss
+        JOIN sentiment_raw sr ON uss.raw_id = sr.id
+        WHERE uss.timestamp >= datetime('now', '-8 days')
+          AND uss.timestamp < datetime('now', '-24 hours')
+          AND uss.final_score IS NOT NULL
+          AND sr.source LIKE 'reddit_%'
+        """
+    ).fetchone()
+    baseline_sentiment = baseline_row["baseline_sentiment"] if baseline_row else None
+
+    # 3. Get latest Fear & Greed Index from confounders
+    fgi_row = conn.execute(
+        """
+        SELECT fear_greed_index
+        FROM confounders
+        WHERE fear_greed_index IS NOT NULL AND fear_greed_index > 0
+        ORDER BY timestamp DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    fear_greed_index = fgi_row["fear_greed_index"] if fgi_row else None
+
+    # Calculate panic score (0-100) using 5 components
     bearish_pct = bearish_posts / total if total > 0 else 0
-    base_panic = bearish_pct * 50
 
-    # 2. Intensity: how negative are the negative posts (0-30 points)
-    # avg_negative is negative, so we negate it. Scale: -0.5 = max intensity
-    intensity = min(1.0, abs(avg_negative) / 0.5) if avg_negative else 0
-    intensity_panic = intensity * 30
+    # A. Absolute bearish base (0-25 points)
+    # Percentage of posts with negative sentiment
+    base_panic = bearish_pct * 25
 
-    # 3. Overall sentiment shift (0-15 points)
-    # If overall sentiment is negative, add more panic
-    sentiment_panic = max(0, -avg_sentiment * 30)  # -0.5 sentiment = +15 points
+    # B. Relative sentiment shift vs 7-day baseline (0-25 points)
+    # Measures how much worse today is compared to recent history.
+    # A delta of -0.1 (today is 0.1 more negative than baseline) = max 25 pts
+    if baseline_sentiment is not None:
+        sentiment_delta = baseline_sentiment - avg_sentiment  # positive = today is worse
+        relative_panic = min(25, max(0, sentiment_delta / 0.1 * 25))
+    else:
+        # No baseline available — fall back to absolute sentiment shift
+        relative_panic = max(0, min(25, -avg_sentiment * 50))
 
-    # 4. Explicit fear mentions bonus (0-5 points)
+    # C. Negative intensity (0-20 points)
+    # How negative are the negative posts? Rescaled divisor from 0.5 to 0.3
+    # to match actual data range (avg_negative typically -0.19 to -0.27)
+    intensity = min(1.0, abs(avg_negative) / 0.3) if avg_negative else 0
+    intensity_panic = intensity * 20
+
+    # D. Market fear context (0-25 points)
+    # Inverted Fear & Greed Index: FGI=0 (extreme fear) → 25 pts, FGI=100 (greed) → 0 pts
+    if fear_greed_index is not None:
+        fgi_panic = (100 - fear_greed_index) / 100.0 * 25
+    else:
+        fgi_panic = 0
+
+    # E. Fear keyword bonus (0-5 points)
     fear_bonus = min(5, (explicit_fear / total) * 20) if total > 0 else 0
 
-    panic_score = min(100, base_panic + intensity_panic + sentiment_panic + fear_bonus)
+    panic_score = min(100, max(0, base_panic + relative_panic + intensity_panic + fgi_panic + fear_bonus))
 
     # Determine label
     if panic_score >= 60:
