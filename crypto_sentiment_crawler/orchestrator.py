@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .bayesian import CrawlBandit, SourceBeliefStore, UtilityScorer
+from .bayesian import CrawlBandit, GPBandit, SourceBeliefStore, UtilityScorer
 from .bayesian.cold_start import compute_baseline_informativeness, initialize_source_belief
+from .bayesian.feature_extraction import SourceFeatureExtractor
+from .bayesian.gp_model import GPSourceModel
 from .causal import GrangerAnalyzer
 from .crawler import ContentPipeline, Fetcher
 from .crawler.pipeline import CrawledContent, RedditPipeline
@@ -44,23 +46,39 @@ class OrchestratorState:
     last_belief_update: str | None = None
     total_crawls: int = 0
 
+    # GP state
+    gp_hyperparameters: dict | None = None
+    gp_scaler_params: dict | None = None
+    last_gp_fit: str | None = None
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "beliefs": self.beliefs,
             "baseline_informativeness": self.baseline_informativeness,
             "last_causal_update": self.last_causal_update,
             "last_belief_update": self.last_belief_update,
             "total_crawls": self.total_crawls,
         }
+        if self.gp_hyperparameters is not None:
+            d["gp_state"] = {
+                "hyperparameters": self.gp_hyperparameters,
+                "scaler_params": self.gp_scaler_params,
+                "last_gp_fit": self.last_gp_fit,
+            }
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "OrchestratorState":
+        gp = data.get("gp_state", {})
         return cls(
             beliefs=data.get("beliefs", {}),
             baseline_informativeness=data.get("baseline_informativeness", 0.5),
             last_causal_update=data.get("last_causal_update"),
             last_belief_update=data.get("last_belief_update"),
             total_crawls=data.get("total_crawls", 0),
+            gp_hyperparameters=gp.get("hyperparameters"),
+            gp_scaler_params=gp.get("scaler_params"),
+            last_gp_fit=gp.get("last_gp_fit"),
         )
 
 
@@ -97,6 +115,11 @@ class CrawlerOrchestrator:
         self.utility_scorer = UtilityScorer()
         self.granger = GrangerAnalyzer()
 
+        # GP components
+        self.gp_model: GPSourceModel | None = None
+        self.feature_extractor = SourceFeatureExtractor(db_path=str(db.db_path))
+        self._gp_eval_counter = 0
+
         # Crawlers
         self.fetcher = Fetcher()
         self.pipeline: ContentPipeline | None = None
@@ -122,8 +145,9 @@ class CrawlerOrchestrator:
         # Initialize beliefs for all sources
         await self._initialize_beliefs()
 
-        # Create bandit
-        self.bandit = CrawlBandit(self.belief_store)
+        # Try to set up GP-enhanced bandit
+        bandit = await self._try_init_gp_bandit()
+        self.bandit = bandit or CrawlBandit(self.belief_store)
 
         # Start fetcher
         await self.fetcher.start()
@@ -147,6 +171,16 @@ class CrawlerOrchestrator:
                     data = json.load(f)
                 self.state = OrchestratorState.from_dict(data)
                 self.belief_store = SourceBeliefStore.from_dict(self.state.beliefs)
+
+                # Restore GP hyperparameters if present
+                if self.state.gp_hyperparameters:
+                    self.gp_model = GPSourceModel(
+                        **self.state.gp_hyperparameters
+                    )
+                    if self.state.gp_scaler_params:
+                        self.feature_extractor.scaler_params = self.state.gp_scaler_params
+                    logger.info("Restored GP hyperparameters from state")
+
                 logger.info(f"Loaded state: {self.state.total_crawls} total crawls")
             except Exception as e:
                 logger.warning(f"Could not load state: {e}")
@@ -154,6 +188,13 @@ class CrawlerOrchestrator:
     async def _save_state(self) -> None:
         """Save state to disk."""
         self.state.beliefs = self.belief_store.to_dict()
+
+        # Save GP state if available
+        if self.gp_model is not None:
+            gp_dict = self.gp_model.to_dict()
+            self.state.gp_hyperparameters = gp_dict.get("hyperparameters")
+            self.state.gp_scaler_params = self.feature_extractor.scaler_params
+
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_path, "w") as f:
             json.dump(self.state.to_dict(), f, indent=2)
@@ -178,6 +219,83 @@ class CrawlerOrchestrator:
                     f"Initialized {source_name}: α={belief.alpha:.2f}, "
                     f"β={belief.beta:.2f}, mean={belief.mean:.3f}"
                 )
+
+    async def _try_init_gp_bandit(self) -> GPBandit | None:
+        """Try to initialize a GPBandit. Returns None if not enough data."""
+        try:
+            raw_features = await self.feature_extractor.extract_features(self.db)
+            if len(raw_features) < GPBandit.MIN_GP_ELIGIBLE:
+                logger.info(
+                    f"Only {len(raw_features)} sources with features, "
+                    f"need {GPBandit.MIN_GP_ELIGIBLE} for GP. Using independent Beta."
+                )
+                return None
+
+            features = self.feature_extractor.standardize_features(raw_features)
+
+            if self.gp_model is None:
+                self.gp_model = GPSourceModel()
+
+            bandit = GPBandit(
+                self.belief_store,
+                gp_model=self.gp_model,
+                features=features,
+            )
+
+            if bandit.update_gp(features):
+                self.state.last_gp_fit = datetime.now(timezone.utc).isoformat()
+                logger.info(
+                    f"GP bandit active with {len(features)} sources"
+                )
+                return bandit
+
+            logger.info("GP fit failed, using independent Beta")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Could not initialize GP bandit: {e}")
+            return None
+
+    async def _refit_gp(self) -> None:
+        """Refit GP model with current beliefs and fresh features."""
+        if not isinstance(self.bandit, GPBandit):
+            return
+
+        try:
+            raw_features = await self.feature_extractor.extract_features(self.db)
+            if len(raw_features) < GPBandit.MIN_GP_ELIGIBLE:
+                return
+
+            features = self.feature_extractor.standardize_features(raw_features)
+
+            # Optimize hyperparameters
+            eligible = []
+            alphas = []
+            betas = []
+            for source, sf in features.items():
+                belief = self.belief_store.get(source)
+                if belief.total_crawls >= GPBandit.MIN_OBSERVATIONS:
+                    eligible.append(sf)
+                    alphas.append(belief.alpha)
+                    betas.append(belief.beta)
+
+            if len(eligible) >= GPBandit.MIN_GP_ELIGIBLE:
+                import numpy as np
+                result = self.gp_model.optimize_hyperparameters(
+                    eligible, np.array(alphas), np.array(betas)
+                )
+                if result.get("converged"):
+                    logger.info(
+                        f"GP hyperparameters optimized: "
+                        f"l={self.gp_model.length_scale:.3f}, "
+                        f"sf={self.gp_model.signal_variance:.3f}"
+                    )
+
+            self.bandit.update_gp(features)
+            self.state.last_gp_fit = datetime.now(timezone.utc).isoformat()
+            logger.info("GP model refitted")
+        except Exception as e:
+            logger.warning(f"GP refit failed: {e}")
 
     async def _compute_baseline(self) -> float:
         """Compute baseline informativeness from price history."""
@@ -496,6 +614,13 @@ class CrawlerOrchestrator:
             o for o in self.pending_outcomes
             if not o.evaluated or (now - o.timestamp).total_seconds() < 86400
         ]
+
+        # Refit GP periodically
+        if evaluated_count > 0:
+            self._gp_eval_counter += evaluated_count
+            if self._gp_eval_counter >= 50:
+                await self._refit_gp()
+                self._gp_eval_counter = 0
 
         return evaluated_count
 

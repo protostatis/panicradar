@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
+from scipy.special import ndtr as norm_cdf
 
 from .beliefs import SourceBelief, SourceBeliefStore
+from .gp_model import GPSourceModel, SourceFeatures
 
 
 @dataclass
@@ -205,6 +207,176 @@ class CrawlBandit:
         best_utility = max(outcomes.values())
 
         return best_utility - selected_utility
+
+
+class GPBandit(CrawlBandit):
+    """Thompson Sampling bandit with GP-correlated source selection.
+
+    For GP-eligible sources (>= min_observations and features available),
+    draws correlated Thompson samples via the GP posterior. Cold-start
+    sources fall back to independent Beta sampling.
+    """
+
+    MIN_GP_ELIGIBLE = 5   # Minimum GP-eligible sources to use GP
+    MIN_OBSERVATIONS = 10  # Minimum crawls before a source is GP-eligible
+
+    def __init__(
+        self,
+        belief_store: SourceBeliefStore,
+        gp_model: GPSourceModel | None = None,
+        features: dict[str, SourceFeatures] | None = None,
+        **kwargs,
+    ):
+        super().__init__(belief_store, **kwargs)
+        self.gp_model = gp_model or GPSourceModel()
+        self.features = features or {}
+        self._gp_active = False
+
+    def update_gp(self, features: dict[str, SourceFeatures]) -> bool:
+        """Refit GP with current beliefs and features.
+
+        Args:
+            features: Dict of source -> SourceFeatures (standardized)
+
+        Returns:
+            True if GP was fitted successfully
+        """
+        self.features = features
+
+        # Determine GP-eligible sources
+        eligible = []
+        alphas = []
+        betas = []
+
+        for source, sf in features.items():
+            belief = self.belief_store.get(source)
+            if belief.total_crawls >= self.MIN_OBSERVATIONS:
+                eligible.append(sf)
+                alphas.append(belief.alpha)
+                betas.append(belief.beta)
+
+        if len(eligible) < self.MIN_GP_ELIGIBLE:
+            self._gp_active = False
+            return False
+
+        try:
+            self.gp_model.fit(
+                eligible,
+                np.array(alphas),
+                np.array(betas),
+            )
+            self._gp_active = True
+            return True
+        except (np.linalg.LinAlgError, ValueError):
+            self._gp_active = False
+            return False
+
+    def select_source(self, available_sources: list[str] | None = None) -> SelectionResult:
+        """Select source using GP-correlated Thompson Sampling when possible.
+
+        GP-eligible sources get correlated samples. Cold-start sources
+        use independent Beta sampling. Cooldown filtering still applies.
+        """
+        if available_sources is None:
+            available_sources = self.belief_store.all_sources()
+
+        if not available_sources:
+            raise ValueError("No sources available for selection")
+
+        # Filter out sources on cooldown
+        active_sources = []
+        for source in available_sources:
+            belief = self.belief_store.get(source)
+            if belief.consecutive_empty_crawls < self.empty_crawl_cooldown:
+                active_sources.append(source)
+
+        if not active_sources:
+            active_sources = list(available_sources)
+
+        # Split into GP-eligible and cold-start
+        gp_sources = []
+        cold_sources = []
+
+        if self._gp_active and self.gp_model.sources:
+            gp_source_set = set(self.gp_model.sources)
+            for source in active_sources:
+                belief = self.belief_store.get(source)
+                if (source in gp_source_set
+                        and belief.total_crawls >= self.MIN_OBSERVATIONS):
+                    gp_sources.append(source)
+                else:
+                    cold_sources.append(source)
+        else:
+            cold_sources = active_sources
+
+        # Draw GP-correlated samples for eligible sources
+        gp_samples = {}
+        if gp_sources and self._gp_active:
+            try:
+                theta = self.gp_model.sample_thompson(n_samples=1)[0]
+                source_to_idx = {
+                    s: i for i, s in enumerate(self.gp_model.sources)
+                }
+                for source in gp_sources:
+                    idx = source_to_idx.get(source)
+                    if idx is not None:
+                        gp_samples[source] = theta[idx]
+            except (np.linalg.LinAlgError, ValueError):
+                # Fall back to independent sampling
+                pass
+
+        # Score all sources
+        best_source = None
+        best_score = -np.inf
+        best_result = None
+
+        for source in active_sources:
+            belief = self.belief_store.get(source)
+
+            if source in gp_samples:
+                sampled_value = gp_samples[source]
+            else:
+                sampled_value = belief.sample()
+
+            exploration_bonus = self.exploration_weight * belief.std
+            causal_mult = self.causal_bonus if belief.is_causal else 1.0
+            final_score = (sampled_value + exploration_bonus) * causal_mult
+
+            if final_score > best_score:
+                best_score = final_score
+                best_source = source
+                best_result = SelectionResult(
+                    source=source,
+                    sampled_value=sampled_value,
+                    exploration_bonus=exploration_bonus,
+                    final_score=final_score,
+                    belief=belief,
+                )
+
+        # Decay exploration weight
+        self.exploration_weight = max(
+            self.min_exploration,
+            self.exploration_weight * self.exploration_decay,
+        )
+
+        self.selection_count += 1
+
+        self.selection_history.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": best_source,
+            "sampled_value": best_result.sampled_value,
+            "exploration_bonus": best_result.exploration_bonus,
+            "final_score": best_score,
+            "exploration_weight": self.exploration_weight,
+            "gp_active": self._gp_active,
+            "gp_sources_count": len(gp_sources),
+        })
+
+        return best_result
+
+    @property
+    def is_gp_active(self) -> bool:
+        return self._gp_active
 
 
 class UCBBandit:
