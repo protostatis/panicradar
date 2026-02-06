@@ -241,7 +241,19 @@ class CrawlerOrchestrator:
         contents = await self._crawl_source_batch(source_name, source_config)
 
         if not contents:
+            # Penalize empty crawl so the bandit learns to avoid dry sources
+            belief = self.belief_store.get(source_name)
+            belief.record_empty_crawl(penalty=0.3)
+            logger.info(
+                f"Empty crawl from {source_name} "
+                f"(consecutive={belief.consecutive_empty_crawls}, "
+                f"mean={belief.mean:.3f})"
+            )
             return []
+
+        # Successful crawl — reset empty counter
+        belief = self.belief_store.get(source_name)
+        belief.consecutive_empty_crawls = 0
 
         # Get current price for later evaluation
         price = await self._get_current_price("BTC")

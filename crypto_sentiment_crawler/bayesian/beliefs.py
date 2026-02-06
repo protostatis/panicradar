@@ -29,6 +29,7 @@ class SourceBelief:
 
     # Tracking
     total_crawls: int = 0
+    consecutive_empty_crawls: int = 0
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -63,6 +64,18 @@ class SourceBelief:
         else:
             self.beta += 1
         self.total_crawls += 1
+        self.consecutive_empty_crawls = 0  # Reset on any real outcome
+        self.last_updated = datetime.now(timezone.utc)
+
+    def record_empty_crawl(self, penalty: float = 0.3) -> None:
+        """Record an empty crawl (no posts returned).
+
+        Applies a soft beta penalty so inflated accuracy gradually decays.
+        Penalty is smaller than a full negative outcome (1.0) to reflect
+        that empty != bad content, just no content.
+        """
+        self.consecutive_empty_crawls += 1
+        self.beta += penalty
         self.last_updated = datetime.now(timezone.utc)
 
     def update_with_utility(self, utility: float, threshold: float = 0.5) -> None:
@@ -87,6 +100,7 @@ class SourceBelief:
             "granger_pvalue": self.granger_pvalue,
             "lead_time_hours": self.lead_time_hours,
             "total_crawls": self.total_crawls,
+            "consecutive_empty_crawls": self.consecutive_empty_crawls,
             "last_updated": self.last_updated.isoformat(),
         }
 
@@ -100,6 +114,7 @@ class SourceBelief:
             granger_pvalue=data.get("granger_pvalue"),
             lead_time_hours=data.get("lead_time_hours"),
             total_crawls=data.get("total_crawls", 0),
+            consecutive_empty_crawls=data.get("consecutive_empty_crawls", 0),
             last_updated=datetime.fromisoformat(data["last_updated"])
             if "last_updated" in data
             else datetime.now(timezone.utc),

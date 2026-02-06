@@ -35,6 +35,7 @@ class CrawlBandit:
         initial_exploration: float = 1.0,
         min_exploration: float = 0.1,
         causal_bonus: float = 1.5,
+        empty_crawl_cooldown: int = 3,
     ):
         """
         Args:
@@ -43,12 +44,14 @@ class CrawlBandit:
             initial_exploration: Initial exploration weight
             min_exploration: Minimum exploration weight
             causal_bonus: Multiplier for sources with causal evidence
+            empty_crawl_cooldown: Skip sources with this many consecutive empty crawls
         """
         self.belief_store = belief_store
         self.exploration_weight = initial_exploration
         self.exploration_decay = exploration_decay
         self.min_exploration = min_exploration
         self.causal_bonus = causal_bonus
+        self.empty_crawl_cooldown = empty_crawl_cooldown
 
         # Tracking
         self.selection_count = 0
@@ -71,11 +74,22 @@ class CrawlBandit:
         if not available_sources:
             raise ValueError("No sources available for selection")
 
+        # Filter out sources on cooldown (too many consecutive empty crawls)
+        active_sources = []
+        for source in available_sources:
+            belief = self.belief_store.get(source)
+            if belief.consecutive_empty_crawls < self.empty_crawl_cooldown:
+                active_sources.append(source)
+
+        # If all sources are on cooldown, use all (prevent deadlock)
+        if not active_sources:
+            active_sources = list(available_sources)
+
         best_source = None
         best_score = -np.inf
         best_result = None
 
-        for source in available_sources:
+        for source in active_sources:
             belief = self.belief_store.get(source)
 
             # Thompson Sampling: sample from posterior
