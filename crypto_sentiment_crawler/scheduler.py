@@ -146,6 +146,12 @@ class CrawlerScheduler:
                 self._stats["evaluations"] += evaluated
                 logger.info(f"Evaluated {evaluated} outcomes, updated beliefs")
 
+                # Save state with updated beliefs and timestamp
+                self.orchestrator.state.last_belief_update = (
+                    datetime.now(timezone.utc).isoformat()
+                )
+                await self.orchestrator._save_state()
+
                 # Log current rankings
                 rankings = self.orchestrator.bandit.get_exploitation_ranking()
                 logger.info("Updated rankings:")
