@@ -27,7 +27,7 @@ const Header = () => {
   const location = useLocation();
 
   const navItems = [
-    { path: '/', label: 'Dashboard' },
+    { path: '/dashboard', label: 'Dashboard' },
     { path: '/beliefs', label: 'Beliefs' },
     { path: '/sources', label: 'Sources' },
     { path: '/blog', label: 'Blog' },
