@@ -35,8 +35,9 @@ const About = () => {
           </h2>
           <p className="text-slate-400 mb-4">
             Our proprietary Panic Score (0-100) measures real-time fear levels
-            across Reddit crypto communities over the last 24 hours, using
-            FinBERT-based sentiment analysis.
+            by combining Reddit community sentiment with market-wide fear signals.
+            It uses FinBERT-based sentiment analysis on posts from the last 24 hours,
+            compared against a 7-day rolling baseline to detect genuine sentiment shifts.
           </p>
           <div className="bg-slate-900/50 rounded-lg p-4 mb-4">
             <h3 className="text-sm font-semibold text-slate-300 mb-2">
@@ -44,16 +45,20 @@ const About = () => {
             </h3>
             <ul className="list-disc list-inside text-slate-400 space-y-2 text-sm">
               <li>
-                <strong className="text-slate-300">Bearish Ratio (0-50 pts)</strong>:
-                Percentage of posts with negative sentiment score (&lt; -0.1)
+                <strong className="text-slate-300">Bearish Ratio (0-25 pts)</strong>:
+                Percentage of Reddit posts with negative sentiment (&lt; -0.1)
               </li>
               <li>
-                <strong className="text-slate-300">Negative Intensity (0-30 pts)</strong>:
-                How strongly negative the bearish posts are (scaled by avg negative score)
+                <strong className="text-slate-300">Relative Sentiment Shift (0-25 pts)</strong>:
+                How much more negative today&apos;s sentiment is compared to the 7-day rolling average
               </li>
               <li>
-                <strong className="text-slate-300">Sentiment Shift (0-15 pts)</strong>:
-                Overall sentiment drift into negative territory
+                <strong className="text-slate-300">Negative Intensity (0-20 pts)</strong>:
+                How strongly negative the bearish posts are (avg negative score)
+              </li>
+              <li>
+                <strong className="text-slate-300">Market Fear Context (0-25 pts)</strong>:
+                Inverted crypto Fear &amp; Greed Index &mdash; amplifies score during market-wide fear
               </li>
               <li>
                 <strong className="text-slate-300">Fear Signals (0-5 pts)</strong>:
@@ -61,7 +66,7 @@ const About = () => {
               </li>
             </ul>
             <p className="text-slate-500 text-xs mt-3">
-              Data source: user_sentiment_scores table (FinBERT semantic analysis on Reddit posts)
+              Data sources: Reddit posts via FinBERT sentiment analysis + crypto Fear &amp; Greed Index
             </p>
           </div>
           <div className="grid grid-cols-4 gap-2 text-center text-sm">
