@@ -37,7 +37,8 @@ class CrawlBandit:
         initial_exploration: float = 1.0,
         min_exploration: float = 0.1,
         causal_bonus: float = 1.5,
-        empty_crawl_cooldown: int = 3,
+        empty_crawl_cooldown: int = 10,
+        cooldown_decay_hours: float = 1.0,
     ):
         """
         Args:
@@ -47,6 +48,7 @@ class CrawlBandit:
             min_exploration: Minimum exploration weight
             causal_bonus: Multiplier for sources with causal evidence
             empty_crawl_cooldown: Skip sources with this many consecutive empty crawls
+            cooldown_decay_hours: Reset empty crawl counter after this many hours
         """
         self.belief_store = belief_store
         self.exploration_weight = initial_exploration
@@ -54,10 +56,14 @@ class CrawlBandit:
         self.min_exploration = min_exploration
         self.causal_bonus = causal_bonus
         self.empty_crawl_cooldown = empty_crawl_cooldown
+        self.cooldown_decay_hours = cooldown_decay_hours
 
         # Tracking
         self.selection_count = 0
         self.selection_history: list[dict] = []
+        self._last_selected: str | None = None
+        self._consecutive_same = 0
+        self.max_consecutive_same = 3  # Force diversity after N repeats
 
     def select_source(self, available_sources: list[str] | None = None) -> SelectionResult:
         """
@@ -76,6 +82,16 @@ class CrawlBandit:
         if not available_sources:
             raise ValueError("No sources available for selection")
 
+        # Decay stale cooldowns: if a source hasn't been tried in a while,
+        # give it another chance (prevents permanent cooldown from persisted state)
+        now = datetime.now(timezone.utc)
+        for source in available_sources:
+            belief = self.belief_store.get(source)
+            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
+                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
+                if hours_since_update >= self.cooldown_decay_hours:
+                    belief.consecutive_empty_crawls = 0
+
         # Filter out sources on cooldown (too many consecutive empty crawls)
         active_sources = []
         for source in available_sources:
@@ -86,6 +102,13 @@ class CrawlBandit:
         # If all sources are on cooldown, use all (prevent deadlock)
         if not active_sources:
             active_sources = list(available_sources)
+
+        # Anti-starvation: if same source selected too many times in a row,
+        # exclude it to force diversity
+        if (self._last_selected
+                and self._consecutive_same >= self.max_consecutive_same
+                and len(active_sources) > 1):
+            active_sources = [s for s in active_sources if s != self._last_selected]
 
         best_source = None
         best_score = -np.inf
@@ -116,6 +139,13 @@ class CrawlBandit:
                     final_score=final_score,
                     belief=belief,
                 )
+
+        # Track consecutive same-source selections
+        if best_source == self._last_selected:
+            self._consecutive_same += 1
+        else:
+            self._consecutive_same = 1
+        self._last_selected = best_source
 
         # Decay exploration weight
         self.exploration_weight = max(
@@ -283,6 +313,15 @@ class GPBandit(CrawlBandit):
         if not available_sources:
             raise ValueError("No sources available for selection")
 
+        # Decay stale cooldowns
+        now = datetime.now(timezone.utc)
+        for source in available_sources:
+            belief = self.belief_store.get(source)
+            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
+                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
+                if hours_since_update >= self.cooldown_decay_hours:
+                    belief.consecutive_empty_crawls = 0
+
         # Filter out sources on cooldown
         active_sources = []
         for source in available_sources:
@@ -325,6 +364,15 @@ class GPBandit(CrawlBandit):
                 # Fall back to independent sampling
                 pass
 
+        # Anti-starvation: if same source selected too many times in a row,
+        # exclude it to force diversity
+        if (self._last_selected
+                and self._consecutive_same >= self.max_consecutive_same
+                and len(active_sources) > 1):
+            active_sources = [s for s in active_sources if s != self._last_selected]
+            # Also remove from GP samples
+            gp_samples.pop(self._last_selected, None)
+
         # Score all sources
         best_source = None
         best_score = -np.inf
@@ -352,6 +400,13 @@ class GPBandit(CrawlBandit):
                     final_score=final_score,
                     belief=belief,
                 )
+
+        # Track consecutive same-source selections
+        if best_source == self._last_selected:
+            self._consecutive_same += 1
+        else:
+            self._consecutive_same = 1
+        self._last_selected = best_source
 
         # Decay exploration weight
         self.exploration_weight = max(
