@@ -34,9 +34,11 @@ if ! command -v wg &> /dev/null; then
     sudo yum install -y wireguard-tools
 fi
 
-# Detect EC2 private IP for SSH split routing
+# Detect EC2 private IP and default gateway
 EC2_IP=$(hostname -I | awk '{print $1}')
+EC2_GW=$(/sbin/ip route show default dev eth0 | awk '{print $3}')
 echo "EC2 private IP: $EC2_IP"
+echo "EC2 gateway: $EC2_GW"
 
 # Write WireGuard config
 echo "Writing /etc/wireguard/wg0.conf..."
@@ -46,8 +48,8 @@ PrivateKey = $WG_PRIVATE_KEY
 Address = $WG_ADDRESS
 DNS = $WG_DNS
 MTU = 1420
-PostUp = /sbin/ip rule add from $EC2_IP table main priority 90; /sbin/iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff
-PostDown = /sbin/ip rule del from $EC2_IP table main priority 90; /sbin/iptables -t mangle -D PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff
+PostUp = /sbin/ip rule add from $EC2_IP table main priority 90; /sbin/iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff; /sbin/ip route add 140.82.112.0/20 via $EC2_GW dev eth0; /sbin/ip route add 185.199.108.0/22 via $EC2_GW dev eth0
+PostDown = /sbin/ip rule del from $EC2_IP table main priority 90; /sbin/iptables -t mangle -D PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff; /sbin/ip route del 140.82.112.0/20 dev eth0; /sbin/ip route del 185.199.108.0/22 dev eth0
 
 [Peer]
 PublicKey = $WG_PEER_PUBKEY
