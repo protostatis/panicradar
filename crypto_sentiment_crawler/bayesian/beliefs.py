@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 from scipy import stats
+from scipy.special import ndtri as norm_ppf
+from scipy.stats import norm
 
 
 @dataclass
@@ -81,6 +83,22 @@ class SourceBelief:
     def update_with_utility(self, utility: float, threshold: float = 0.5) -> None:
         """Update belief based on utility score."""
         self.update(was_informative=(utility > threshold))
+
+    def to_gaussian_moments(self) -> tuple[float, float]:
+        """Convert Beta -> Gaussian in probit space via moment matching.
+
+        Returns:
+            (mu, sigma2) where mu = Phi^-1(mean) and
+            sigma2 = 1 / (phi(mu)^2 * (alpha + beta + 1))
+        """
+        p = np.clip(self.mean, 0.01, 0.99)
+        mu = norm_ppf(p)
+        phi_val = norm.pdf(mu)
+        if phi_val > 1e-10:
+            sigma2 = 1.0 / (phi_val ** 2 * (self.alpha + self.beta + 1))
+        else:
+            sigma2 = 100.0
+        return mu, sigma2
 
     def confidence_interval(self, confidence: float = 0.95) -> tuple[float, float]:
         """Compute credible interval for the informativeness probability."""

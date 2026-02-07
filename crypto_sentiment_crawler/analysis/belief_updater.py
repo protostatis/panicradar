@@ -264,10 +264,82 @@ async def update_orchestrator_beliefs(
         # Print weights table
         print_weights_table(weights)
 
+        # Refit GP hyperparameters if GP state exists
+        await _refit_gp_from_state(state, state_file, db, updated_beliefs)
+
         return updated_beliefs
 
     finally:
         await db.close()
+
+
+async def _refit_gp_from_state(
+    state: dict,
+    state_file: Path,
+    db: Database,
+    beliefs: dict,
+) -> None:
+    """Refit GP hyperparameters after belief update if GP state exists."""
+    gp_state = state.get("gp_state")
+    if not gp_state:
+        return
+
+    try:
+        from ..bayesian.feature_extraction import SourceFeatureExtractor
+        from ..bayesian.gp_model import GPSourceModel
+        from ..bayesian.bandit import GPBandit
+
+        hp = gp_state.get("hyperparameters", {})
+        gp_model = GPSourceModel(**hp)
+
+        extractor = SourceFeatureExtractor(db_path=str(db.db_path))
+        if gp_state.get("scaler_params"):
+            extractor.scaler_params = gp_state["scaler_params"]
+
+        raw_features = await extractor.extract_features(db)
+        if len(raw_features) < GPBandit.MIN_GP_ELIGIBLE:
+            logger.info("Not enough sources for GP refit")
+            return
+
+        features = extractor.standardize_features(raw_features)
+
+        # Build alphas/betas from updated beliefs
+        eligible = []
+        alphas = []
+        betas = []
+        for source, sf in features.items():
+            b = beliefs.get(source, {})
+            total = b.get("total_crawls", 0)
+            if total >= GPBandit.MIN_OBSERVATIONS:
+                eligible.append(sf)
+                alphas.append(b.get("alpha", 1.0))
+                betas.append(b.get("beta", 1.0))
+
+        if len(eligible) < GPBandit.MIN_GP_ELIGIBLE:
+            return
+
+        result = gp_model.optimize_hyperparameters(
+            eligible, np.array(alphas), np.array(betas)
+        )
+
+        if result.get("converged"):
+            state["gp_state"] = {
+                "hyperparameters": result["hyperparameters"],
+                "scaler_params": extractor.scaler_params,
+                "last_gp_fit": datetime.now(timezone.utc).isoformat(),
+            }
+            with open(state_file, "w") as f:
+                json.dump(state, f, indent=4)
+            logger.info(
+                f"GP hyperparameters reoptimized: "
+                f"l={result['hyperparameters']['length_scale']:.3f}, "
+                f"sf={result['hyperparameters']['signal_variance']:.3f}"
+            )
+        else:
+            logger.info("GP hyperparameter optimization did not converge")
+
+    except Exception as e:
+        logger.warning(f"GP refit in belief updater failed: {e}")
 
 
 async def main():

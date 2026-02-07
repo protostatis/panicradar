@@ -652,6 +652,162 @@ def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
     }
 
 
+def get_source_similarity(
+    conn: sqlite3.Connection,
+    state_path: str = "data/orchestrator_state.json",
+    lookback_days: int = 7,
+    min_posts: int = 5,
+) -> dict:
+    """Compute GP source similarity: feature distances, nearest neighbors, and clusters.
+
+    Returns source feature profiles, pairwise distances, and nearest neighbors
+    computed from 7D sentiment feature vectors.
+    """
+    import numpy as np
+    from scipy.spatial.distance import pdist, squareform
+
+    # Extract features from user_sentiment_scores
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    ).isoformat()
+
+    cursor = conn.execute(
+        """
+        SELECT up.source,
+               uss.final_score,
+               uss.fear_index,
+               uss.euphoria_index,
+               uss.activity_level,
+               uss.pos_count,
+               uss.neg_count
+        FROM user_sentiment_scores uss
+        JOIN user_profiles up ON uss.user_id = up.user_id
+        WHERE uss.timestamp >= ?
+        ORDER BY up.source
+        """,
+        (since,),
+    )
+    rows = cursor.fetchall()
+
+    # Group by source
+    source_data: dict[str, list] = {}
+    for row in rows:
+        source = row["source"]
+        if source not in source_data:
+            source_data[source] = []
+        source_data[source].append({
+            "final_score": row["final_score"] or 0.0,
+            "fear_index": row["fear_index"] or 0.0,
+            "euphoria_index": row["euphoria_index"] or 0.0,
+            "activity_level": row["activity_level"] or 0.0,
+            "pos_count": row["pos_count"] or 0,
+            "neg_count": row["neg_count"] or 0,
+        })
+
+    # Build feature vectors for sources with enough data
+    feature_names = [
+        "mean_score", "std_score", "mean_fear", "mean_euphoria",
+        "mean_activity", "polarity_ratio", "log_volume",
+    ]
+    sources = []
+    raw_features = []
+
+    for source, records in sorted(source_data.items()):
+        if len(records) < min_posts:
+            continue
+
+        scores = np.array([r["final_score"] for r in records])
+        fears = np.array([r["fear_index"] for r in records])
+        euphorias = np.array([r["euphoria_index"] for r in records])
+        activities = np.array([r["activity_level"] for r in records])
+        pos = np.array([r["pos_count"] for r in records])
+        neg = np.array([r["neg_count"] for r in records])
+
+        total_pos, total_neg = pos.sum(), neg.sum()
+
+        features = [
+            float(scores.mean()),
+            float(scores.std()) if len(scores) > 1 else 0.0,
+            float(fears.mean()),
+            float(euphorias.mean()),
+            float(activities.mean()),
+            float(total_pos / (total_pos + total_neg + 1)),
+            float(np.log(len(records) + 1)),
+        ]
+        sources.append(source)
+        raw_features.append(features)
+
+    if len(sources) < 3:
+        return {"sources": [], "pairs": [], "neighbors": [], "features": []}
+
+    X = np.array(raw_features)
+
+    # Z-score standardize
+    mean = X.mean(axis=0)
+    std = X.std(axis=0)
+    std[std < 1e-10] = 1.0
+    X_std = (X - mean) / std
+
+    # Pairwise euclidean distances
+    dists = squareform(pdist(X_std, metric="euclidean"))
+
+    # Build pairs list sorted by distance
+    pairs = []
+    n = len(sources)
+    for i in range(n):
+        for j in range(i + 1, n):
+            pairs.append({
+                "source1": sources[i],
+                "source2": sources[j],
+                "distance": round(float(dists[i, j]), 4),
+            })
+    pairs.sort(key=lambda x: x["distance"])
+
+    # Nearest neighbors
+    neighbors = []
+    for i in range(n):
+        nn = sorted(
+            [(sources[j], float(dists[i, j])) for j in range(n) if j != i],
+            key=lambda x: x[1],
+        )
+        neighbors.append({
+            "source": sources[i],
+            "nearest": nn[0][0] if nn else None,
+            "nearest_distance": round(nn[0][1], 4) if nn else None,
+            "second": nn[1][0] if len(nn) > 1 else None,
+            "second_distance": round(nn[1][1], 4) if len(nn) > 1 else None,
+        })
+
+    # Feature profiles (z-scored) for display
+    feature_profiles = []
+    for i, source in enumerate(sources):
+        profile = {"source": source, "post_count": len(source_data[source])}
+        for j, fname in enumerate(feature_names):
+            profile[fname] = round(float(X_std[i, j]), 3)
+        feature_profiles.append(profile)
+
+    # Heatmap matrix (distances normalized to 0-1 for color mapping)
+    max_dist = dists.max() if dists.max() > 0 else 1.0
+    heatmap = []
+    for i in range(n):
+        for j in range(n):
+            heatmap.append({
+                "x": sources[i],
+                "y": sources[j],
+                "distance": round(float(dists[i, j]), 4),
+                "similarity": round(float(1 - dists[i, j] / max_dist), 4),
+            })
+
+    return {
+        "sources": sources,
+        "pairs": pairs,
+        "neighbors": neighbors,
+        "features": feature_profiles,
+        "heatmap": heatmap,
+        "feature_names": feature_names,
+    }
+
+
 def get_daily_sentiment_counts(
     conn: sqlite3.Connection, days: int = 30, source: Optional[str] = None
 ) -> list[dict]:
