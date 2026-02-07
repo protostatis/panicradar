@@ -137,6 +137,20 @@ function replaceMeta(html, route) {
     `<meta name="twitter:description" content="${route.description}"`,
   );
 
+  // OG image (ensure it's set for all routes)
+  if (!result.includes('og:image')) {
+    result = result.replace(
+      '</head>',
+      '    <meta property="og:image" content="https://panicradar.ai/og-image.png" />\n    <meta property="og:image:width" content="1200" />\n    <meta property="og:image:height" content="630" />\n  </head>',
+    );
+  }
+  if (!result.includes('twitter:image')) {
+    result = result.replace(
+      '</head>',
+      '    <meta name="twitter:image" content="https://panicradar.ai/og-image.png" />\n  </head>',
+    );
+  }
+
   // Canonical URL
   result = result.replace(
     /<link rel="canonical" href="[^"]*"/,

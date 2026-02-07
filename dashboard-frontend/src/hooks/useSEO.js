@@ -4,7 +4,7 @@ import { useEffect } from 'react';
  * Sets document title, meta description, and Open Graph tags dynamically.
  * Essential for SPA SEO since there's only one index.html.
  */
-export default function useSEO({ title, description, url, type = 'website' }) {
+export default function useSEO({ title, description, url, type = 'website', image = 'https://panicradar.ai/og-image.png' }) {
   useEffect(() => {
     const suffix = ' | PanicRadar';
 
@@ -20,7 +20,7 @@ export default function useSEO({ title, description, url, type = 'website' }) {
     }
 
     // OG tags
-    const ogTags = { 'og:title': title, 'og:description': description, 'og:url': url, 'og:type': type };
+    const ogTags = { 'og:title': title, 'og:description': description, 'og:url': url, 'og:type': type, 'og:image': image };
     for (const [property, content] of Object.entries(ogTags)) {
       if (!content) continue;
       let tag = document.querySelector(`meta[property="${property}"]`);
@@ -30,7 +30,7 @@ export default function useSEO({ title, description, url, type = 'website' }) {
     }
 
     // Twitter tags
-    const twitterTags = { 'twitter:title': title, 'twitter:description': description };
+    const twitterTags = { 'twitter:title': title, 'twitter:description': description, 'twitter:image': image };
     for (const [name, content] of Object.entries(twitterTags)) {
       if (!content) continue;
       let tag = document.querySelector(`meta[name="${name}"]`);
