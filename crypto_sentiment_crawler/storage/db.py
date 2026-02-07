@@ -191,6 +191,7 @@ class Database:
         if existing:
             return 0  # Skip duplicate
 
+        source = data.source.lower()
         cursor = await self.conn.execute(
             """
             INSERT INTO sentiment_raw (timestamp, source, coin, raw_data, content_hash)
@@ -198,7 +199,7 @@ class Database:
             """,
             (
                 data.timestamp.isoformat(),
-                data.source,
+                source,
                 data.coin,
                 json.dumps(data.raw_data),
                 content_hash,

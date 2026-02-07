@@ -164,6 +164,7 @@ def update_belief_priors(
 
     # Add new sources not in current beliefs
     for source, obs in source_accuracy.items():
+        source = source.lower()
         if source not in updated_beliefs:
             updated_beliefs[source] = {
                 'source': source,

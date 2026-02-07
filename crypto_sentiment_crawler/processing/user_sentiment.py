@@ -494,6 +494,7 @@ class UserSentimentScorer:
 
     def get_or_create_user(self, username: str, source: str, timestamp: str) -> int:
         """Get existing user_id or create new user profile."""
+        source = source.lower()
         conn = self._get_connection()
         cursor = conn.cursor()
 
