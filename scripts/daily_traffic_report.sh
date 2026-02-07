@@ -83,17 +83,17 @@ echo "" >> "$REPORT_FILE"
 echo "--- Top Pages (non-API, non-static, GET 200) ---" >> "$REPORT_FILE"
 awk '$1 != "172.18.0.1" && /GET/ && /\" 200 / && !/\/api\// && !/\.(js|css|png|jpg|svg|ico|woff|ttf|map|json)/' "$DAY_LOG" \
   | awk -F'"' '{split($2, a, " "); print a[2]}' \
-  | sort | uniq -c | sort -rn | head -15 >> "$REPORT_FILE"
+  | sort | uniq -c | sort -rn | awk 'NR<=15' >> "$REPORT_FILE"
 echo "" >> "$REPORT_FILE"
 
 # --- Top Visitor IPs ---
 echo "--- Top 10 Visitor IPs ---" >> "$REPORT_FILE"
 awk '$1 != "172.18.0.1" {print $1}' "$DAY_LOG" \
-  | sort | uniq -c | sort -rn | head -10 >> "$REPORT_FILE"
+  | sort | uniq -c | sort -rn | awk 'NR<=10' >> "$REPORT_FILE"
 echo "" >> "$REPORT_FILE"
 
 # --- New vs returning (identify site owner by top IP) ---
-TOP_IP=$(awk '$1 != "172.18.0.1" {print $1}' "$DAY_LOG" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+TOP_IP=$(awk '$1 != "172.18.0.1" {print $1}' "$DAY_LOG" | sort | uniq -c | sort -rn | awk 'NR==1{print $2}')
 TOP_IP_REQS=$(awk -v ip="$TOP_IP" '$1 == ip' "$DAY_LOG" | wc -l | tr -d ' ')
 OTHER_REQS=$((TOTAL_REQS - TOP_IP_REQS))
 echo "--- Traffic Split ---" >> "$REPORT_FILE"
@@ -117,7 +117,7 @@ if [[ "$SCANNER_REQS" -gt 0 ]]; then
   echo "Top probed paths:" >> "$REPORT_FILE"
   grep -iE '\.(env|git|aws|DS_Store)|wp-login|xmlrpc|phpmyadmin|PROPFIND|/admin' "$DAY_LOG" \
     | awk -F'"' '{split($2, a, " "); print a[2]}' \
-    | sort | uniq -c | sort -rn | head -10 >> "$REPORT_FILE"
+    | sort | uniq -c | sort -rn | awk 'NR<=10' >> "$REPORT_FILE"
 fi
 echo "" >> "$REPORT_FILE"
 
@@ -127,7 +127,7 @@ awk -F'"' '{print $4}' "$DAY_LOG" \
   | grep -v '^-$' \
   | grep -v 'panicradar.ai' \
   | grep -v '^$' \
-  | sort | uniq -c | sort -rn | head -10 >> "$REPORT_FILE"
+  | sort | uniq -c | sort -rn | awk 'NR<=10' >> "$REPORT_FILE"
 EXTERNAL_REFS=$(awk -F'"' '{print $4}' "$DAY_LOG" | grep -v '^-$' | grep -v 'panicradar.ai' | grep -v '^$' | wc -l | tr -d ' ')
 if [[ "$EXTERNAL_REFS" -eq 0 ]]; then
   echo "(none)" >> "$REPORT_FILE"
@@ -138,14 +138,14 @@ echo "" >> "$REPORT_FILE"
 echo "--- HTTP Status Codes ---" >> "$REPORT_FILE"
 awk '$1 != "172.18.0.1"' "$DAY_LOG" \
   | awk '{print $9}' \
-  | sort | uniq -c | sort -rn | head -10 >> "$REPORT_FILE"
+  | sort | uniq -c | sort -rn | awk 'NR<=10' >> "$REPORT_FILE"
 echo "" >> "$REPORT_FILE"
 
 # --- Top API endpoints ---
 echo "--- Top API Endpoints ---" >> "$REPORT_FILE"
 awk '$1 != "172.18.0.1" && /\/api\//' "$DAY_LOG" \
   | awk -F'"' '{split($2, a, " "); sub(/\?.*/, "", a[2]); print a[2]}' \
-  | sort | uniq -c | sort -rn | head -10 >> "$REPORT_FILE"
+  | sort | uniq -c | sort -rn | awk 'NR<=10' >> "$REPORT_FILE"
 echo "" >> "$REPORT_FILE"
 
 # --- Hourly breakdown ---
