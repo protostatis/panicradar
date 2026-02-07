@@ -9,6 +9,7 @@ DATA_DIR="/opt/crypto-sentiment/data"
 BACKUP_DIR="/opt/crypto-sentiment/backups"
 DB_FILE="$DATA_DIR/sentiment.db"
 STATE_FILE="$DATA_DIR/orchestrator_state.json"
+DISCOVERY_FILE="$DATA_DIR/discovery_state.json"
 S3_BUCKET="${S3_BACKUP_BUCKET:-panicradar-backups}"
 RETENTION_DAYS=14
 
@@ -46,15 +47,24 @@ else
     echo "$(date): No database file found at $DB_FILE"
 fi
 
-# Backup state file if exists
+# Backup state files if they exist
 if [ -f "$STATE_FILE" ]; then
     STATE_BACKUP="orchestrator_state_${TIMESTAMP}.json"
     cp "$STATE_FILE" "$BACKUP_DIR/$STATE_BACKUP"
 
-    # Upload to S3
     if command -v aws &> /dev/null; then
         aws s3 cp "$BACKUP_DIR/$STATE_BACKUP" "s3://$S3_BUCKET/state/$DATE_PREFIX/$STATE_BACKUP"
-        echo "$(date): State file uploaded to S3"
+        echo "$(date): Orchestrator state uploaded to S3"
+    fi
+fi
+
+if [ -f "$DISCOVERY_FILE" ]; then
+    DISCOVERY_BACKUP="discovery_state_${TIMESTAMP}.json"
+    cp "$DISCOVERY_FILE" "$BACKUP_DIR/$DISCOVERY_BACKUP"
+
+    if command -v aws &> /dev/null; then
+        aws s3 cp "$BACKUP_DIR/$DISCOVERY_BACKUP" "s3://$S3_BUCKET/state/$DATE_PREFIX/$DISCOVERY_BACKUP"
+        echo "$(date): Discovery state uploaded to S3"
     fi
 fi
 
@@ -62,6 +72,7 @@ fi
 find "$BACKUP_DIR" -name "sentiment_daily_*.db" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
 find "$BACKUP_DIR" -name "sentiment_predeploy_*.db" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
 find "$BACKUP_DIR" -name "orchestrator_state_*.json" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
+find "$BACKUP_DIR" -name "discovery_state_*.json" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
 
 # Report
 echo "$(date): Local backups:"
