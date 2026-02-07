@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://panicradar.ai/sitemap.xml
