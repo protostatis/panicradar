@@ -48,7 +48,7 @@ function App() {
               </a>
               <span className="text-slate-700">&middot;</span>
               <a
-                href="https://x.com/PanicRadar"
+                href="https://x.com/PanicRadar_AI"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-purple-400 hover:text-purple-300 transition-colors"
