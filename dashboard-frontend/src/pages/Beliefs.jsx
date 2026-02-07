@@ -2,17 +2,20 @@ import { useState, useEffect } from 'react';
 import BeliefsChart from '../components/BeliefsChart';
 import SubredditChart from '../components/SubredditChart';
 import MultiSourceChart from '../components/MultiSourceChart';
+import SourceSimilarityMap from '../components/SourceSimilarityMap';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import {
   fetchBayesianBeliefs,
   fetchSourceHistory,
   fetchAllSourcesHistory,
+  fetchSourceSimilarity,
 } from '../api/client';
 
 const Beliefs = () => {
   const [beliefs, setBeliefs] = useState(null);
   const [allSourcesHistory, setAllSourcesHistory] = useState(null);
+  const [similarity, setSimilarity] = useState(null);
   const [selectedSource, setSelectedSource] = useState(null);
   const [selectedSourceHistory, setSelectedSourceHistory] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,13 +27,15 @@ const Beliefs = () => {
     setError(null);
 
     try {
-      const [beliefsData, historyData] = await Promise.all([
+      const [beliefsData, historyData, similarityData] = await Promise.all([
         fetchBayesianBeliefs(),
         fetchAllSourcesHistory(30),
+        fetchSourceSimilarity().catch(() => null),
       ]);
 
       setBeliefs(beliefsData);
       setAllSourcesHistory(historyData);
+      setSimilarity(similarityData);
     } catch (err) {
       console.error('Failed to load beliefs data:', err);
       setError('Failed to load Bayesian beliefs. Please try again.');
@@ -123,6 +128,9 @@ const Beliefs = () => {
         <MultiSourceChart sourcesData={allSourcesHistory.sources} />
       )}
 
+      {/* Source Similarity Map */}
+      {similarity && <SourceSimilarityMap similarity={similarity} />}
+
       {/* Selected Source Detail */}
       {selectedSource && selectedSourceHistory && (
         <SubredditChart
@@ -192,6 +200,16 @@ const Beliefs = () => {
               Pearson correlation between sentiment and 4-hour price change.
               Positive means sentiment aligns with price moves, negative means
               it&apos;s inversely related.
+            </p>
+          </div>
+          <div>
+            <h4 className="text-slate-200 font-medium mb-1">Source Similarity (GP Model)</h4>
+            <p>
+              Sources are compared using 7 features extracted from recent posts:
+              sentiment mean/volatility, fear/euphoria signals, activity level,
+              polarity ratio, and post volume. A Gaussian Process propagates
+              belief updates across similar sources &mdash; when one source proves
+              accurate, similar sources get their priors pulled upward.
             </p>
           </div>
         </div>

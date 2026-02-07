@@ -21,6 +21,7 @@ from .queries import (
     get_reddit_panic_score,
     get_sentiment_history,
     get_source_sentiment_history,
+    get_source_similarity,
     get_source_type_label as get_source_type_label_query,
     get_source_weights,
     load_bayesian_beliefs,
@@ -305,6 +306,21 @@ async def get_bayesian_beliefs():
         total_crawls=db_total_crawls,
         last_belief_update=state.get("last_belief_update"),
     )
+
+
+@router.get("/dashboard/beliefs/similarity")
+async def get_beliefs_similarity():
+    """
+    Get source similarity data computed from GP feature vectors.
+
+    Returns pairwise feature distances, nearest neighbors, and a heatmap
+    matrix for visualizing which sources behave most similarly.
+    """
+    conn = get_db_connection(DB_PATH)
+    try:
+        return get_source_similarity(conn, STATE_PATH)
+    finally:
+        conn.close()
 
 
 @router.get("/dashboard/sources/{source}/history", response_model=SourceSentimentHistory)

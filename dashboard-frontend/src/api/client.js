@@ -87,6 +87,11 @@ export const fetchDailySentiment = async (days = 30, source = null) => {
   return response.data;
 };
 
+export const fetchSourceSimilarity = async () => {
+  const response = await client.get('/api/dashboard/beliefs/similarity');
+  return response.data;
+};
+
 export const fetchPanicScore = async () => {
   const response = await client.get('/api/dashboard/panic-score');
   return response.data;
