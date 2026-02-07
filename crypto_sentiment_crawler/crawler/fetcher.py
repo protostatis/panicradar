@@ -11,12 +11,9 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Domains that require proxy (blocked from datacenter IPs)
-PROXY_REQUIRED_DOMAINS = {
-    "old.reddit.com",
-    "www.reddit.com",
-    "reddit.com",
-    "oauth.reddit.com",
-}
+# Note: With WireGuard VPN on the host, proxy is no longer needed for Reddit.
+# Set PROXY_URL env var to re-enable proxy for specific domains if needed.
+PROXY_REQUIRED_DOMAINS: set[str] = set()
 
 # Pool of realistic user agents
 USER_AGENTS = [

@@ -37,6 +37,7 @@ cp uv.lock "$DEPLOY_TMP/app/" 2>/dev/null || true
 cp roadmap.md "$DEPLOY_TMP/app/"
 cp .dockerignore "$DEPLOY_TMP/app/"
 cp .env.docker.example "$DEPLOY_TMP/app/.env.example"
+cp -r deploy "$DEPLOY_TMP/app/"
 
 # Create tarball
 TARBALL="$DEPLOY_TMP/crypto-sentiment.tar.gz"
@@ -74,6 +75,12 @@ if [ ! -f .env ]; then
     echo "Please create /opt/crypto-sentiment/.env with your API keys"
     echo "Template available at: .env.example"
     echo ""
+fi
+
+# Setup WireGuard VPN if configured
+if grep -q WG_PRIVATE_KEY .env 2>/dev/null; then
+    echo "Setting up WireGuard VPN..."
+    bash deploy/setup-wireguard.sh .env
 fi
 
 # Build and start services

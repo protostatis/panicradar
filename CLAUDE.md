@@ -6,44 +6,36 @@
 - **Never rebase.** Use merge commits only (`git pull` or `git merge`, not `git pull --rebase`).
 - Use descriptive branch names (e.g., `fix/vader-removal`, `feat/new-collector`)
 
-## IMPORTANT: Proxy Server for Reddit Access
+## Reddit Access via WireGuard VPN
 
-Reddit blocks AWS/EC2 IP addresses. The crawler requires a proxy tunnel through the local Mac.
+Reddit blocks AWS/EC2 IP addresses. A WireGuard VPN on the EC2 host routes all
+outbound traffic through a clean IP (Mullvad VPN).
 
-### Before deploying or restarting the crawler on EC2:
+### Setup (one-time):
 
-1. **Start local proxy** (if not running):
-   ```bash
-   python3 ~/.local/bin/simple_proxy.py &
-   # Or check: ps aux | grep simple_proxy
-   ```
+1. Add WireGuard config to `/opt/crypto-sentiment/.env` (see `.env.example` for template)
+2. Run `deploy/setup-wireguard.sh` on EC2
 
-2. **Create SSH tunnel** (if not running):
-   ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem -R 18888:127.0.0.1:18888 -N -f ec2-user@34.236.47.243
-   # Check: ps aux | grep "ssh.*18888"
-   ```
+### Verify VPN is active:
 
-3. **Start socat on EC2** (if not running):
-   ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@34.236.47.243 \
-     "nohup socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888 &"
-   ```
+```bash
+# Should show Mullvad IP, not EC2 IP
+curl https://httpbin.org/ip
 
-4. **Verify proxy works**:
-   ```bash
-   ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@34.236.47.243 \
-     "curl -x http://172.18.0.1:18889 https://httpbin.org/ip"
-   # Should show local Mac IP (24.x.x.x), NOT EC2 IP
-   ```
-
-### Crawler must use:
-- `PROXY_URL=http://172.18.0.1:18889`
-- This is now the default in docker-compose.yml
+# Check WireGuard status
+sudo wg show
+```
 
 ### If crawler shows "No fresh posts" or 403 errors:
-- Proxy tunnel is likely down
-- Run steps 1-4 above to restore
+- VPN may be down: `sudo wg-quick up wg0`
+- Check status: `sudo systemctl status wg-quick@wg0`
 
-### Full documentation:
-See `docs/PROXY_SETUP.md`
+### If VPN key is lost:
+Generate a new one — no backup needed:
+```bash
+wg genkey | tee /tmp/wg_private.key | wg pubkey > /tmp/wg_public.key
+curl -X POST https://api.mullvad.net/wg/ \
+  -d account=YOUR_ACCOUNT_NUMBER \
+  --data-urlencode "pubkey=$(cat /tmp/wg_public.key)"
+```
+Update `WG_PRIVATE_KEY` and `WG_ADDRESS` in `.env`, then re-run `deploy/setup-wireguard.sh`.
