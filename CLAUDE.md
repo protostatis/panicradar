@@ -3,6 +3,7 @@
 ## Git Workflow
 
 - **Never push directly to main.** Always create a feature branch and open a PR.
+- **Never rebase.** Use merge commits only (`git pull` or `git merge`, not `git pull --rebase`).
 - Use descriptive branch names (e.g., `fix/vader-removal`, `feat/new-collector`)
 
 ## IMPORTANT: Proxy Server for Reddit Access
