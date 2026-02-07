@@ -45,8 +45,8 @@ sudo bash -c "cat > /etc/wireguard/wg0.conf << EOF
 PrivateKey = $WG_PRIVATE_KEY
 Address = $WG_ADDRESS
 DNS = $WG_DNS
-PostUp = /sbin/ip rule add from $EC2_IP table main priority 90
-PostDown = /sbin/ip rule del from $EC2_IP table main priority 90
+PostUp = /sbin/ip rule add from $EC2_IP table main priority 90; /sbin/iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff
+PostDown = /sbin/ip rule del from $EC2_IP table main priority 90; /sbin/iptables -t mangle -D PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff
 
 [Peer]
 PublicKey = $WG_PEER_PUBKEY
