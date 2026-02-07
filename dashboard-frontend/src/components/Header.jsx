@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 const RadarIcon = ({ className = "w-10 h-10" }) => (
@@ -25,6 +26,7 @@ const RadarIcon = ({ className = "w-10 h-10" }) => (
 
 const Header = () => {
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard' },
@@ -44,7 +46,9 @@ const Header = () => {
               PanicRadar.ai
             </span>
           </Link>
-          <nav className="flex gap-1">
+
+          {/* Desktop nav */}
+          <nav className="hidden md:flex gap-1">
             {navItems.map((item) => (
               <Link
                 key={item.path}
@@ -59,8 +63,48 @@ const Header = () => {
               </Link>
             ))}
           </nav>
+
+          {/* Mobile hamburger button */}
+          <button
+            className="md:hidden p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle menu"
+            aria-expanded={mobileMenuOpen}
+          >
+            {mobileMenuOpen ? (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
+
+      {/* Mobile menu */}
+      {mobileMenuOpen && (
+        <nav className="md:hidden border-t border-slate-800 bg-slate-900/95 backdrop-blur-sm">
+          <div className="px-4 py-3 space-y-1">
+            {navItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setMobileMenuOpen(false)}
+                className={`block px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                  location.pathname === item.path
+                    ? 'bg-slate-700 text-slate-100'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
+      )}
     </header>
   );
 };

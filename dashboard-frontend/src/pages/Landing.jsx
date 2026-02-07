@@ -303,14 +303,28 @@ const Landing = () => {
           <p className="text-slate-400 text-sm mb-4">
             Data-driven analysis every Sunday. What the crowd got wrong this week.
           </p>
-          <a
-            href={NEWSLETTER_URL}
+          <form
+            action="https://panicradar.substack.com/api/v1/free?nojs=true"
+            method="post"
             target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors"
+            className="flex flex-col sm:flex-row gap-2"
           >
-            Subscribe on Substack
-          </a>
+            <input type="hidden" name="first_url" value="https://panicradar.substack.com/" />
+            <input type="hidden" name="first_referrer" value="https://panicradar.ai/" />
+            <input
+              type="email"
+              name="email"
+              placeholder="you@email.com"
+              required
+              className="flex-1 px-4 py-2 rounded-lg bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 text-sm"
+            />
+            <button
+              type="submit"
+              className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors text-sm whitespace-nowrap"
+            >
+              Subscribe Free
+            </button>
+          </form>
         </div>
       </section>
     </div>
