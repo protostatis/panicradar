@@ -160,6 +160,29 @@ By reusing it, incoming-connection responses get the same "bypass VPN" treatment
 Meanwhile, outbound traffic from the crawler originates from Docker (not eth0),
 so it has **no** connmark and still routes through the VPN as intended.
 
+#### Service bypass routes
+
+Some AWS and external services don't work through the VPN and need explicit
+bypass routes through eth0:
+
+| Route | Why |
+|-------|-----|
+| `140.82.112.0/20` | GitHub API — ghcr.io blocks Mullvad IPs, breaking `docker pull` during deploys |
+| `185.199.108.0/22` | GitHub CDN (pkg-containers.githubusercontent.com) — same issue |
+| `169.254.169.254` | EC2 instance metadata — required for IAM credential retrieval (S3 backups, AWS CLI) |
+
+These are added in `PostUp` and removed in `PostDown` automatically by the
+setup script.
+
+**Instance metadata (169.254.169.254):** EC2 instances get IAM credentials by
+querying `http://169.254.169.254/latest/meta-data/`. This is a link-local
+address handled by the hypervisor on the local network interface (eth0). When
+the VPN routes all traffic (`AllowedIPs = 0.0.0.0/0`), metadata requests get
+sent through the WireGuard tunnel instead, where they fail — the Mullvad server
+has no idea what `169.254.169.254` is. Without this route, `aws s3 cp` and any
+AWS SDK call fails with "Unable to locate credentials" because the SDK can't
+reach the metadata endpoint to fetch the IAM role's temporary credentials.
+
 ### Setup
 
 1. **Add WireGuard config to `.env`** on the EC2:
@@ -253,6 +276,17 @@ curl https://ipinfo.io/ip
 
 # Restart VPN
 sudo wg-quick down wg0 && sudo wg-quick up wg0
+```
+
+### S3 Backup Failing ("Unable to locate credentials")
+The VPN is routing instance metadata requests through the tunnel. Verify:
+```bash
+# Should return IAM role info — if it hangs, the route is missing
+curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
+```
+Fix by re-running the WireGuard setup script (which adds the metadata bypass route):
+```bash
+bash deploy/setup-wireguard.sh .env
 ```
 
 ### Dashboard Not Accessible (but SSH works)
