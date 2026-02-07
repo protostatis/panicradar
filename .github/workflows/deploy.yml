@@ -196,6 +196,7 @@ jobs:
               -p 80:80 -p 443:443 \
               --network crypto-sentiment_crypto-net \
               -v /etc/letsencrypt:/etc/letsencrypt:ro \
+              -v /opt/crypto-sentiment/logs:/var/log/nginx \
               crypto-sentiment-frontend:latest
 
             echo "Starting crawler..."

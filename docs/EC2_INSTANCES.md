@@ -26,7 +26,7 @@ ssh -i ~/.ssh/panicradar-ec2.pem ec2-user@34.236.47.243
 
 - **AMI:** Amazon Linux 2 AMI
 - **Instance Type:** t3.small (minimum for Docker)
-- **Storage:** 20GB gp3
+- **Storage:** 40GB gp3
 - **Security Group:** Allow ports 22, 80, 443, 8000
 
 ### 2. User Data Script (IMPORTANT)
