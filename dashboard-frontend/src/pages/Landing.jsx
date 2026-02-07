@@ -114,6 +114,12 @@ const Landing = () => {
           >
             Free Telegram Alerts
           </a>
+          <Link
+            to="/blog"
+            className="px-8 py-3 bg-purple-600/80 hover:bg-purple-500 text-white font-semibold rounded-lg transition-colors text-lg"
+          >
+            Read Our Research
+          </Link>
         </div>
       </section>
 
@@ -149,6 +155,32 @@ const Landing = () => {
             overdone. PanicRadar detects these contrarian moments: when the crowd
             panics but the data says otherwise.
           </p>
+        </div>
+      </section>
+
+      {/* Affiliate Partner Banner */}
+      <section className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-900/20 via-slate-800/40 to-purple-900/20">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-amber-500/5 via-transparent to-purple-500/5" />
+        <div className="relative p-8 sm:p-10 flex flex-col md:flex-row items-center gap-6">
+          <div className="flex-1">
+            <div className="text-xs font-semibold uppercase tracking-wider text-amber-400 mb-2">
+              Partner With Us
+            </div>
+            <h3 className="text-xl sm:text-2xl font-bold text-slate-100 mb-3">
+              Earn commissions sharing crypto intelligence
+            </h3>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              We're looking for crypto content creators, trading communities, and financial
+              bloggers to join our affiliate program. Recurring commissions on every
+              subscriber you refer.
+            </p>
+          </div>
+          <Link
+            to="/blog/looking-for-partners"
+            className="shrink-0 px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold rounded-lg transition-colors"
+          >
+            Learn More
+          </Link>
         </div>
       </section>
 
