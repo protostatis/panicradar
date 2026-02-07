@@ -205,7 +205,7 @@ jobs:
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
-              -e PROXY_URL=http://172.18.0.1:18889 \
+              -e PROXY_URL= \
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 12
 
