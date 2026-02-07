@@ -1,10 +1,15 @@
+import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import useSEO from '../hooks/useSEO';
 
 const posts = {
   'looking-for-partners': {
     title: 'Looking for Affiliate Partners',
     date: '2026-02-04',
     category: 'Announcement',
+    description:
+      'PanicRadar.ai is seeking affiliate partners to help grow our crypto sentiment intelligence platform. Learn about our partnership program.',
+    keywords: 'crypto affiliate, sentiment analysis partnership, crypto tools affiliate program',
     content: `
 ## Join the PanicRadar.ai Partner Program
 
@@ -62,6 +67,9 @@ Include your name, website/channel, and how you plan to promote PanicRadar.ai. W
     title: 'What We Learned: Does Reddit Sentiment Actually Move Crypto Prices?',
     date: '2026-02-04',
     category: 'Research',
+    description:
+      'Granger causality analysis reveals price leads crypto sentiment by ~15 hours. We explain what this means for traders and how PanicRadar uses contrarian signals.',
+    keywords: 'crypto sentiment analysis, Granger causality crypto, Reddit sentiment Bitcoin, contrarian crypto signals, price leads sentiment',
     content: `
 ## The Big Question
 
@@ -128,7 +136,7 @@ Here's where it gets interesting. When we looked at the timing relationship:
 
 In other words, price moves *first*, and then Reddit reacts. People post because of what happened, not before it happens.
 
-This makes sense when you think about it. A big price drop happens → people go to Reddit to panic → sentiment turns negative. The posts don't cause the drop; they react to it.
+This makes sense when you think about it. A big price drop happens, people go to Reddit to panic, sentiment turns negative. The posts don't cause the drop; they react to it.
 
 ## How We Used This
 
@@ -174,7 +182,7 @@ For the data scientists in the audience:
 - **Sample**: 464 aligned hourly observations
 - **DAG**: Explicit causal graph with identified confounders and colliders
 
-Full technical documentation available in our [GitHub repo](https://github.com).
+Full technical documentation available in our [GitHub repo](https://github.com/protostatis/panicradar).
 
 ---
 
@@ -187,6 +195,53 @@ const BlogPost = () => {
   const { slug } = useParams();
   const post = posts[slug];
 
+  useSEO({
+    title: post ? post.title : 'Post Not Found',
+    description: post?.description || '',
+    url: post ? `https://panicradar.ai/blog/${slug}` : undefined,
+    type: 'article',
+  });
+
+  // Inject JSON-LD structured data for search engines
+  useEffect(() => {
+    if (!post) return;
+
+    const jsonLd = {
+      '@context': 'https://schema.org',
+      '@type': 'Article',
+      headline: post.title,
+      description: post.description,
+      datePublished: post.date,
+      dateModified: post.date,
+      author: {
+        '@type': 'Organization',
+        name: 'PanicRadar',
+        url: 'https://panicradar.ai',
+      },
+      publisher: {
+        '@type': 'Organization',
+        name: 'PanicRadar',
+        url: 'https://panicradar.ai',
+      },
+      mainEntityOfPage: {
+        '@type': 'WebPage',
+        '@id': `https://panicradar.ai/blog/${slug}`,
+      },
+      keywords: post.keywords,
+    };
+
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.textContent = JSON.stringify(jsonLd);
+    script.id = 'blog-post-jsonld';
+    document.head.appendChild(script);
+
+    return () => {
+      const existing = document.getElementById('blog-post-jsonld');
+      if (existing) existing.remove();
+    };
+  }, [slug, post]);
+
   if (!post) {
     return (
       <div className="text-center py-12">
@@ -197,6 +252,10 @@ const BlogPost = () => {
       </div>
     );
   }
+
+  // Estimate reading time from word count
+  const wordCount = post.content.trim().split(/\s+/).length;
+  const readingTime = Math.max(1, Math.round(wordCount / 230));
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -209,7 +268,10 @@ const BlogPost = () => {
           <span className="px-2 py-1 text-xs font-medium bg-purple-500/20 text-purple-300 rounded">
             {post.category}
           </span>
-          <span className="text-sm text-slate-500">{post.date}</span>
+          <time dateTime={post.date} className="text-sm text-slate-500">
+            {post.date}
+          </time>
+          <span className="text-sm text-slate-500">{readingTime} min read</span>
         </div>
 
         <h1 className="text-3xl font-bold text-slate-100 mb-8">
@@ -232,6 +294,33 @@ const BlogPost = () => {
           prose-blockquote:border-l-purple-500 prose-blockquote:text-slate-400"
         >
           <div dangerouslySetInnerHTML={{ __html: renderMarkdown(post.content) }} />
+        </div>
+
+        {/* CTA section */}
+        <div className="mt-10 pt-8 border-t border-slate-700">
+          <div className="bg-slate-900/50 rounded-xl p-6 text-center">
+            <p className="text-slate-200 font-semibold mb-2">
+              See the panic before the crowd.
+            </p>
+            <p className="text-slate-400 text-sm mb-4">
+              Free dashboard with live sentiment data from 30+ crypto
+              communities.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <Link
+                to="/dashboard"
+                className="px-5 py-2 bg-green-500 hover:bg-green-400 text-slate-900 font-medium rounded-lg transition-colors text-sm"
+              >
+                View Dashboard
+              </Link>
+              <Link
+                to="/blog"
+                className="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium rounded-lg transition-colors text-sm"
+              >
+                More Articles
+              </Link>
+            </div>
+          </div>
         </div>
       </article>
     </div>
@@ -278,6 +367,8 @@ function renderMarkdown(text) {
     // Unordered lists
     .replace(/^- (.+)$/gm, '<li>$1</li>')
     .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
+    // Numbered lists
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
     // Paragraphs (lines not already wrapped)
     .replace(/^(?!<[hupolta]|<li|<hr|<\/|$)(.+)$/gm, '<p>$1</p>')
     // Clean up empty paragraphs
