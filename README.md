@@ -7,7 +7,7 @@ An intelligent web crawler that uses Bayesian inference and causal discovery to 
 This project implements a **Bayesian-guided crawler** that learns which sources provide the most predictive sentiment signals for cryptocurrency prices. Key features:
 
 1. **Bayesian Beliefs**: Maintains probabilistic beliefs about each source's informativeness using Beta distributions
-2. **Thompson Sampling**: Balances exploration vs exploitation when selecting sources to crawl
+2. **Thompson Sampling**: Balances exploration vs exploitation when selecting sources to crawl, with GP-correlated sampling for similar sources
 3. **Dynamic Source Weights**: Learns accuracy-based weights stored in database, used for weighted sentiment aggregation
 4. **Contrarian Signals**: Detects sentiment-price divergences that historically precede market reversals
 5. **Multi-Dimensional Sentiment**: Segment-level analysis with fear_index, euphoria_index, and activity_level
@@ -24,9 +24,9 @@ This project implements a **Bayesian-guided crawler** that learns which sources 
 ┌─────────────────────────────────────────────────────────────────┐
 │                    BAYESIAN DECISION LAYER                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │   Source    │  │   Thompson  │  │   Dynamic   │             │
-│  │   Beliefs   │──│   Sampling  │──│   Weights   │             │
-│  │  Beta(α,β)  │  │   Bandit    │  │ (learned)   │             │
+│  │   Source    │  │  GP-Beta    │  │   Dynamic   │             │
+│  │   Beliefs   │──│  Thompson   │──│   Weights   │             │
+│  │  Beta(α,β)  │  │  Sampling   │  │ (learned)   │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -224,7 +224,62 @@ def select_source(beliefs: dict[str, SourceBelief]) -> str:
     return max(samples, key=samples.get)
 ```
 
-### 4. Contrarian Signal Detection
+### 4. GP-Beta Hybrid Model
+
+Standard Thompson Sampling treats each source independently — when r/bitcoin's accuracy drops, r/cryptocurrency learns nothing. The GP-Beta hybrid adds a **Gaussian Process prior** over sources so belief updates propagate between similar sources automatically.
+
+**How it works:**
+
+1. Each source gets a **7D feature vector** from its recent sentiment data (last 7 days):
+
+| Feature | Description |
+|---------|-------------|
+| `mean_final_score` | Sentiment central tendency |
+| `std_final_score` | Sentiment volatility |
+| `mean_fear_index` | Bearish signal strength |
+| `mean_euphoria_index` | Bullish signal strength |
+| `mean_activity_level` | Scam/warning prevalence |
+| `polarity_ratio` | `pos_count / (pos + neg + 1)` |
+| `log_post_volume` | `log(total_posts + 1)` |
+
+All features are z-scored before kernel evaluation.
+
+2. A **composite kernel** measures source similarity:
+
+```
+k(x_i, x_j) = σ_f² · exp(-||x_i - x_j||² / 2l²)   # RBF on feature distance
+             + σ_cat² · δ(type_i, type_j)              # bonus for same source type
+             + σ_n² · I                                 # observation noise
+```
+
+3. **Beta-to-Gaussian moment matching** via probit link converts each source's Beta(α, β) into Gaussian observations:
+
+```
+μ_obs = Φ⁻¹(α / (α + β))
+σ²_obs = 1 / (φ(μ)² · (α + β + 1))
+```
+
+4. **GP posterior** fuses all observations with the kernel:
+
+```
+Σ_post = (K⁻¹ + Λ)⁻¹       where Λ = diag(1/σ²_obs)
+μ_post = Σ_post · Λ · μ_obs
+```
+
+5. **Correlated Thompson Sampling** draws joint samples:
+
+```
+z ~ N(μ_post, Σ_post)  →  θ_i = Φ(z_i)  →  correlated [0,1] probabilities
+```
+
+**Three-tier fallback:**
+- GP-eligible sources (≥10 crawls + features available): correlated Thompson Sampling
+- Cold-start sources (<10 crawls): independent Beta sampling
+- System fallback (<5 GP-eligible sources or numerical issues): standard CrawlBandit
+
+Hyperparameters (length_scale, signal/category/noise variance) are optimized via marginal log-likelihood every 50 belief evaluations.
+
+### 5. Contrarian Signal Detection
 
 Based on the key finding that **price leads sentiment by ~15 hours**:
 
@@ -315,7 +370,9 @@ crypto_sentiment_crawler/
     │
     ├── bayesian/            # Decision layer
     │   ├── beliefs.py       # SourceBelief model
-    │   ├── bandit.py        # Thompson Sampling
+    │   ├── bandit.py        # Thompson Sampling + GPBandit
+    │   ├── gp_model.py      # GP-Beta hybrid model
+    │   ├── feature_extraction.py  # 7D source features
     │   ├── utility.py       # Accuracy + novelty
     │   └── cold_start.py    # Price autocorrelation
     │
@@ -363,7 +420,7 @@ crypto_sentiment_crawler/
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Bayesian beliefs | ✅ | Beta distribution, Thompson Sampling |
+| Bayesian beliefs | ✅ | Beta distribution, Thompson Sampling, GP-Beta hybrid |
 | Utility scoring | ✅ | 0.7 accuracy + 0.3 novelty |
 | Cold start | ✅ | Price autocorrelation baseline |
 | Async fetcher | ✅ | Rate limiting, UA rotation |
@@ -470,4 +527,4 @@ MIT
 
 ---
 
-*Last updated: 2026-02-01*
+*Last updated: 2026-02-07*
