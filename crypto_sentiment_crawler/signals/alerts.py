@@ -273,14 +273,26 @@ class AlertManager:
 
 # Telegram bot command handlers
 class TelegramBot:
-    """Interactive Telegram bot for the signal service."""
+    """Interactive Telegram bot for PanicRadar signal service."""
 
-    def __init__(self, token: str, alert_manager: AlertManager):
+    def __init__(
+        self,
+        token: str,
+        alert_manager: AlertManager,
+        db_path: str = "data/sentiment.db",
+    ):
         self.token = token
         self.channel = TelegramChannel(token)
         self.alert_manager = alert_manager
         self.api_base = f"https://api.telegram.org/bot{token}"
+        self.db_path = db_path
         self._offset = 0
+
+    async def _get_signal_service(self):
+        """Lazy-load SignalService to avoid circular imports."""
+        from .service import SignalService
+
+        return SignalService(db_path=self.db_path)
 
     async def start(self) -> None:
         """Start the bot polling loop."""
@@ -322,10 +334,14 @@ class TelegramBot:
         # Command handling
         if text.startswith("/start"):
             await self._handle_start(chat_id)
+        elif text.startswith("/panic"):
+            await self._handle_panic(chat_id)
+        elif text.startswith("/btc"):
+            await self._handle_btc(chat_id)
+        elif text.startswith("/sources"):
+            await self._handle_sources(chat_id)
         elif text.startswith("/subscribe"):
             await self._handle_subscribe(chat_id, text)
-        elif text.startswith("/status"):
-            await self._handle_status(chat_id)
         elif text.startswith("/signals"):
             await self._handle_signals(chat_id)
         elif text.startswith("/help"):
@@ -333,26 +349,194 @@ class TelegramBot:
 
     async def _handle_start(self, chat_id: str) -> None:
         """Handle /start command."""
-        welcome = """
-🔮 *Crypto Contrarian Signals*
-
-Welcome! I detect sentiment-price divergences that often precede market reversals.
-
-*How it works:*
-• Sentiment LAGS price by ~15 hours
-• Extreme fear at stable prices → potential bottom
-• Extreme greed at stable prices → potential top
-
-*Commands:*
-/subscribe - Start receiving signals
-/status - Current market sentiment
-/signals - Recent signals
-/help - More info
-
-🆓 Free tier: 3 signals/week
-💎 Pro ($9.99/mo): Unlimited signals
-"""
+        welcome = (
+            "*PanicRadar* — See the panic before the crowd.\n\n"
+            "Real-time contrarian signals from 30+ crypto communities. "
+            "Bayesian intelligence learns which sources to trust.\n\n"
+            "*Commands:*\n"
+            "/panic — Live panic score\n"
+            "/btc — BTC sentiment breakdown\n"
+            "/sources — Most accurate sources right now\n"
+            "/subscribe — Get push alerts for signals\n"
+            "/signals — Recent signals\n"
+            "/help — Signal types explained\n\n"
+            "Dashboard: panicradar.ai"
+        )
         await self.channel.send_message(chat_id, welcome)
+
+    async def _handle_panic(self, chat_id: str) -> None:
+        """Handle /panic command — live panic score and interpretation."""
+        try:
+            service = await self._get_signal_service()
+            summary = await service.get_market_summary()
+
+            if "error" in summary:
+                await self.channel.send_message(
+                    chat_id, f"Could not load data: {summary['error']}"
+                )
+                return
+
+            sentiment = summary.get("sentiment_score", 0)
+            zscore = summary.get("sentiment_zscore", 0)
+            state = summary.get("sentiment_state", "Unknown")
+            fear = summary.get("fear_index", 0)
+            euphoria = summary.get("euphoria_index", 0)
+            activity = summary.get("activity_level", 0)
+            price = summary.get("current_price", 0)
+            change_24h = summary.get("price_change_24h", 0)
+
+            # Build panic bar
+            # Map sentiment from [-1, 1] to panic [0, 100]
+            panic_pct = max(0, min(100, int((1 - sentiment) * 50)))
+            filled = panic_pct // 10
+            bar = "█" * filled + "░" * (10 - filled)
+
+            # Interpretation
+            if zscore < -2:
+                interpretation = "Extreme fear — historically marks bottoms."
+            elif zscore < -1.5:
+                interpretation = "Elevated fear — crowd is anxious."
+            elif zscore > 2:
+                interpretation = "Extreme greed — historically marks tops."
+            elif zscore > 1.5:
+                interpretation = "Elevated greed — crowd is euphoric."
+            else:
+                interpretation = "Conditions within normal ranges."
+
+            text = (
+                f"*PanicRadar — Live Reading*\n\n"
+                f"State: *{state}*\n"
+                f"Sentiment: `{sentiment:+.3f}` (z-score: {zscore:+.2f}σ)\n"
+                f"`[{bar}]` {panic_pct}%\n\n"
+                f"Fear: {fear:.1%}  |  Euphoria: {euphoria:.1%}  |  Activity: {activity:.1%}\n\n"
+                f"BTC: ${price:,.0f} ({change_24h:+.1f}% 24h)\n\n"
+                f"_{interpretation}_\n\n"
+                f"Dashboard: panicradar.ai"
+            )
+            await self.channel.send_message(chat_id, text)
+
+        except Exception as e:
+            logger.error(f"Error handling /panic: {e}")
+            await self.channel.send_message(
+                chat_id, "Could not fetch panic score. Try again shortly."
+            )
+
+    async def _handle_btc(self, chat_id: str) -> None:
+        """Handle /btc command — BTC sentiment breakdown."""
+        try:
+            service = await self._get_signal_service()
+            summary = await service.get_market_summary()
+
+            if "error" in summary:
+                await self.channel.send_message(
+                    chat_id, f"Could not load data: {summary['error']}"
+                )
+                return
+
+            price = summary.get("current_price", 0)
+            change_24h = summary.get("price_change_24h", 0)
+            change_7d = summary.get("price_change_7d", 0)
+            sentiment = summary.get("sentiment_score", 0)
+            zscore = summary.get("sentiment_zscore", 0)
+            state = summary.get("sentiment_state", "Unknown")
+            divergence = summary.get("divergence_score", 0)
+            fear = summary.get("fear_index", 0)
+            euphoria = summary.get("euphoria_index", 0)
+            activity = summary.get("activity_level", 0)
+            baseline = summary.get("baseline_stats", {})
+
+            text = (
+                f"*BTC Sentiment Breakdown*\n\n"
+                f"*Price*\n"
+                f"  ${price:,.0f}  ({change_24h:+.1f}% 24h / {change_7d:+.1f}% 7d)\n\n"
+                f"*Sentiment*\n"
+                f"  Score: `{sentiment:+.3f}`  Z-Score: `{zscore:+.2f}σ`\n"
+                f"  State: {state}\n"
+                f"  Divergence: `{divergence:+.3f}`\n\n"
+                f"*Crowd Psychology*\n"
+                f"  Fear: {fear:.1%}\n"
+                f"  Euphoria: {euphoria:.1%}\n"
+                f"  Activity: {activity:.1%}\n\n"
+                f"*30d Baseline*\n"
+                f"  Mean: `{baseline.get('sentiment_mean', 0):+.3f}`  "
+                f"Std: `{baseline.get('sentiment_std', 0):.3f}`\n\n"
+                f"Dashboard: panicradar.ai"
+            )
+            await self.channel.send_message(chat_id, text)
+
+        except Exception as e:
+            logger.error(f"Error handling /btc: {e}")
+            await self.channel.send_message(
+                chat_id, "Could not fetch BTC data. Try again shortly."
+            )
+
+    async def _handle_sources(self, chat_id: str) -> None:
+        """Handle /sources command — top sources by accuracy."""
+        try:
+            from ..analysis.source_weights import load_weights_from_db_sync
+
+            weight_data = load_weights_from_db_sync(self.db_path)
+            weights = weight_data.get("weights", {})
+            contrarian = weight_data.get("contrarian_sources", set())
+
+            if not weights:
+                await self.channel.send_message(
+                    chat_id, "No source data available yet."
+                )
+                return
+
+            # Load accuracy from database
+            import sqlite3
+
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT source, weight, accuracy, is_contrarian, sample_size "
+                "FROM source_weights ORDER BY weight DESC LIMIT 10"
+            ).fetchall()
+            conn.close()
+
+            if not rows:
+                await self.channel.send_message(
+                    chat_id, "No source weight data available yet."
+                )
+                return
+
+            momentum = []
+            contrarian_list = []
+            for row in rows:
+                name = row["source"].replace("_", " ").title()
+                acc = row["accuracy"] * 100 if row["accuracy"] else 0
+                w = row["weight"]
+                n = row["sample_size"] or 0
+                entry = f"  `{name[:18]:<18}` {acc:.0f}% (n={n})"
+                if row["is_contrarian"]:
+                    contrarian_list.append(entry)
+                else:
+                    momentum.append(entry)
+
+            text = "*Top Sources by Weight*\n\n"
+
+            if momentum:
+                text += "*Momentum* (sentiment aligns with price)\n"
+                text += "\n".join(momentum[:5]) + "\n\n"
+
+            if contrarian_list:
+                text += "*Contrarian* (inverted signal)\n"
+                text += "\n".join(contrarian_list[:5]) + "\n\n"
+
+            text += (
+                "_Contrarian sources have <45% accuracy — "
+                "when they're bearish, price tends to rise._\n\n"
+                "Full rankings: panicradar.ai/sources"
+            )
+            await self.channel.send_message(chat_id, text)
+
+        except Exception as e:
+            logger.error(f"Error handling /sources: {e}")
+            await self.channel.send_message(
+                chat_id, "Could not fetch source data. Try again shortly."
+            )
 
     async def _handle_subscribe(self, chat_id: str, text: str) -> None:
         """Handle /subscribe command."""
@@ -362,7 +546,8 @@ Welcome! I detect sentiment-price divergences that often precede market reversal
         )
         if existing:
             await self.channel.send_message(
-                chat_id, "✅ You're already subscribed! Use /status to check the market."
+                chat_id,
+                "You're already subscribed. Use /panic to check the market.",
             )
             return
 
@@ -380,23 +565,9 @@ Welcome! I detect sentiment-price divergences that often precede market reversal
 
         await self.channel.send_message(
             chat_id,
-            "✅ *Subscribed to Free Tier!*\n\n"
-            "You'll receive up to 3 BTC signals per week.\n\n"
-            "💎 Upgrade to Pro for:\n"
-            "• Unlimited signals\n"
-            "• All coins (ETH, SOL, etc.)\n"
-            "• Priority alerts\n\n"
-            "Contact @cryptosignals\\_support to upgrade.",
-        )
-
-    async def _handle_status(self, chat_id: str) -> None:
-        """Handle /status command."""
-        # This would normally fetch from detector
-        await self.channel.send_message(
-            chat_id,
-            "📊 *Market Sentiment Status*\n\n"
-            "Use this with live data integration.\n"
-            "Run the signal detector to get real-time status.",
+            "*Subscribed to PanicRadar alerts!*\n\n"
+            "You'll receive contrarian signal alerts for BTC.\n\n"
+            "Try /panic to see the current reading.",
         )
 
     async def _handle_signals(self, chat_id: str) -> None:
@@ -404,37 +575,41 @@ Welcome! I detect sentiment-price divergences that often precede market reversal
         signals = self.alert_manager.get_signal_history(5)
         if not signals:
             await self.channel.send_message(
-                chat_id, "No signals detected yet. Stay tuned!"
+                chat_id,
+                "No signals detected recently. "
+                "Use /panic to check current conditions.",
             )
             return
 
         text = "*Recent Signals:*\n\n"
         for sig in signals[-5:]:
-            text += f"• {sig.timestamp.strftime('%m/%d %H:%M')} - {sig.signal_type.value}\n"
+            emoji = {"BULLISH_DIVERGENCE": "🟢", "BEARISH_DIVERGENCE": "🔴",
+                     "CAPITULATION": "💀", "EUPHORIA": "🚀"}.get(sig.signal_type.value, "🔔")
+            text += (
+                f"{emoji} {sig.timestamp.strftime('%m/%d %H:%M')} — "
+                f"{sig.signal_type.value.replace('_', ' ')}\n"
+            )
 
         await self.channel.send_message(chat_id, text)
 
     async def _handle_help(self, chat_id: str) -> None:
         """Handle /help command."""
-        help_text = """
-*Crypto Contrarian Signals - Help*
-
-*Signal Types:*
-🟢 BULLISH DIVERGENCE - Fear + stable price
-🔴 BEARISH DIVERGENCE - Greed + stable price
-💀 CAPITULATION - Extreme panic selling
-🚀 EUPHORIA - Extreme greed spike
-
-*Signal Strength:*
-⚪ Weak - Lower confidence
-🟡 Moderate - Average confidence
-🔥 Strong - High confidence
-
-*Pricing:*
-🆓 Free: 3 signals/week, BTC only
-💎 Pro ($9.99/mo): Unlimited, all coins
-
-*Questions?*
-Contact @cryptosignals\\_support
-"""
+        help_text = (
+            "*PanicRadar — Help*\n\n"
+            "*Signal Types:*\n"
+            "🟢 BULLISH DIVERGENCE — Extreme fear + stable price\n"
+            "🔴 BEARISH DIVERGENCE — Extreme greed + stable price\n"
+            "💀 CAPITULATION — Panic selling spike\n"
+            "🚀 EUPHORIA — Irrational greed spike\n\n"
+            "*Key insight:* Price leads sentiment by ~15 hours. "
+            "The crowd reacts to price — they don't predict it. "
+            "Extreme fear after a drop is usually overdone.\n\n"
+            "*Commands:*\n"
+            "/panic — Live panic score\n"
+            "/btc — BTC sentiment breakdown\n"
+            "/sources — Most accurate sources\n"
+            "/subscribe — Get push alerts\n"
+            "/signals — Recent signals\n\n"
+            "Dashboard: panicradar.ai"
+        )
         await self.channel.send_message(chat_id, help_text)
