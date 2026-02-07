@@ -97,9 +97,68 @@ Reddit blocks AWS/datacenter IPs. WireGuard VPN routes outbound traffic through 
 
 - WireGuard runs on the EC2 **host** (not inside Docker)
 - `AllowedIPs = 0.0.0.0/0` routes all outbound traffic through the VPN
-- SSH split routing (`PostUp` ip rule) ensures SSH replies use eth0, not the VPN
-- Conntrack marking (`PostUp` iptables rules) ensures incoming HTTP responses route back through eth0 to clients (not through VPN)
 - Docker containers inherit VPN routing transparently via host NAT
+- Two `PostUp` mechanisms keep non-VPN traffic working correctly:
+
+#### SSH split routing (ip rule)
+
+WireGuard's `AllowedIPs = 0.0.0.0/0` would normally route ALL traffic through
+the VPN, including SSH replies — which would lock you out. The `PostUp` adds:
+
+```
+ip rule add from <EC2_PRIVATE_IP> table main priority 90
+```
+
+This tells the kernel: "packets originating from the EC2's own IP should use
+the normal routing table (eth0), not the VPN." SSH replies have the EC2's IP
+as source, so they bypass the VPN and reach your client normally.
+
+#### Connmark routing (iptables) — Docker + VPN coexistence
+
+The SSH rule above only covers traffic from the EC2's own IP (172.31.x.x).
+Docker containers use a different IP range (172.18.0.x), so their response
+packets to incoming HTTP requests would still get routed through the VPN —
+making the dashboard unreachable from outside.
+
+**The problem in detail:**
+
+```
+1. Client visits dashboard → SYN arrives at eth0 → Docker NAT → container (172.18.0.3)
+2. Container sends SYN-ACK → source IP is 172.18.0.3 (Docker bridge)
+3. Kernel routing: 172.18.0.3 doesn't match the SSH split rule (172.31.x.x)
+4. Falls through to WireGuard routing → sent through VPN tunnel
+5. Client never receives the response → connection timeout
+```
+
+**The fix — connmark:** Linux's connection tracking (conntrack) remembers every
+TCP/UDP connection. Connmark lets you "tag" a connection and later apply that
+tag to individual packets for routing decisions.
+
+Two iptables rules in `PostUp` solve this:
+
+```bash
+# Rule 1: When a NEW connection arrives on eth0, stamp it with mark 0xca6c
+iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c
+
+# Rule 2: For every packet, copy its connection's mark onto the packet itself
+iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark
+```
+
+How it plays out:
+
+```
+1. Client SYN arrives on eth0     → conntrack creates entry, stamped 0xca6c
+2. Container sends SYN-ACK        → conntrack recognizes same connection
+                                   → restores fwmark 0xca6c onto the packet
+3. WireGuard rule: "fwmark 0xca6c → skip VPN"
+4. Packet routes through eth0     → client gets the response ✓
+```
+
+`0xca6c` is the same fwmark WireGuard uses internally to avoid routing loops.
+By reusing it, incoming-connection responses get the same "bypass VPN" treatment.
+
+Meanwhile, outbound traffic from the crawler originates from Docker (not eth0),
+so it has **no** connmark and still routes through the VPN as intended.
 
 ### Setup
 
