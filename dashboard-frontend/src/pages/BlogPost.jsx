@@ -1,8 +1,233 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import useSEO from '../hooks/useSEO';
 
+// Custom component-based blog posts (for rich visualizations)
+const customPosts = {
+  'gp-beta-correlated-sampling': lazy(() => import('../components/blog/GPBetaBlogPost')),
+};
+
 const posts = {
+  'gp-beta-correlated-sampling': {
+    title: 'Teaching Our Crawler That r/Bitcoin and r/CryptoCurrency Are Related',
+    date: '2026-02-07',
+    category: 'Research',
+    description:
+      'How we built a Gaussian Process model that shares knowledge between correlated Reddit sources, enabling correlated Thompson Sampling for smarter crawl decisions.',
+    keywords: 'Gaussian Process, Thompson Sampling, Bayesian inference, correlated bandit, crypto sentiment, source similarity, GP-Beta hybrid',
+    custom: true,
+    content: `Rendered by custom component.
+## The Problem: Every Source Is an Island
+
+PanicRadar crawls 25+ Reddit communities to measure crypto sentiment. Each source has a **Beta distribution** that tracks how informative it is — how often its sentiment correctly predicted price direction.
+
+When we observe that r/bitcoin gave us a good signal, we update its Beta parameters. Great. But r/cryptocurrency, which covers similar topics with overlapping users, learns *nothing* from that observation. It has to discover its own accuracy from scratch.
+
+With 25 correlated sources, this is wasteful. A human would naturally think: "if r/bitcoin is accurate, r/cryptocurrency probably is too." We wanted our system to reason the same way.
+
+## The Idea: A Joint Distribution Over Sources
+
+Instead of treating each source independently, we model them *jointly*. The key insight is that sources which look similar — similar sentiment patterns, similar volatility, similar fear levels — should share statistical strength.
+
+We use a **Gaussian Process (GP)** to model the latent correlation structure between sources. The GP acts as a "bridge" that connects similar sources, so evidence about one source flows to its neighbors.
+
+Here's the high-level architecture:
+
+- **Beta distributions** continue handling individual updates (fast, exact, battle-tested)
+- **Gaussian Process** models the correlation structure via a kernel on source features
+- **Thompson Sampling** draws from the GP's joint posterior to get correlated probability samples
+
+We call it the **GP-Beta hybrid**.
+
+## Step 1: Describing Each Source With Features
+
+To know which sources are "similar," we need to describe them numerically. We extract a **7-dimensional feature vector** from each source's recent sentiment data (last 7 days):
+
+| Feature | What It Measures |
+|---------|-----------------|
+| Mean sentiment score | Central tendency — is this source generally bullish or bearish? |
+| Sentiment volatility | Standard deviation — does this source swing wildly or stay steady? |
+| Mean fear index | How much panic/loss content appears |
+| Mean euphoria index | How much moon/FOMO content appears |
+| Mean activity level | Prevalence of scam warnings and market chatter |
+| Polarity ratio | Proportion of positive vs negative posts |
+| Log post volume | How active the community is (log-scaled) |
+
+All features are **z-scored** (subtract mean, divide by standard deviation) so no single dimension dominates. After this, each source is a point in 7D space, and we can measure distances between them.
+
+For example, r/bitcoinbeginners and r/coinbase end up very close (distance 1.10) — both have moderate sentiment, low volatility, and similar activity levels. Meanwhile r/cryptocurrencymemes is far from r/cryptotax (distance 5.24) — completely different communities.
+
+## Step 2: The Kernel — Measuring Source Similarity
+
+The GP uses a **kernel function** to quantify how similar two sources are. We use a composite kernel with three components:
+
+**RBF (Radial Basis Function):** The main similarity measure. Two sources with similar feature vectors get a high kernel value. The formula is:
+
+\`k_rbf(x_i, x_j) = sigma_f^2 * exp(-||x_i - x_j||^2 / (2 * l^2))\`
+
+Where \`||x_i - x_j||\` is the Euclidean distance between feature vectors, \`l\` is the length scale (how far "similar" extends), and \`sigma_f^2\` is the signal variance (overall magnitude).
+
+**Categorical bonus:** Sources of the same type (e.g., both Reddit subs, or both forums) get an extra similarity bump:
+
+\`k_cat(x_i, x_j) = sigma_cat^2 * delta(type_i, type_j)\`
+
+Where \`delta\` is 1 if the types match, 0 otherwise.
+
+**Noise term:** Each source has some irreducible observation noise:
+
+\`k_noise(x_i, x_j) = sigma_n^2 * I(i = j)\`
+
+This only applies on the diagonal (a source compared to itself).
+
+The full kernel is their sum:
+
+\`k(x_i, x_j) = k_rbf + k_cat + k_noise\`
+
+This gives us a **kernel matrix** K where entry (i, j) tells us how correlated sources i and j should be. The matrix is always positive semi-definite (a mathematical requirement for valid covariance matrices).
+
+**Four hyperparameters** control the kernel: length scale \`l\`, signal variance \`sigma_f^2\`, category variance \`sigma_cat^2\`, and noise variance \`sigma_n^2\`. We optimize these automatically (more on that later).
+
+## Step 3: Moment Matching — Connecting Beta to GP
+
+Here's the tricky part. Each source has a **Beta(alpha, beta)** distribution (discrete binary observations), but the GP works in **Gaussian** (continuous normal) space. We need a bridge.
+
+We use the **probit link function** — the inverse of the standard normal CDF, written as \`Phi^{-1}\`. This maps probabilities in [0, 1] to the entire real line, which is where Gaussians live.
+
+For each source with Beta parameters alpha and beta:
+
+**Convert the Beta mean to Gaussian space:**
+
+\`mu_obs = Phi^{-1}(alpha / (alpha + beta))\`
+
+For example, a source with 60% accuracy (alpha=60, beta=40) maps to \`Phi^{-1}(0.6) = 0.253\` in probit space.
+
+**Convert the Beta variance to Gaussian variance** using the delta method:
+
+\`sigma^2_obs = 1 / (phi(mu)^2 * (alpha + beta + 1))\`
+
+Where \`phi\` (lowercase) is the standard normal PDF. Sources with more observations (larger alpha + beta) have smaller variance — we're more certain about them.
+
+This is called **moment matching**: we match the first two moments (mean and variance) of the Beta distribution to a Gaussian in probit space.
+
+## Step 4: The GP Posterior — Where the Magic Happens
+
+Now we have:
+- A kernel matrix **K** encoding source similarity (from step 2)
+- Gaussian observations \`mu_obs\` with variances \`sigma^2_obs\` for each source (from step 3)
+
+The GP posterior combines these using Bayes' rule. Let \`Lambda = diag(1/sigma^2_obs_1, ..., 1/sigma^2_obs_n)\` be the diagonal precision matrix (inverse variances).
+
+**Posterior covariance:**
+
+\`Sigma_post = (K^{-1} + Lambda)^{-1}\`
+
+**Posterior mean:**
+
+\`mu_post = Sigma_post * Lambda * mu_obs\`
+
+This is the key equation. Look at what it does:
+
+- \`K^{-1}\` is the prior precision — how much the kernel structure constrains things
+- \`Lambda\` is the observation precision — how much we trust each source's data
+- The posterior balances these two forces
+
+When a source has lots of observations (large alpha + beta), its \`Lambda\` entry is large, so the posterior stays close to its observed value. But when a source has few observations, the kernel pulls it toward similar sources. **Knowledge flows from data-rich sources to data-poor ones.**
+
+For example: if r/bitcoin has 500 observations and r/bitcoinbeginners has 50, and they have similar features, the GP posterior for r/bitcoinbeginners will be pulled toward r/bitcoin's accuracy estimate. The beginner sub borrows statistical strength from the larger community.
+
+## Step 5: Correlated Thompson Sampling
+
+Standard Thompson Sampling draws *independently* from each source's Beta distribution:
+
+\`theta_i ~ Beta(alpha_i, beta_i)\` for each source independently.
+
+This ignores correlations entirely. Our GP-Beta hybrid draws *jointly*:
+
+**Draw a sample from the GP posterior:**
+
+\`z ~ N(mu_post, Sigma_post)\`
+
+This is a single draw from a multivariate normal — all sources are sampled simultaneously, with correlations encoded in \`Sigma_post\`.
+
+**Map back to probabilities:**
+
+\`theta_i = Phi(z_i)\`
+
+The probit function \`Phi\` maps each sample back to [0, 1].
+
+The result: **correlated probability samples**. When z_i is high for r/bitcoin, z_j tends to be high for r/cryptocurrency too (because \`Sigma_post\` has positive off-diagonal entries for similar sources). This means the bandit naturally groups similar sources together in its exploration.
+
+## Step 6: Hyperparameter Optimization
+
+The four kernel hyperparameters (length scale, signal variance, category variance, noise variance) control how much information flows between sources. We optimize them by maximizing the **marginal log-likelihood**:
+
+\`log p(y | X, theta) = -0.5 * [y^T * (K + Lambda^{-1})^{-1} * y + log|K + Lambda^{-1}| + n * log(2*pi)]\`
+
+Where \`y = mu_obs\` and \`X\` are the source features. This balances model fit against complexity — it prefers the simplest kernel that explains the observed data well.
+
+We use **L-BFGS-B** (a quasi-Newton optimizer) with bounded constraints to prevent degenerate solutions. With only 30 sources and 4 parameters, this takes milliseconds.
+
+The optimization runs every 50 belief evaluations, so the kernel adapts as the system collects more data.
+
+## The Three-Tier Fallback
+
+Not every source can participate in the GP. We use a tiered system:
+
+1. **GP-eligible** (10+ crawls AND features available): correlated Thompson Sampling via the GP posterior
+2. **Cold-start** (fewer than 10 crawls or no features): independent Beta sampling, the classic approach
+3. **System fallback** (fewer than 5 GP-eligible sources or numerical issues): the entire system falls back to independent Thompson Sampling
+
+This means the GP is purely additive — it can only help, never hurt. If anything goes wrong, we gracefully degrade to the battle-tested independent approach.
+
+## What We Observed
+
+After fitting the GP to our live data (13 active sources), some interesting patterns emerged:
+
+**Most similar pairs:**
+- r/bitcoinbeginners and r/coinbase (distance: 1.10) — both serve newcomers
+- r/bitcoin and r/cryptocurrency (distance: 1.56) — the two main hubs
+- r/cryptocurrencymemes and r/cryptomarkets (distance: 1.88) — both low-activity
+
+**Least similar:**
+- r/cryptotax and r/cryptocurrencymemes (distance: 5.24) — tax advice vs memes
+- r/cryptotax and r/dogecoin (distance: 4.81) — completely different cultures
+
+These groupings match intuition, which gives us confidence the feature vectors capture meaningful source characteristics.
+
+## Why Not a Simpler Approach?
+
+**Why not just cluster sources and share data within clusters?**
+
+Clustering forces hard boundaries — a source is either in the cluster or not. The GP gives soft, continuous similarity. r/ethereum might be 70% similar to r/bitcoin and 30% similar to r/defi, and the GP handles this naturally.
+
+**Why not a pure GP classification model?**
+
+A pure GP classifier over all 7000+ historical observations would need to store and invert enormous matrices. The Beta sufficient statistics compress all history into just two numbers per source (alpha, beta). The hybrid gets the best of both: Beta for efficient per-source learning, GP for cross-source correlation.
+
+**Why not just use a correlation matrix?**
+
+A sample correlation matrix from raw accuracy data would be noisy and unstable with only 30 sources. The GP kernel imposes smoothness via the RBF function, giving us a principled correlation structure even with limited data. Plus, the kernel can extrapolate to new sources based on their features.
+
+## Summary
+
+The GP-Beta hybrid lets our crawler share knowledge between similar sources:
+
+1. **Feature vectors** (7D) describe each source's sentiment behavior
+2. **Composite kernel** measures similarity in feature space
+3. **Moment matching** bridges Beta and Gaussian distributions via the probit link
+4. **GP posterior** fuses the kernel prior with observed data
+5. **Correlated Thompson Sampling** draws joint probability samples
+6. **Hyperparameter optimization** tunes the kernel automatically
+
+The result: when one source proves accurate, similar sources benefit. The crawler learns faster, explores more efficiently, and makes better decisions about where to crawl next.
+
+You can see the source similarity visualization on our [Beliefs dashboard](/beliefs) — including the heatmap showing which sources behave most alike.
+
+---
+
+*All the math in this post is implemented in our open-source codebase. See [gp_model.py](https://github.com/protostatis/panicradar) for the GP implementation and [feature_extraction.py](https://github.com/protostatis/panicradar) for the feature pipeline.*
+    `,
+  },
   'looking-for-partners': {
     title: 'Looking for Affiliate Partners',
     date: '2026-02-04',
@@ -278,23 +503,29 @@ const BlogPost = () => {
           {post.title}
         </h1>
 
-        <div className="prose prose-invert prose-slate max-w-none
-          prose-headings:text-slate-100 prose-headings:font-semibold
-          prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-4
-          prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-3
-          prose-p:text-slate-300 prose-p:leading-relaxed prose-p:mb-4
-          prose-a:text-purple-400 prose-a:no-underline hover:prose-a:text-purple-300
-          prose-strong:text-slate-200 prose-strong:font-semibold
-          prose-ul:text-slate-300 prose-li:mb-2
-          prose-table:border-collapse prose-table:w-full
-          prose-th:bg-slate-700/50 prose-th:text-slate-200 prose-th:p-3 prose-th:text-left prose-th:border prose-th:border-slate-600
-          prose-td:p-3 prose-td:border prose-td:border-slate-600 prose-td:text-slate-300
-          prose-code:text-purple-300 prose-code:bg-slate-700/50 prose-code:px-1 prose-code:rounded
-          prose-hr:border-slate-700 prose-hr:my-8
-          prose-blockquote:border-l-purple-500 prose-blockquote:text-slate-400"
-        >
-          <div dangerouslySetInnerHTML={{ __html: renderMarkdown(post.content) }} />
-        </div>
+        {post.custom && customPosts[slug] ? (
+          <Suspense fallback={<div className="text-slate-500">Loading...</div>}>
+            {(() => { const CustomPost = customPosts[slug]; return <CustomPost />; })()}
+          </Suspense>
+        ) : (
+          <div className="prose prose-invert prose-slate max-w-none
+            prose-headings:text-slate-100 prose-headings:font-semibold
+            prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-4
+            prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-3
+            prose-p:text-slate-300 prose-p:leading-relaxed prose-p:mb-4
+            prose-a:text-purple-400 prose-a:no-underline hover:prose-a:text-purple-300
+            prose-strong:text-slate-200 prose-strong:font-semibold
+            prose-ul:text-slate-300 prose-li:mb-2
+            prose-table:border-collapse prose-table:w-full
+            prose-th:bg-slate-700/50 prose-th:text-slate-200 prose-th:p-3 prose-th:text-left prose-th:border prose-th:border-slate-600
+            prose-td:p-3 prose-td:border prose-td:border-slate-600 prose-td:text-slate-300
+            prose-code:text-purple-300 prose-code:bg-slate-700/50 prose-code:px-1 prose-code:rounded
+            prose-hr:border-slate-700 prose-hr:my-8
+            prose-blockquote:border-l-purple-500 prose-blockquote:text-slate-400"
+          >
+            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(post.content) }} />
+          </div>
+        )}
 
         {/* CTA section */}
         <div className="mt-10 pt-8 border-t border-slate-700">

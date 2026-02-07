@@ -3,6 +3,14 @@ import useSEO from '../hooks/useSEO';
 
 const blogPosts = [
   {
+    slug: 'gp-beta-correlated-sampling',
+    title: 'Teaching Our Crawler That r/Bitcoin and r/CryptoCurrency Are Related',
+    date: '2026-02-07',
+    excerpt: 'We built a Gaussian Process model that lets our Bayesian crawler share knowledge between similar Reddit sources. When r/bitcoin proves accurate, r/cryptocurrency\'s beliefs improve too. Here\'s the math behind correlated Thompson Sampling.',
+    category: 'Research',
+    readingTime: '12 min',
+  },
+  {
     slug: 'looking-for-partners',
     title: 'Looking for Affiliate Partners',
     date: '2026-02-04',
