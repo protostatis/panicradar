@@ -239,7 +239,8 @@ jobs:
 
             BACKUP_CRON="0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh >> /opt/crypto-sentiment/logs/backup.log 2>&1"
             TRAFFIC_CRON="5 0 * * * REPORT_EMAIL_TO=protostatis.dev@gmail.com REPORT_EMAIL_FROM=protostatis.dev@gmail.com /home/ec2-user/crypto_sentiment_crawler/scripts/daily_traffic_report.sh >> /opt/crypto-sentiment/logs/traffic_report.log 2>&1"
-            (crontab -l 2>/dev/null | grep -v "backup-db.sh" | grep -v "daily_traffic_report.sh"; echo "$BACKUP_CRON"; echo "$TRAFFIC_CRON") | crontab -
+            MORNING_TRAFFIC_CRON="0 12 * * * REPORT_EMAIL_TO=protostatis.dev@gmail.com REPORT_EMAIL_FROM=protostatis.dev@gmail.com /home/ec2-user/crypto_sentiment_crawler/scripts/daily_traffic_report.sh --date \$(date -u +\%Y-\%m-\%d) >> /opt/crypto-sentiment/logs/traffic_report.log 2>&1"
+            (crontab -l 2>/dev/null | grep -v "backup-db.sh" | grep -v "daily_traffic_report.sh"; echo "$BACKUP_CRON"; echo "$TRAFFIC_CRON"; echo "$MORNING_TRAFFIC_CRON") | crontab -
 
             echo "========== DEPLOYMENT COMPLETE =========="
             docker ps
