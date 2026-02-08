@@ -6,6 +6,40 @@
 - **Never rebase.** Use merge commits only (`git pull` or `git merge`, not `git pull --rebase`).
 - Use descriptive branch names (e.g., `fix/vader-removal`, `feat/new-collector`)
 
+## CI/CD & Deployment
+
+### Pipeline overview
+
+1. **CI (on every push/PR to main):** `.github/workflows/ci.yml`
+   - Runs backend tests (pytest, ruff, mypy)
+   - Runs frontend lint + build
+   - Builds Docker images (crawler, api, frontend) — no push
+
+2. **Deploy (on release publish):** `.github/workflows/deploy.yml`
+   - Builds and pushes Docker images to `ghcr.io/protostatis/crypto-sentiment-{crawler,api,frontend}`
+   - SSHes into EC2 via `appleboy/ssh-action` using repository secrets (`EC2_HOST`, `EC2_USERNAME`, `EC2_SSH_KEY`)
+   - On EC2: backs up DB, prunes Docker, pulls new images, restarts all 3 containers, verifies health
+
+### How to release
+
+```bash
+# 1. Merge your PR into main
+gh pr merge <PR_NUMBER> --merge
+
+# 2. Pull latest main
+git checkout main && git pull
+
+# 3. Create a GitHub release (triggers deploy)
+gh release create v1.X.0 --title "v1.X.0 — Description" --notes "Release notes here"
+```
+
+The release triggers the deploy workflow automatically. Monitor progress at:
+`https://github.com/protostatis/panicradar/actions`
+
+### Manual deploy (legacy)
+
+`deploy/push-to-ec2.sh <EC2_IP>` — packages local code, uploads via SCP, rebuilds on EC2. Only use if CI/CD is broken.
+
 ## Reddit Access via WireGuard VPN
 
 Reddit blocks AWS/EC2 IP addresses. A WireGuard VPN on the EC2 host routes all
