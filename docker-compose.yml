@@ -6,6 +6,8 @@ services:
     build:
       context: .
       target: crawler
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-crawler
     restart: unless-stopped
     volumes:
@@ -89,6 +91,8 @@ services:
     build:
       context: .
       target: base
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-signals
     restart: unless-stopped
     command: ["uv", "run", "signals", "bot"]
@@ -110,6 +114,8 @@ services:
     build:
       context: .
       target: backfill
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-backfill
     profiles:
       - backfill  # Only run with: docker compose --profile backfill up backfill
@@ -129,6 +135,8 @@ services:
     build:
       context: .
       target: base
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-belief-auto
     restart: unless-stopped
     command: ["uv", "run", "python", "-m", "crypto_sentiment_crawler.analysis.belief_auto_updater", "--interval", "30", "--quiet"]
@@ -150,6 +158,8 @@ services:
     build:
       context: .
       target: base
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-gap-backfill
     profiles:
       - backfill
@@ -170,6 +180,8 @@ services:
     build:
       context: .
       target: base
+      args:
+        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
     container_name: crypto-score-backfill
     profiles:
       - backfill

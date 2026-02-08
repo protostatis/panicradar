@@ -1,61 +1,79 @@
 # Crypto Sentiment Crawler - Backend Services
-# Supports: crawler, api, backfill modes
+# Supports: api (lean, no torch), crawler, backfill, base (ML)
 
-FROM python:3.13-slim AS base
+# Global ARG — must be before first FROM to be usable in later FROM lines
+ARG TORCH_BASE_IMAGE=ghcr.io/protostatis/crypto-sentiment-torch-base:latest
 
-# Install system dependencies
+# ============================================
+# API stages (lean — no torch dependency)
+# Evaluated first so `--target api` never pulls torch-base
+# ============================================
+FROM python:3.13-slim AS api-base
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY pyproject.toml uv.lock* roadmap.md ./
+# Use the minimal API pyproject (no torch/transformers)
+COPY pyproject-api.toml ./pyproject.toml
+COPY roadmap.md ./
 
-# Install dependencies (non-editable for production)
-# Use CPU-only PyTorch to reduce image size by ~1.2GB (no GPU on EC2 t3.small)
-RUN uv sync --frozen --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
-    uv sync --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu
+RUN uv sync --no-dev --no-editable
 
-# Copy application code
 COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/
 
-# Create data directory for SQLite and state
 RUN mkdir -p /app/data /app/logs
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV DATABASE_PATH=/app/data/sentiment.db
 
-# Default command (can be overridden in docker-compose)
-CMD ["uv", "run", "crawler", "background"]
-
-# ============================================
-# API Server Target
-# ============================================
-FROM base AS api
+# ---- API target ----
+FROM api-base AS api
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["uv", "run", "uvicorn", "crypto_sentiment_crawler.signals.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # ============================================
-# Crawler Target (default)
+# ML stages (torch + transformers via pre-baked base)
 # ============================================
-FROM base AS crawler
+FROM ${TORCH_BASE_IMAGE} AS ml-base
+
+# Refresh dependency files (may have non-ML changes since base was built)
+COPY pyproject.toml uv.lock* roadmap.md ./
+
+# Re-run sync — torch is already installed, so this only installs the delta
+RUN uv sync --frozen --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
+    uv sync --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu
+
+COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/
+
+RUN mkdir -p /app/data /app/logs
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV DATABASE_PATH=/app/data/sentiment.db
+
+# ---- base target (used by signals, belief-auto, etc.) ----
+FROM ml-base AS base
 
 CMD ["uv", "run", "crawler", "background"]
 
-# ============================================
-# Backfill Target
-# ============================================
-FROM base AS backfill
+# ---- Crawler target ----
+FROM ml-base AS crawler
+
+CMD ["uv", "run", "crawler", "background"]
+
+# ---- Backfill target ----
+FROM ml-base AS backfill
 
 CMD ["uv", "run", "python", "-m", "crypto_sentiment_crawler.backfill"]

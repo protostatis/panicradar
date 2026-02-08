@@ -52,6 +52,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
+          build-args: |
+            TORCH_BASE_IMAGE=${{ env.REGISTRY }}/protostatis/crypto-sentiment-torch-base:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
