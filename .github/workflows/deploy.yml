@@ -161,8 +161,8 @@ jobs:
 
             # ========== STOP OLD CONTAINERS ==========
             echo "Stopping old containers..."
-            docker stop crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
-            docker rm crypto-crawler crypto-api crypto-frontend 2>/dev/null || true
+            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals 2>/dev/null || true
+            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals 2>/dev/null || true
 
             # ========== START SERVICES ==========
             echo "Starting API..."
@@ -209,6 +209,16 @@ jobs:
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 60
 
+            echo "Starting signals bot..."
+            docker run -d --name crypto-signals --restart unless-stopped \
+              --network crypto-sentiment_crypto-net \
+              -v /opt/crypto-sentiment/data:/app/data \
+              -v /opt/crypto-sentiment/logs:/app/logs \
+              -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
+              -e DB_PATH=/app/data/sentiment.db \
+              crypto-sentiment-crawler:latest \
+              uv run signals bot
+
             # ========== POST-DEPLOY CLEANUP ==========
             echo "Cleaning up unused images..."
             docker image prune -af
@@ -220,14 +230,14 @@ jobs:
             echo "Verifying all containers are running..."
             sleep 5
 
-            RUNNING=$(docker ps --format '{{.Names}}' | grep -E '^crypto-(api|frontend|crawler)$' | wc -l)
-            if [ "$RUNNING" -ne 3 ]; then
+            RUNNING=$(docker ps --format '{{.Names}}' | grep -E '^crypto-(api|frontend|crawler|signals)$' | wc -l)
+            if [ "$RUNNING" -ne 4 ]; then
               echo "ERROR: Not all containers are running!"
               docker ps -a
               exit 1
             fi
 
-            echo "All 3 containers running. Checking frontend..."
+            echo "All 4 containers running. Checking frontend..."
             if ! curl -sf -o /dev/null https://localhost --insecure 2>/dev/null; then
               echo "WARNING: Frontend HTTPS check failed (may be normal if cert issue)"
             fi
