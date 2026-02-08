@@ -7,6 +7,7 @@ Runs the following jobs:
 - Outcome evaluation: every 15 minutes
 - Fear & Greed: every 4 hours
 - Confounder collection: every 15 minutes (for causal inference)
+- Belief update & source weights sync: every 30 minutes
 - Source discovery: weekly (finds new crypto subreddits)
 """
 
@@ -66,6 +67,7 @@ class CrawlerScheduler:
             "confounder_snapshots": 0,
             "onchain_updates": 0,
             "discoveries": 0,
+            "belief_updates": 0,
             "errors": 0,
             "started_at": None,
         }
@@ -193,6 +195,18 @@ class CrawlerScheduler:
             logger.error(f"On-chain job error: {e}")
             self._stats["errors"] += 1
 
+    async def _job_belief_update(self) -> None:
+        """Job: Recompute source accuracy and sync source_weights to DB."""
+        try:
+            from .analysis.belief_updater import update_orchestrator_beliefs
+
+            await update_orchestrator_beliefs()
+            self._stats["belief_updates"] += 1
+            logger.info("Belief update and source_weights sync complete")
+        except Exception as e:
+            logger.error(f"Belief update job error: {e}")
+            self._stats["errors"] += 1
+
     async def _job_discovery(self) -> None:
         """Job: Discover new crypto subreddits (weekly)."""
         try:
@@ -245,6 +259,7 @@ class CrawlerScheduler:
             f"prices: {self._stats['price_updates']} | "
             f"evals: {self._stats['evaluations']} | "
             f"discoveries: {self._stats['discoveries']} | "
+            f"belief_updates: {self._stats['belief_updates']} | "
             f"errors: {self._stats['errors']}"
         )
 
@@ -301,6 +316,15 @@ class CrawlerScheduler:
             IntervalTrigger(seconds=self.onchain_interval),
             id="onchain",
             name="On-Chain Metrics",
+            max_instances=1,
+        )
+
+        # Belief update + source_weights sync - every 30 minutes
+        self.scheduler.add_job(
+            self._job_belief_update,
+            IntervalTrigger(seconds=1800),
+            id="belief_update",
+            name="Belief Update & Weights Sync",
             max_instances=1,
         )
 
