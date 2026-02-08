@@ -83,6 +83,27 @@ services:
       retries: 3
 
   # ============================================
+  # Signals Bot - Telegram bot + signal alerts
+  # ============================================
+  signals:
+    build:
+      context: .
+      target: base
+    container_name: crypto-signals
+    restart: unless-stopped
+    command: ["uv", "run", "signals", "bot"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DB_PATH=/app/data/sentiment.db
+    depends_on:
+      - api
+    networks:
+      - crypto-net
+
+  # ============================================
   # Backfill Service - One-time historical data
   # ============================================
   backfill:
