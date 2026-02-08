@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import useSEO from '../hooks/useSEO';
+import { trackEvent, GA_EVENTS } from '../utils/analytics';
 
 const blogPosts = [
   {
@@ -54,6 +55,7 @@ const Blog = () => {
           <article key={post.slug}>
             <Link
               to={`/blog/${post.slug}`}
+              onClick={() => trackEvent(GA_EVENTS.BLOG_ARTICLE_CLICK, { label: post.slug, title: post.title })}
               className="block bg-slate-800/50 rounded-xl p-6 border border-slate-700 hover:border-purple-500/50 hover:bg-slate-800/70 transition-all"
             >
               <div className="flex items-center gap-3 mb-3">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchPanicScore, fetchDashboardSummary } from '../api/client';
+import { trackEvent, GA_EVENTS } from '../utils/analytics';
 
 const TELEGRAM_URL = 'https://t.me/PanicRadarAlerts';
 const NEWSLETTER_URL = 'https://panicradar.substack.com';
@@ -102,6 +103,7 @@ const Landing = () => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <Link
             to="/dashboard"
+            onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'hero_view_dashboard' })}
             className="px-8 py-3 bg-green-500 hover:bg-green-400 text-slate-900 font-semibold rounded-lg transition-colors text-lg"
           >
             View Dashboard
@@ -110,12 +112,14 @@ const Landing = () => {
             href={TELEGRAM_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackEvent(GA_EVENTS.TELEGRAM_CLICK, { label: 'hero_telegram' })}
             className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold rounded-lg border border-slate-600 transition-colors text-lg"
           >
             Free Telegram Alerts
           </a>
           <Link
             to="/blog"
+            onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'hero_read_research' })}
             className="px-8 py-3 bg-purple-600/80 hover:bg-purple-500 text-white font-semibold rounded-lg transition-colors text-lg"
           >
             Read Our Research
@@ -283,6 +287,7 @@ const Landing = () => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
           <Link
             to="/dashboard"
+            onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'bottom_view_dashboard' })}
             className="px-8 py-3 bg-green-500 hover:bg-green-400 text-slate-900 font-semibold rounded-lg transition-colors text-lg"
           >
             View Dashboard
@@ -291,6 +296,7 @@ const Landing = () => {
             href={TELEGRAM_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackEvent(GA_EVENTS.TELEGRAM_CLICK, { label: 'bottom_telegram' })}
             className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold rounded-lg border border-slate-600 transition-colors text-lg"
           >
             Join Telegram
@@ -320,6 +326,7 @@ const Landing = () => {
             />
             <button
               type="submit"
+              onClick={() => trackEvent(GA_EVENTS.NEWSLETTER_CLICK, { label: 'subscribe_free' })}
               className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors text-sm whitespace-nowrap"
             >
               Subscribe Free
