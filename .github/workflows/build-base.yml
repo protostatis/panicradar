@@ -1,0 +1,95 @@
+name: Build Torch Base Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (default: latest)'
+        required: false
+        default: 'latest'
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.torch-base'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/crypto-sentiment-torch-base
+
+jobs:
+  check-deps:
+    name: Check if ML deps changed
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      dep_hash: ${{ steps.check.outputs.dep_hash }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Hash ML dependency versions from uv.lock
+        id: check
+        run: |
+          # Extract torch, transformers, sentence-transformers version lines from uv.lock
+          DEP_HASH=$(grep -A1 '^\[\[package\]\]' uv.lock | \
+            grep -E 'name = "(torch|transformers|sentence-transformers)"' -A1 | \
+            grep 'version' | sort | sha256sum | cut -d' ' -f1)
+          echo "dep_hash=$DEP_HASH" >> "$GITHUB_OUTPUT"
+
+          # For workflow_dispatch, always build
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Manual trigger — will build"
+            exit 0
+          fi
+
+          # For push, check if the hash changed vs the existing image label
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+          echo "Push trigger — will build (dep_hash=$DEP_HASH)"
+
+  build-and-push:
+    name: Build and Push Torch Base
+    runs-on: ubuntu-latest
+    needs: check-deps
+    if: needs.check-deps.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || 'latest' }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push torch-base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.torch-base
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            ml.dep.hash=${{ needs.check-deps.outputs.dep_hash }}
+          cache-from: type=gha,scope=torch-base
+          cache-to: type=gha,mode=max,scope=torch-base

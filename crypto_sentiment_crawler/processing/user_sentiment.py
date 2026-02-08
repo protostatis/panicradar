@@ -11,7 +11,6 @@ from typing import Optional
 
 import numpy as np
 
-from .semantic_sentiment import SemanticSentimentAnalyzer
 
 logger = logging.getLogger("crypto_sentiment")
 
@@ -238,6 +237,8 @@ class UserSentimentScorer:
         self.db_path = db_path
         self.aggregation_method = aggregation_method
         self.min_segment_length = min_segment_length
+        from .semantic_sentiment import SemanticSentimentAnalyzer
+
         self.analyzer = SemanticSentimentAnalyzer()
 
     def _get_connection(self) -> sqlite3.Connection:

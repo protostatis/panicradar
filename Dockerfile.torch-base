@@ -1,0 +1,28 @@
+# Pre-baked torch base image for ML services
+# Rebuild only when ML dependency versions change
+# Published to ghcr.io/protostatis/crypto-sentiment-torch-base:latest
+
+FROM python:3.13-slim AS torch-base
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast dependency management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml uv.lock* roadmap.md ./
+
+# Install all dependencies including torch CPU
+# This layer is the expensive one (~5-10 min) — cached in the base image
+RUN uv sync --frozen --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
+    uv sync --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Verify torch is importable
+RUN uv run python -c "import torch; print(f'torch {torch.__version__} OK')"
