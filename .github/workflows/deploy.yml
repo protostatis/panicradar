@@ -207,7 +207,7 @@ jobs:
               -e DATABASE_PATH=/app/data/sentiment.db \
               -e PROXY_URL= \
               crypto-sentiment-crawler:latest \
-              uv run crawler background --crawl-interval 12
+              uv run crawler background --crawl-interval 60
 
             # ========== POST-DEPLOY CLEANUP ==========
             echo "Cleaning up unused images..."
