@@ -67,8 +67,10 @@ def cmd_run():
 
 
 def cmd_bot():
-    """Run the Telegram bot for subscriber management."""
-    from .alerts import AlertManager, TelegramBot
+    """Run the Telegram bot + signal detector concurrently."""
+    from datetime import datetime
+    from .alerts import AlertManager, TelegramBot, TelegramChannel, Subscriber
+    from .service import SignalService
 
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not telegram_token:
@@ -76,17 +78,53 @@ def cmd_bot():
         sys.exit(1)
 
     db_path = os.environ.get("DB_PATH", "data/sentiment.db")
+    interval = int(os.environ.get("SIGNAL_CHECK_INTERVAL", "30"))
+    channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "@PanicRadarAlerts")
+
+    # Shared AlertManager with Telegram channel pre-registered
     alert_manager = AlertManager()
+    telegram_channel = TelegramChannel(telegram_token)
+    alert_manager.add_channel("telegram", telegram_channel)
+
+    # Auto-register the alerts channel as a subscriber
+    alert_manager.add_subscriber(Subscriber(
+        id=f"channel_{channel_id}",
+        channel="telegram",
+        chat_id=channel_id,
+        tier="pro",
+        coins=[],  # All coins
+        created_at=datetime.now(),
+    ))
+
+    # Bot shares the same AlertManager (so /subscribe users get alerts too)
     bot = TelegramBot(telegram_token, alert_manager, db_path=db_path)
 
-    print(f"Starting PanicRadar Telegram bot...")
+    # Signal service shares the same AlertManager
+    service = SignalService(
+        db_path=db_path,
+        check_interval_minutes=interval,
+        telegram_token=telegram_token,
+    )
+    service.alert_manager = alert_manager
+
+    print(f"Starting PanicRadar bot + signal detector...")
     print(f"  Database: {db_path}")
+    print(f"  Signal check interval: {interval} min")
+    print(f"  Alert channel: {channel_id}")
     print(f"  Commands: /panic /btc /sources /subscribe /signals /help")
     print(f"  Press Ctrl+C to stop\n")
+
+    async def run_both():
+        await asyncio.gather(
+            bot.start(),
+            service.run_forever(verbose=False),
+        )
+
     try:
-        asyncio.run(bot.start())
+        asyncio.run(run_both())
     except KeyboardInterrupt:
-        print("\nStopping bot...")
+        print("\nStopping bot + signal detector...")
+        service.stop()
 
 
 def cmd_test_notification():

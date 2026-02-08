@@ -216,6 +216,8 @@ jobs:
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
               -e DB_PATH=/app/data/sentiment.db \
+              -e SIGNAL_CHECK_INTERVAL=30 \
+              -e TELEGRAM_CHANNEL_ID=@PanicRadarAlerts \
               crypto-sentiment-crawler:latest \
               uv run signals bot
 
