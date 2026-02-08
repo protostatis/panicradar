@@ -98,6 +98,8 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DB_PATH=/app/data/sentiment.db
+      - SIGNAL_CHECK_INTERVAL=${SIGNAL_CHECK_INTERVAL:-30}
+      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID:-@PanicRadarAlerts}
     depends_on:
       - api
     networks:
