@@ -75,10 +75,14 @@ def cmd_bot():
         print("Error: TELEGRAM_BOT_TOKEN environment variable not set")
         sys.exit(1)
 
+    db_path = os.environ.get("DB_PATH", "data/sentiment.db")
     alert_manager = AlertManager()
-    bot = TelegramBot(telegram_token, alert_manager)
+    bot = TelegramBot(telegram_token, alert_manager, db_path=db_path)
 
-    print("Starting Telegram bot...")
+    print(f"Starting PanicRadar Telegram bot...")
+    print(f"  Database: {db_path}")
+    print(f"  Commands: /panic /btc /sources /subscribe /signals /help")
+    print(f"  Press Ctrl+C to stop\n")
     try:
         asyncio.run(bot.start())
     except KeyboardInterrupt:
