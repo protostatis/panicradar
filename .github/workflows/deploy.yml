@@ -161,6 +161,10 @@ jobs:
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
+            # ========== SYNC CONFIG FILES ==========
+            mkdir -p /opt/crypto-sentiment/dashboard-frontend
+            cp dashboard-frontend/blocklist.conf /opt/crypto-sentiment/dashboard-frontend/blocklist.conf
+
             # ========== STOP OLD CONTAINERS ==========
             echo "Stopping old containers..."
             docker stop crypto-crawler crypto-api crypto-frontend crypto-signals 2>/dev/null || true
