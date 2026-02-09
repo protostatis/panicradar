@@ -74,6 +74,7 @@ services:
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /var/www/certbot:/var/www/certbot:ro
+      - ./dashboard-frontend/blocklist.conf:/etc/nginx/conf.d/blocklist.conf:ro
     depends_on:
       - api
     networks:
