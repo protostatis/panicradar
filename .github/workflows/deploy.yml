@@ -199,6 +199,7 @@ jobs:
               --network crypto-sentiment_crypto-net \
               -v /etc/letsencrypt:/etc/letsencrypt:ro \
               -v /opt/crypto-sentiment/logs:/var/log/nginx \
+              -v /opt/crypto-sentiment/dashboard-frontend/blocklist.conf:/etc/nginx/conf.d/blocklist.conf:ro \
               crypto-sentiment-frontend:latest
 
             echo "Starting crawler..."
