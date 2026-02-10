@@ -26,6 +26,7 @@ COPY roadmap.md ./
 RUN uv sync --no-dev --no-editable
 
 COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/
+COPY scripts/ ./scripts/
 
 RUN mkdir -p /app/data /app/logs
 
@@ -56,6 +57,7 @@ RUN uv sync --frozen --no-dev --no-editable --extra-index-url https://download.p
     uv sync --no-dev --no-editable --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY crypto_sentiment_crawler/ ./crypto_sentiment_crawler/
+COPY scripts/ ./scripts/
 
 RUN mkdir -p /app/data /app/logs
 
