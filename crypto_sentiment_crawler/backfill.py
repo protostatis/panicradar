@@ -187,13 +187,11 @@ class HistoricalBackfiller:
                 thread = await self.pipeline.fetch_thread(permalink, max_comments=15)
                 if thread:
                     # Build CrawledContent from thread
-                    content_parts = []
-                    if thread.selftext:
-                        content_parts.append(thread.selftext)
-                    for c in thread.comments:
-                        content_parts.append(c.body)
-
-                    content = "\n\n".join(content_parts) if content_parts else None
+                    # Store only selftext in content — comments are stored
+                    # separately in metadata and appended by the scorer.
+                    # Previously this pre-concatenated all comment bodies into
+                    # content, causing every comment to be scored twice.
+                    content = thread.selftext if thread.selftext else None
 
                     comments_data = [
                         {
