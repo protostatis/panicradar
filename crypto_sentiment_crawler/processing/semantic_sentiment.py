@@ -509,6 +509,45 @@ NEUTRAL_PHRASES = [
     "Taking a wait and see approach",
     "Neither optimistic nor pessimistic",
     "Cautiously observing the market",
+
+    # Q&A / practical help-seeking (not sentiment, often mis-scored bearish)
+    "How do I set up a hardware wallet",
+    "What are the transaction fees for this",
+    "Can someone explain how staking works",
+    "Which exchange has the lowest fees",
+    "How to transfer crypto between wallets",
+    "What is the difference between these two tools",
+    "Does anyone know the tax implications",
+    "Step by step guide for beginners",
+    "Comparing features of different wallets",
+    "How to use a decentralized exchange",
+    "What is the best way to store crypto safely",
+    "How do gas fees work on this network",
+    "Which wallet supports this token",
+    "How to bridge tokens between chains",
+    "What are the withdrawal fees",
+    "How to set up two factor authentication",
+    "What is the minimum deposit amount",
+    "How do I claim my staking rewards",
+    "Which tool should I use for this",
+    "Where can I track my portfolio",
+
+    # Tool/product comparisons (operational, not sentiment)
+    "Comparing these two services side by side",
+    "Which one has better features",
+    "Looking for alternatives to this tool",
+    "Has anyone tried both of these",
+    "What are the pros and cons of each option",
+    "Review of this wallet app",
+    "Which platform is more user friendly",
+    "Trying to decide between these options",
+
+    # Token burns / mechanics (operational terms mis-read as bearish)
+    "Token burn event scheduled for this month",
+    "How does the burn mechanism work",
+    "Tokens are burned with each transaction",
+    "The burn rate for this token",
+    "Explaining the deflationary burn model",
 ]
 
 
@@ -615,7 +654,7 @@ class SemanticSentimentAnalyzer:
 
         # Scale score to [-1, 1] range
         # Typical similarity differences are small (0.0-0.3), so we amplify
-        score = np.tanh(raw_score * 5)  # tanh scales and bounds to [-1, 1]
+        score = np.tanh(raw_score * 3)  # tanh scales and bounds to [-1, 1]
 
         return {
             "score": float(score),

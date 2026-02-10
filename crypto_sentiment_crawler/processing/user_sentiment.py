@@ -275,7 +275,7 @@ class UserSentimentScorer:
         elif method == "title_weighted":
             if title_score is not None and segment_scores:
                 seg_mean = np.mean(segment_scores)
-                return 0.4 * title_score + 0.6 * seg_mean
+                return 0.2 * title_score + 0.8 * seg_mean
             return float(np.mean(scores_arr))
 
         elif method == "extremes":
@@ -368,6 +368,19 @@ class UserSentimentScorer:
                     content = f"{content}\n\n{comment_text}"
                 else:
                     content = comment_text
+
+        # Deduplicate paragraphs — handles historical backfill data where
+        # content already contained comment text that gets appended again above
+        if content:
+            paragraphs = content.split('\n\n')
+            seen: set[str] = set()
+            unique = []
+            for p in paragraphs:
+                stripped = p.strip()
+                if stripped and stripped not in seen:
+                    seen.add(stripped)
+                    unique.append(p)
+            content = '\n\n'.join(unique)
 
         return username, title, content, human_comment_count
 
