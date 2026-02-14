@@ -97,4 +97,9 @@ export const fetchPanicScore = async () => {
   return response.data;
 };
 
+export const fetchTrendingSignals = async () => {
+  const response = await client.get('/api/news/trending');
+  return response.data;
+};
+
 export default client;

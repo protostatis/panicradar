@@ -29,6 +29,7 @@ const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
+    { path: '/news', label: 'News' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/beliefs', label: 'Beliefs' },
     { path: '/sources', label: 'Sources' },

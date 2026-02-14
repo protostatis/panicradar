@@ -1,9 +1,11 @@
 """Dashboard API routes."""
 
+import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from .affiliates import get_affiliates_for_context
 from .queries import (
@@ -27,6 +29,7 @@ from .queries import (
     load_bayesian_beliefs,
     merge_history_data,
 )
+from .news_schemas import TrendingResponse
 from .schemas import (
     AffiliateLink,
     AffiliateResponse,
@@ -49,6 +52,10 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 
 DB_PATH = os.environ.get("DB_PATH", "data/sentiment.db")
 STATE_PATH = os.environ.get("STATE_PATH", "data/orchestrator_state.json")
+TRENDING_PATH = os.environ.get(
+    "TRENDING_PATH",
+    os.path.join(os.path.dirname(DB_PATH), "trending_today.json"),
+)
 
 
 def get_sentiment_state(score: float) -> str:
@@ -582,3 +589,28 @@ async def get_panic_score():
         return get_reddit_panic_score(conn)
     finally:
         conn.close()
+
+
+@router.get("/news/trending", response_model=TrendingResponse)
+async def get_trending_signals():
+    """
+    Get today's trending signals and market intelligence.
+
+    Returns trending topics, signals, coins, and market context
+    extracted daily from Reddit, CoinGecko, and X.
+    """
+    trending_file = Path(TRENDING_PATH)
+    if not trending_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No trending data available. Check back after 7:45 AM CT.",
+        )
+
+    try:
+        data = json.loads(trending_file.read_text())
+        return TrendingResponse(**data)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse trending data: {e}",
+        )
