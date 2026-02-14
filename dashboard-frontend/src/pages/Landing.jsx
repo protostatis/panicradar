@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchPanicScore, fetchDashboardSummary } from '../api/client';
 import { trackEvent, GA_EVENTS } from '../utils/analytics';
+import IntelligencePreview from '../components/news/IntelligencePreview';
 
 const TELEGRAM_URL = 'https://t.me/PanicRadarAlerts';
 const NEWSLETTER_URL = 'https://panicradar.substack.com';
@@ -79,6 +80,9 @@ const Landing = () => {
 
   return (
     <div className="space-y-20">
+      {/* Today's Intelligence Banner */}
+      <IntelligencePreview />
+
       {/* Hero */}
       <section className="text-center pt-8 sm:pt-16">
         <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-100 mb-6 leading-tight">

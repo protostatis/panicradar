@@ -6,6 +6,8 @@ export const GA_EVENTS = {
   TELEGRAM_CLICK: 'telegram_click',
   NEWSLETTER_CLICK: 'newsletter_click',
   SOURCE_VIEW: 'source_view',
+  NEWS_VIEW: 'news_view',
+  NEWS_CTA_CLICK: 'news_cta_click',
 };
 
 export function trackEvent(eventName, params = {}) {

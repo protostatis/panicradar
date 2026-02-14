@@ -7,6 +7,7 @@ import Sources from './pages/Sources';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import About from './pages/About';
+import News from './pages/News';
 import usePageTracking from './hooks/usePageTracking';
 
 function AppContent() {
@@ -18,6 +19,7 @@ function AppContent() {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/news" element={<News />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/beliefs" element={<Beliefs />} />
             <Route path="/sources" element={<Sources />} />
