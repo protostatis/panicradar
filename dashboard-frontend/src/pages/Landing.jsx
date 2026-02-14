@@ -80,11 +80,10 @@ const Landing = () => {
 
   return (
     <div className="space-y-20">
-      {/* Today's Intelligence Banner */}
-      <IntelligencePreview />
-
-      {/* Hero */}
-      <section className="text-center pt-8 sm:pt-16">
+      {/* Today's Intelligence Banner + Hero */}
+      <div>
+        <IntelligencePreview />
+        <section className="text-center pt-8 sm:pt-16">
         <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-100 mb-6 leading-tight">
           See the panic<br />
           <span className="text-green-400">before the crowd.</span>
@@ -130,6 +129,7 @@ const Landing = () => {
           </Link>
         </div>
       </section>
+      </div>
 
       {/* Stats Bar */}
       <section className="bg-slate-800/30 rounded-2xl border border-slate-700/50 p-8">
