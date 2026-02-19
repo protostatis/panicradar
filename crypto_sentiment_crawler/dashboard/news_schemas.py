@@ -27,9 +27,9 @@ class DefiSignal(BaseModel):
 class TrendingCoin(BaseModel):
     name: str
     symbol: str
-    rank: int
-    price_change_24h: str
-    volume: str
+    rank: Optional[int] = None
+    price_change_24h: Optional[str] = None
+    volume: Optional[str] = None
     note: Optional[str] = None
 
 

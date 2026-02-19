@@ -1,21 +1,22 @@
 import { useState } from 'react';
 
 const CoinRow = ({ coin }) => {
-  const isPositive = coin.price_change_24h.startsWith('+');
-  const isNegative = coin.price_change_24h.startsWith('-');
+  const change = coin.price_change_24h || '';
+  const isPositive = change.startsWith('+');
+  const isNegative = change.startsWith('-');
 
   return (
     <tr className="border-t border-slate-700/50 hover:bg-slate-700/30 transition-colors">
-      <td className="py-2.5 px-3 text-slate-500 text-xs font-mono">#{coin.rank}</td>
+      <td className="py-2.5 px-3 text-slate-500 text-xs font-mono">{coin.rank != null ? `#${coin.rank}` : '—'}</td>
       <td className="py-2.5 px-3">
         <span className="text-slate-100 font-semibold text-sm">{coin.symbol}</span>
         <span className="text-slate-500 text-xs ml-2 hidden sm:inline">{coin.name}</span>
       </td>
       <td className={`py-2.5 px-3 text-right font-mono text-sm ${isPositive ? 'text-green-400' : isNegative ? 'text-red-400' : 'text-slate-400'}`}>
-        {coin.price_change_24h}
+        {change || '—'}
       </td>
       <td className="py-2.5 px-3 text-right text-slate-400 text-xs font-mono hidden sm:table-cell">
-        {coin.volume}
+        {coin.volume || '—'}
       </td>
       {coin.note && (
         <td className="py-2.5 px-3 text-slate-500 text-xs max-w-[200px] truncate hidden lg:table-cell">
