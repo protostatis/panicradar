@@ -24,13 +24,13 @@ echo
 
 # Filter: only page loads (HTML/SPA routes), exclude bots, API calls, static assets
 echo '--- Unique Visitors (by IP) ---'
-grep -E 'GET /(|beliefs|sources|signals|dashboard)' $LOG \
+grep -E 'GET /(|beliefs|sources|signals|dashboard|news)' $LOG \
   | grep -v -E '(bot|crawler|spider|Wget|curl|python|Go-http|HEAD)' \
   | awk '{print \$1}' | sort -u | wc -l | xargs echo 'Unique IPs:'
 
 echo
 echo '--- Page Views (excl. API/assets/bots) ---'
-grep -E 'GET /(|beliefs|sources|signals|dashboard)' $LOG \
+grep -E 'GET /(|beliefs|sources|signals|dashboard|news)' $LOG \
   | grep -v -E '(bot|crawler|spider|Wget|curl|python|Go-http|HEAD|\.js|\.css|\.png|\.ico|/api/)' \
   | wc -l | xargs echo 'Page views:'
 
