@@ -608,9 +608,16 @@ async def get_trending_signals():
 
     try:
         data = json.loads(trending_file.read_text())
-        return TrendingResponse(**data)
     except json.JSONDecodeError as e:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to parse trending data: {e}",
+        )
+
+    try:
+        return TrendingResponse(**data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Trending data validation failed: {e}",
         )
