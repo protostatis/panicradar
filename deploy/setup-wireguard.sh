@@ -48,8 +48,8 @@ PrivateKey = $WG_PRIVATE_KEY
 Address = $WG_ADDRESS
 DNS = $WG_DNS
 MTU = 1420
-PostUp = /sbin/ip rule add from $EC2_IP table main priority 90; /sbin/iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff; /sbin/ip route add 140.82.112.0/20 via $EC2_GW dev eth0; /sbin/ip route add 185.199.108.0/22 via $EC2_GW dev eth0; /sbin/ip route add 169.254.169.254 dev eth0
-PostDown = /sbin/ip rule del from $EC2_IP table main priority 90; /sbin/iptables -t mangle -D PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff; /sbin/ip route del 140.82.112.0/20 dev eth0; /sbin/ip route del 185.199.108.0/22 dev eth0; /sbin/ip route del 169.254.169.254 dev eth0
+PostUp = /sbin/ip rule add from $EC2_IP table main priority 90 2>/dev/null || true; /sbin/iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c; /sbin/iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff; /sbin/ip route replace 140.82.112.0/20 via $EC2_GW dev eth0; /sbin/ip route replace 185.199.108.0/22 via $EC2_GW dev eth0; /sbin/ip route replace 169.254.169.254 dev eth0
+PostDown = /sbin/ip rule del from $EC2_IP table main priority 90 2>/dev/null || true; /sbin/iptables -t mangle -D PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c 2>/dev/null || true; /sbin/iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark --nfmask 0xffffffff --ctmask 0xffffffff 2>/dev/null || true; /sbin/ip route del 140.82.112.0/20 via $EC2_GW dev eth0 2>/dev/null || true; /sbin/ip route del 185.199.108.0/22 via $EC2_GW dev eth0 2>/dev/null || true; /sbin/ip route del 169.254.169.254 dev eth0 2>/dev/null || true
 
 [Peer]
 PublicKey = $WG_PEER_PUBKEY
