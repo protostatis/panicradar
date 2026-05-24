@@ -43,14 +43,14 @@ const BeliefsSummary = ({ beliefs, lastUpdate }) => {
   };
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+    <div className="radar-panel p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-slate-200">
           Bayesian Model Beliefs
         </h3>
         <Link
           to="/beliefs"
-          className="text-sm text-purple-400 hover:text-purple-300 transition-colors"
+          className="text-sm text-emerald-300 hover:text-emerald-200 transition-colors"
         >
           View All →
         </Link>
@@ -93,7 +93,7 @@ const BeliefsSummary = ({ beliefs, lastUpdate }) => {
       </div>
 
       {/* Stats Row */}
-      <div className="mt-4 pt-4 border-t border-slate-700 flex flex-wrap gap-4 text-xs text-slate-500">
+      <div className="mt-4 pt-4 border-t border-slate-700/70 flex flex-wrap gap-4 text-xs text-slate-500">
         <span>
           <span className="text-slate-400">{activeBeliefs.length}</span> active sources
         </span>

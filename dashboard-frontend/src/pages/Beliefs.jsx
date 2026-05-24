@@ -80,8 +80,9 @@ const Beliefs = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100 mb-2">
+      <div className="radar-panel p-6 sm:p-8">
+        <div className="radar-kicker mb-3">Bayesian Source Model</div>
+        <h1 className="text-3xl font-bold text-slate-100 mb-2">
           Bayesian Model Beliefs
         </h1>
         <p className="text-slate-400">
@@ -92,25 +93,25 @@ const Beliefs = () => {
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-slate-800/50 rounded-lg border border-slate-700 p-4">
+        <div className="radar-card p-4">
           <div className="text-2xl font-bold text-slate-100">
             {beliefs?.beliefs?.length || 0}
           </div>
           <div className="text-sm text-slate-400">Total Sources</div>
         </div>
-        <div className="bg-slate-800/50 rounded-lg border border-slate-700 p-4">
+        <div className="radar-card p-4">
           <div className="text-2xl font-bold text-green-400">
             {beliefs?.beliefs?.filter((b) => b.type_label === 'Momentum').length || 0}
           </div>
           <div className="text-sm text-slate-400">Momentum</div>
         </div>
-        <div className="bg-slate-800/50 rounded-lg border border-slate-700 p-4">
+        <div className="radar-card p-4">
           <div className="text-2xl font-bold text-orange-400">
             {beliefs?.beliefs?.filter((b) => b.type_label === 'Contrarian').length || 0}
           </div>
           <div className="text-sm text-slate-400">Contrarian</div>
         </div>
-        <div className="bg-slate-800/50 rounded-lg border border-slate-700 p-4">
+        <div className="radar-card p-4">
           <div className="text-2xl font-bold text-slate-300">
             {beliefs?.total_crawls?.toLocaleString() || 0}
           </div>
@@ -165,7 +166,7 @@ const Beliefs = () => {
       </div>
 
       {/* Methodology */}
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+      <div className="radar-panel p-6">
         <h3 className="text-lg font-semibold text-slate-200 mb-4">
           How Bayesian Learning Works
         </h3>

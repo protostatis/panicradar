@@ -1,7 +1,7 @@
 const StatItem = ({ label, value }) => {
   if (!value) return null;
   return (
-    <div className="bg-slate-800/60 rounded-lg p-3">
+    <div className="radar-card p-3">
       <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">{label}</div>
       <div className="text-sm text-slate-200 font-mono">{value}</div>
     </div>
@@ -16,7 +16,7 @@ const MarketContextPanel = ({ context }) => {
       <h2 className="text-xl font-bold text-slate-100 mb-4">
         Market Context
       </h2>
-      <div className="bg-slate-800/30 rounded-2xl border border-slate-700/50 p-6">
+      <div className="radar-panel p-6">
         {/* Dominant sentiment narrative */}
         {context.dominant_sentiment && (
           <div className="mb-5">

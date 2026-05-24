@@ -58,7 +58,7 @@ const CrowdGauges = ({ fearIndex, euphoriaIndex, activityLevel }) => {
   };
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+    <div className="radar-panel p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-slate-200">
           Crowd Psychology

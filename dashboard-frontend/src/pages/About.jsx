@@ -1,17 +1,19 @@
 const About = () => {
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100 mb-2">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="radar-panel p-6 sm:p-8">
+        <div className="radar-kicker mb-3">Methodology</div>
+        <h1 className="max-w-3xl text-3xl font-bold text-slate-100 mb-2 sm:text-4xl">
           About PanicRadar.ai
         </h1>
-        <p className="text-slate-400">
+        <p className="max-w-3xl text-slate-400">
           A real-time crypto sentiment analysis dashboard that predicts
           volatility, not price direction.
         </p>
       </div>
 
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 space-y-6">
+      <div className="radar-panel p-6 sm:p-8">
+        <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-3">
             Our Approach
@@ -39,7 +41,7 @@ const About = () => {
             It uses FinBERT-based sentiment analysis on posts from the last 24 hours,
             compared against a 7-day rolling baseline to detect genuine sentiment shifts.
           </p>
-          <div className="bg-slate-900/50 rounded-lg p-4 mb-4">
+          <div className="radar-card p-4 mb-4">
             <h3 className="text-sm font-semibold text-slate-300 mb-2">
               How It&apos;s Calculated
             </h3>
@@ -70,19 +72,19 @@ const About = () => {
             </p>
           </div>
           <div className="grid grid-cols-4 gap-2 text-center text-sm">
-            <div className="bg-green-900/30 rounded p-2">
+            <div className="radar-card p-2 border-green-400/30">
               <div className="text-green-400 font-semibold">0-20</div>
               <div className="text-slate-500 text-xs">Calm</div>
             </div>
-            <div className="bg-yellow-900/30 rounded p-2">
+            <div className="radar-card p-2 border-yellow-400/30">
               <div className="text-yellow-400 font-semibold">20-40</div>
               <div className="text-slate-500 text-xs">Moderate</div>
             </div>
-            <div className="bg-orange-900/30 rounded p-2">
+            <div className="radar-card p-2 border-orange-400/30">
               <div className="text-orange-400 font-semibold">40-60</div>
               <div className="text-slate-500 text-xs">Elevated</div>
             </div>
-            <div className="bg-red-900/30 rounded p-2">
+            <div className="radar-card p-2 border-red-400/30">
               <div className="text-red-400 font-semibold">60-100</div>
               <div className="text-slate-500 text-xs">High Panic</div>
             </div>
@@ -151,7 +153,7 @@ const About = () => {
           </ul>
         </section>
 
-        <section>
+        <section className="lg:col-span-2 border-t border-slate-700/70 pt-6">
           <h2 className="text-lg font-semibold text-slate-200 mb-3">
             Disclaimer
           </h2>
@@ -162,6 +164,7 @@ const About = () => {
             than you can afford to lose.
           </p>
         </section>
+        </div>
       </div>
     </div>
   );

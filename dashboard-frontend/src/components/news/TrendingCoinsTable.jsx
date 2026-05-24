@@ -78,7 +78,7 @@ const TrendingCoinsTable = ({ coins, losers }) => {
         </button>
       </div>
 
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="radar-panel overflow-hidden">
         {tab === 'trending' && coins?.length > 0 && (
           <Table coins={coins} hasNotes={hasNotes} />
         )}

@@ -5,23 +5,23 @@ const MetricCard = ({ title, value, subtitle, type = 'default', href }) => {
   const colorClasses = useMemo(() => {
     switch (type) {
       case 'bullish':
-        return 'bg-green-900/30 border-green-500/50 text-green-400';
+        return 'border-green-400/50 text-green-300';
       case 'bearish':
-        return 'bg-red-900/30 border-red-500/50 text-red-400';
+        return 'border-red-400/50 text-red-300';
       case 'neutral':
-        return 'bg-yellow-900/30 border-yellow-500/50 text-yellow-400';
+        return 'border-yellow-400/50 text-yellow-300';
       case 'fear':
-        return 'bg-orange-900/30 border-orange-500/50 text-orange-400';
+        return 'border-orange-400/50 text-orange-300';
       case 'greed':
-        return 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400';
+        return 'border-emerald-400/50 text-emerald-300';
       case 'high':
-        return 'bg-red-900/30 border-red-500/50 text-red-400';
+        return 'border-red-400/50 text-red-300';
       case 'moderate':
-        return 'bg-yellow-900/30 border-yellow-500/50 text-yellow-400';
+        return 'border-yellow-400/50 text-yellow-300';
       case 'low':
-        return 'bg-green-900/30 border-green-500/50 text-green-400';
+        return 'border-green-400/50 text-green-300';
       default:
-        return 'bg-slate-800/50 border-slate-600/50 text-slate-300';
+        return 'border-slate-600/50 text-slate-300';
     }
   }, [type]);
 
@@ -37,7 +37,7 @@ const MetricCard = ({ title, value, subtitle, type = 'default', href }) => {
     </>
   );
 
-  const cardClasses = `block rounded-xl border p-4 ${colorClasses} transition-all hover:scale-[1.02] cursor-pointer`;
+  const cardClasses = `radar-card block border p-4 ${colorClasses} transition-all hover:-translate-y-0.5 cursor-pointer`;
 
   if (href) {
     // Internal link (starts with /)
@@ -63,7 +63,7 @@ const MetricCard = ({ title, value, subtitle, type = 'default', href }) => {
 
   return (
     <div
-      className={`rounded-xl border p-4 ${colorClasses} transition-all hover:scale-[1.02]`}
+      className={`radar-card border p-4 ${colorClasses} transition-all hover:-translate-y-0.5`}
     >
       {content}
     </div>

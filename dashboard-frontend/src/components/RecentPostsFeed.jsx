@@ -140,7 +140,7 @@ const PostCard = ({ post }) => {
               {needsTruncation && (
                 <button
                   onClick={handleExpandClick}
-                  className="text-xs text-purple-400 hover:text-purple-300 mt-1"
+                  className="text-xs text-emerald-300 hover:text-emerald-200 mt-1"
                 >
                   {expanded ? 'Show less' : 'Read more'}
                 </button>
@@ -195,7 +195,7 @@ const RecentPostsFeed = () => {
   ];
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-4 h-[520px] flex flex-col">
+    <div className="radar-panel p-4 h-[520px] flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-slate-200">Live Feed</h3>
@@ -208,7 +208,7 @@ const RecentPostsFeed = () => {
           <select
             value={selectedSource || ''}
             onChange={(e) => setSelectedSource(e.target.value || null)}
-            className="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1 focus:ring-purple-500 focus:border-purple-500"
+            className="bg-slate-900/80 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1 focus:ring-emerald-400 focus:border-emerald-400"
           >
             {sources.map((s) => (
               <option key={s.value || 'all'} value={s.value || ''}>

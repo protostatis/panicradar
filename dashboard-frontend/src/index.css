@@ -1,8 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
@@ -16,6 +17,116 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #020617;
+}
+
+.radar-site {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(16, 185, 129, 0.13), transparent 30rem),
+    radial-gradient(circle at 88% 8%, rgba(14, 165, 233, 0.12), transparent 28rem),
+    linear-gradient(180deg, #0f172a 0%, #020617 44%, #020617 100%);
+  position: relative;
+}
+
+.radar-site::before {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+  background-size: 34px 34px;
+  content: "";
+  inset: 0;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+  pointer-events: none;
+  position: fixed;
+}
+
+.radar-header {
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
+}
+
+.radar-footer {
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0), rgba(2, 6, 23, 0.72));
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.radar-panel {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(16, 185, 129, 0.10), transparent 18rem),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.72));
+  border: 1px solid rgba(148, 163, 184, 0.20);
+  border-radius: 1.5rem;
+  box-shadow: 0 20px 60px rgba(2, 6, 23, 0.34);
+  position: relative;
+}
+
+.radar-card {
+  background: rgba(15, 23, 42, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 1rem;
+}
+
+.radar-chip {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.20);
+  border-radius: 999px;
+  color: #cbd5e1;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.radar-button-primary,
+.radar-button-ghost {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-weight: 700;
+  justify-content: center;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.radar-button-primary {
+  background: #5ee4a8;
+  color: #020617;
+}
+
+.radar-button-primary:hover {
+  background: #86efac;
+  transform: translateY(-1px);
+}
+
+.radar-button-ghost {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #e2e8f0;
+}
+
+.radar-button-ghost:hover {
+  border-color: rgba(94, 234, 212, 0.55);
+  color: #a7f3d0;
+  transform: translateY(-1px);
+}
+
+.radar-kicker {
+  color: #86efac;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+::selection {
+  background: rgba(52, 211, 153, 0.32);
+  color: #ecfeff;
 }
 
 @keyframes ticker-scroll {

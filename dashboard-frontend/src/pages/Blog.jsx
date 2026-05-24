@@ -38,28 +38,29 @@ const Blog = () => {
   });
 
   return (
-    <div className="space-y-8 max-w-3xl">
-      <header>
-        <h1 className="text-3xl font-bold text-slate-100">
+    <div className="mx-auto max-w-6xl space-y-8">
+      <header className="radar-panel p-6 sm:p-8">
+        <div className="radar-kicker mb-3">Research Log</div>
+        <h1 className="max-w-3xl text-3xl font-bold text-slate-100 sm:text-4xl">
           Crypto Sentiment Research & Insights
         </h1>
-        <p className="mt-2 text-slate-400 leading-relaxed">
+        <p className="mt-3 max-w-3xl text-slate-400 leading-relaxed">
           Data-driven research on crypto market sentiment, Bayesian source
           analysis, and contrarian signal detection. We publish what we learn
           building PanicRadar — including what doesn't work.
         </p>
       </header>
 
-      <div className="grid gap-6">
+      <div className="grid gap-6 lg:grid-cols-3">
         {blogPosts.map((post) => (
           <article key={post.slug}>
             <Link
               to={`/blog/${post.slug}`}
               onClick={() => trackEvent(GA_EVENTS.BLOG_ARTICLE_CLICK, { label: post.slug, title: post.title })}
-              className="block bg-slate-800/50 rounded-xl p-6 border border-slate-700 hover:border-purple-500/50 hover:bg-slate-800/70 transition-all"
+                className="radar-panel block h-full p-6 transition-all hover:-translate-y-0.5 hover:border-emerald-400/40"
             >
               <div className="flex items-center gap-3 mb-3">
-                <span className="px-2 py-1 text-xs font-medium bg-purple-500/20 text-purple-300 rounded">
+                  <span className="radar-chip px-2 py-1 text-xs font-medium text-emerald-300">
                   {post.category}
                 </span>
                 <time dateTime={post.date} className="text-sm text-slate-500">
@@ -69,11 +70,11 @@ const Blog = () => {
                   {post.readingTime} read
                 </span>
               </div>
-              <h2 className="text-xl font-semibold text-slate-100 mb-2">
+              <h2 className="text-xl font-semibold text-slate-100 mb-2 leading-snug">
                 {post.title}
               </h2>
               <p className="text-slate-400 leading-relaxed">{post.excerpt}</p>
-              <span className="inline-block mt-4 text-purple-400 text-sm font-medium">
+              <span className="inline-block mt-4 text-emerald-300 text-sm font-medium">
                 Read more &rarr;
               </span>
             </Link>
