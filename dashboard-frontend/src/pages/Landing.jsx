@@ -19,7 +19,7 @@ const PanicGauge = ({ score, label }) => {
   const pct = Math.min(100, Math.max(0, score));
 
   return (
-    <div className={`bg-slate-800/80 rounded-2xl border border-slate-700 p-8 shadow-lg ${colors.glow}`}>
+    <div className={`radar-panel p-8 ${colors.glow}`}>
       <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
         Live Panic Score
       </div>
@@ -44,7 +44,7 @@ const PanicGauge = ({ score, label }) => {
 };
 
 const FeatureCard = ({ icon, title, description }) => (
-  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 hover:border-slate-600 transition-colors">
+  <div className="radar-card p-6 transition-all hover:-translate-y-0.5 hover:border-emerald-400/40">
     <div className="text-2xl mb-3">{icon}</div>
     <h3 className="text-lg font-semibold text-slate-100 mb-2">{title}</h3>
     <p className="text-slate-400 text-sm leading-relaxed">{description}</p>
@@ -107,7 +107,7 @@ const Landing = () => {
           <Link
             to="/dashboard"
             onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'hero_view_dashboard' })}
-            className="px-8 py-3 bg-green-500 hover:bg-green-400 text-slate-900 font-semibold rounded-lg transition-colors text-lg"
+            className="radar-button-primary px-8 py-3 text-lg"
           >
             View Dashboard
           </Link>
@@ -116,14 +116,14 @@ const Landing = () => {
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent(GA_EVENTS.TELEGRAM_CLICK, { label: 'hero_telegram' })}
-            className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold rounded-lg border border-slate-600 transition-colors text-lg"
+            className="radar-button-ghost px-8 py-3 text-lg"
           >
             Free Telegram Alerts
           </a>
           <Link
             to="/blog"
             onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'hero_read_research' })}
-            className="px-8 py-3 bg-purple-600/80 hover:bg-purple-500 text-white font-semibold rounded-lg transition-colors text-lg"
+            className="radar-button-ghost px-8 py-3 text-lg"
           >
             Read Our Research
           </Link>
@@ -132,7 +132,7 @@ const Landing = () => {
       </div>
 
       {/* Stats Bar */}
-      <section className="bg-slate-800/30 rounded-2xl border border-slate-700/50 p-8">
+      <section className="radar-panel p-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <StatCard value="30+" label="Data Sources" />
           <StatCard
@@ -148,9 +148,9 @@ const Landing = () => {
       </section>
 
       {/* Key Insight Callout */}
-      <section className="bg-gradient-to-r from-purple-900/30 to-slate-800/30 rounded-2xl border border-purple-500/20 p-8 sm:p-10">
+      <section className="radar-panel p-8 sm:p-10">
         <div className="max-w-3xl mx-auto">
-          <div className="text-sm font-semibold text-purple-400 uppercase tracking-wider mb-3">
+            <div className="radar-kicker mb-3">
             Key Research Finding
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 mb-4">
@@ -167,7 +167,7 @@ const Landing = () => {
       </section>
 
       {/* Affiliate Partner Banner */}
-      <section className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-900/20 via-slate-800/40 to-purple-900/20">
+      <section className="radar-panel relative overflow-hidden border-amber-500/30">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-amber-500/5 via-transparent to-purple-500/5" />
         <div className="relative p-8 sm:p-10 flex flex-col md:flex-row items-center gap-6">
           <div className="flex-1">
@@ -185,7 +185,7 @@ const Landing = () => {
           </div>
           <Link
             to="/blog/looking-for-partners"
-            className="shrink-0 px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold rounded-lg transition-colors"
+            className="radar-button-primary shrink-0 px-6 py-3"
           >
             Learn More
           </Link>
@@ -256,7 +256,7 @@ const Landing = () => {
       </section>
 
       {/* Signal Types */}
-      <section className="bg-slate-800/30 rounded-2xl border border-slate-700/50 p-8 sm:p-10">
+      <section className="radar-panel p-8 sm:p-10">
         <h2 className="text-2xl font-bold text-slate-100 mb-6 text-center">
           Signal Types We Detect
         </h2>
@@ -292,7 +292,7 @@ const Landing = () => {
           <Link
             to="/dashboard"
             onClick={() => trackEvent(GA_EVENTS.CTA_CLICK, { label: 'bottom_view_dashboard' })}
-            className="px-8 py-3 bg-green-500 hover:bg-green-400 text-slate-900 font-semibold rounded-lg transition-colors text-lg"
+            className="radar-button-primary px-8 py-3 text-lg"
           >
             View Dashboard
           </Link>
@@ -301,14 +301,14 @@ const Landing = () => {
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent(GA_EVENTS.TELEGRAM_CLICK, { label: 'bottom_telegram' })}
-            className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold rounded-lg border border-slate-600 transition-colors text-lg"
+            className="radar-button-ghost px-8 py-3 text-lg"
           >
             Join Telegram
           </a>
         </div>
 
         {/* Newsletter Signup */}
-        <div className="max-w-md mx-auto bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+        <div className="radar-panel max-w-md mx-auto p-6">
           <div className="text-sm font-semibold text-slate-200 mb-2">Weekly Sentiment Briefing</div>
           <p className="text-slate-400 text-sm mb-4">
             Data-driven analysis every Sunday. What the crowd got wrong this week.
@@ -331,7 +331,7 @@ const Landing = () => {
             <button
               type="submit"
               onClick={() => trackEvent(GA_EVENTS.NEWSLETTER_CLICK, { label: 'subscribe_free' })}
-              className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors text-sm whitespace-nowrap"
+              className="radar-button-primary px-6 py-2 text-sm whitespace-nowrap"
             >
               Subscribe Free
             </button>

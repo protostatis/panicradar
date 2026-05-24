@@ -12,19 +12,15 @@ import ErrorMessage from '../components/ErrorMessage';
 import { ChartSyncProvider } from '../context/ChartSyncContext';
 import {
   fetchDashboardSummary,
-  fetchDashboardHistory,
   fetchAffiliates,
   fetchBayesianBeliefs,
-  fetchAllSourcesHistory,
   fetchPanicScore,
 } from '../api/client';
 
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
-  const [history, setHistory] = useState(null);
   const [affiliates, setAffiliates] = useState(null);
   const [beliefs, setBeliefs] = useState(null);
-  const [sourcesHistory, setSourcesHistory] = useState(null);
   const [panicScore, setPanicScore] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,20 +30,16 @@ const Dashboard = () => {
     setError(null);
 
     try {
-      const [summaryData, historyData, affiliateData, beliefsData, sourcesData, panicData] = await Promise.all([
+      const [summaryData, affiliateData, beliefsData, panicData] = await Promise.all([
         fetchDashboardSummary(),
-        fetchDashboardHistory(30),
         fetchAffiliates(),
         fetchBayesianBeliefs(),
-        fetchAllSourcesHistory(30),
         fetchPanicScore(),
       ]);
 
       setSummary(summaryData);
-      setHistory(historyData);
       setAffiliates(affiliateData);
       setBeliefs(beliefsData);
-      setSourcesHistory(sourcesData);
       setPanicScore(panicData);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -102,6 +94,23 @@ const Dashboard = () => {
   return (
     <ChartSyncProvider>
     <div className="space-y-6">
+      <section className="radar-panel p-6 sm:p-8">
+        <div className="radar-kicker mb-3">Live Crowd-Risk Console</div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-50 sm:text-4xl">
+              PanicRadar Dashboard
+            </h1>
+            <p className="mt-2 max-w-2xl text-slate-400">
+              Real-time sentiment, volatility context, and source-weighted crowd psychology from crypto communities.
+            </p>
+          </div>
+          <div className="radar-chip px-3 py-1.5 text-xs font-mono text-slate-400">
+            Updated every 5m
+          </div>
+        </div>
+      </section>
+
       {/* Metric Cards */}
       <div className="grid grid-cols-3 gap-4">
         <MetricCard

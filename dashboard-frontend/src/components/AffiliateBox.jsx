@@ -28,7 +28,7 @@ const AffiliateBox = ({ context, recommendations }) => {
   }
 
   return (
-    <div className="bg-gradient-to-r from-slate-800/50 to-slate-700/50 rounded-xl border border-slate-600 p-6">
+    <div className="radar-panel p-6">
       <h3 className="text-lg font-semibold text-slate-200 mb-4">
         {getContextTitle()}
       </h3>
@@ -39,7 +39,7 @@ const AffiliateBox = ({ context, recommendations }) => {
             href={affiliate.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-start gap-3 p-3 rounded-lg bg-slate-800/50 hover:bg-slate-700/50 transition-colors border border-slate-700 hover:border-slate-500"
+            className="radar-card flex items-start gap-3 p-3 transition-colors hover:border-emerald-400/40"
           >
             <span className="text-xl">{getCategoryIcon(affiliate.category)}</span>
             <div>

@@ -38,8 +38,9 @@ const Sources = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100 mb-2">
+      <div className="radar-panel p-6">
+        <div className="radar-kicker mb-2">Source Intelligence</div>
+        <h1 className="text-3xl font-bold text-slate-100 mb-2">
           Source Intelligence
         </h1>
         <p className="text-slate-400">
@@ -54,7 +55,7 @@ const Sources = () => {
         lastUpdated={sources?.last_updated}
       />
 
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+      <div className="radar-panel p-6">
         <h3 className="text-lg font-semibold text-slate-200 mb-4">
           How It Works
         </h3>

@@ -12,7 +12,7 @@ const SourceTable = ({ sources, lastUpdated }) => {
 
   if (!sources || sources.length === 0) {
     return (
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+      <div className="radar-panel p-6">
         <h3 className="text-lg font-semibold text-slate-200 mb-4">
           Source Rankings
         </h3>
@@ -22,7 +22,7 @@ const SourceTable = ({ sources, lastUpdated }) => {
   }
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+    <div className="radar-panel p-6">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold text-slate-200">Source Rankings</h3>
         {lastUpdated && (
@@ -34,7 +34,7 @@ const SourceTable = ({ sources, lastUpdated }) => {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-700">
+            <tr className="border-b border-slate-700/70">
               <th className="text-left py-2 px-3 text-slate-400 font-medium">
                 Source
               </th>
@@ -57,7 +57,7 @@ const SourceTable = ({ sources, lastUpdated }) => {
               <tr
                 key={source.source}
                 className={`border-b border-slate-700/50 ${
-                  index % 2 === 0 ? 'bg-slate-800/30' : ''
+                  index % 2 === 0 ? 'bg-slate-900/30' : ''
                 }`}
               >
                 <td className="py-2 px-3 text-slate-300">{source.source}</td>

@@ -86,11 +86,12 @@ const Heatmap = ({ sources, heatmap }) => {
   }, [heatmap]);
 
   const n = sources.length;
-  const labelWidth = 110;
+  const labelWidth = 136;
+  const columnLabelHeight = 132;
   const availableWidth = containerWidth - labelWidth - 20;
   const cellSize = n > 0 ? Math.min(36, Math.max(20, availableWidth / n)) : 30;
   const totalWidth = labelWidth + cellSize * n + 20;
-  const totalHeight = 24 + cellSize * n + 10;
+  const totalHeight = columnLabelHeight + cellSize * n + 10;
 
   if (!containerWidth) {
     return <div ref={containerRef} style={{ width: '100%', minHeight: 200 }} />;
@@ -104,13 +105,14 @@ const Heatmap = ({ sources, heatmap }) => {
           <text
             key={`col-${j}`}
             x={labelWidth + j * cellSize + cellSize / 2}
-            y={16}
-            textAnchor="middle"
+            y={columnLabelHeight - 10}
+            textAnchor="start"
             fill="#94a3b8"
             fontSize={10}
             fontFamily="monospace"
+            transform={`rotate(-55 ${labelWidth + j * cellSize + cellSize / 2} ${columnLabelHeight - 10})`}
           >
-            {formatSourceName(source).slice(0, 5)}
+            {formatSourceName(source)}
           </text>
         ))}
 
@@ -120,7 +122,7 @@ const Heatmap = ({ sources, heatmap }) => {
             {/* Row label */}
             <text
               x={labelWidth - 6}
-              y={24 + i * cellSize + cellSize / 2 + 4}
+              y={columnLabelHeight + i * cellSize + cellSize / 2 + 4}
               textAnchor="end"
               fill="#94a3b8"
               fontSize={10}
@@ -138,7 +140,7 @@ const Heatmap = ({ sources, heatmap }) => {
                 <rect
                   key={`cell-${i}-${j}`}
                   x={labelWidth + j * cellSize}
-                  y={24 + i * cellSize}
+                  y={columnLabelHeight + i * cellSize}
                   width={cellSize - 1}
                   height={cellSize - 1}
                   rx={2}
@@ -182,7 +184,7 @@ const SourceSimilarityMap = ({ similarity }) => {
   const { sources, pairs, neighbors, features, heatmap, feature_names } = similarity;
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+    <div className="radar-panel p-6">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h3 className="text-lg font-semibold text-slate-200">
@@ -347,7 +349,6 @@ const SourceSimilarityMap = ({ similarity }) => {
                   </td>
                   {feature_names.map((fname) => {
                     const val = row[fname];
-                    const abs = Math.abs(val);
                     const color = val > 1
                       ? 'text-purple-400'
                       : val > 0.5

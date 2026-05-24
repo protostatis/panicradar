@@ -8,10 +8,11 @@ export const GA_EVENTS = {
   SOURCE_VIEW: 'source_view',
   NEWS_VIEW: 'news_view',
   NEWS_CTA_CLICK: 'news_cta_click',
+  NEWS_SHARE_CLICK: 'news_share_click',
 };
 
 export function trackEvent(eventName, params = {}) {
-  if (typeof window.gtag === 'function') {
+  if (window.__PANICRADAR_ENABLE_ANALYTICS__ && typeof window.gtag === 'function') {
     window.gtag('event', eventName, params);
   }
 }

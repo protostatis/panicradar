@@ -85,7 +85,7 @@ const SignalCard = ({ signal }) => {
   }[signal.surprise_score] || 'border-l-slate-600';
 
   return (
-    <div className={`bg-slate-800/50 rounded-xl border border-slate-700 border-l-2 ${borderColor} p-6 hover:border-slate-600 transition-colors`}>
+    <div className={`radar-card border-l-2 ${borderColor} p-6 transition-colors hover:border-emerald-400/30`}>
       {/* Header: badge + source */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <SurpriseBadge level={signal.surprise_score} />
@@ -104,7 +104,7 @@ const SignalCard = ({ signal }) => {
 
       {/* Content hook quote */}
       {signal.content_hook && (
-        <div className="bg-slate-900/50 border-l-2 border-green-500/50 pl-4 py-2 mb-3 rounded-r">
+        <div className="bg-slate-950/50 border-l-2 border-green-500/50 pl-4 py-2 mb-3 rounded-r">
           <p className="text-slate-300 text-sm italic">
             {signal.content_hook}
           </p>
