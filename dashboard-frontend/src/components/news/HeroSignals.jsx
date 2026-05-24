@@ -19,8 +19,9 @@ const HeroSignals = ({ hooks }) => {
       try {
         await navigator.share({ title: 'PanicRadar daily signal', text, url });
         return;
-      } catch {
-        // Fall back to clipboard if the native share sheet is dismissed.
+      } catch (err) {
+        if (err?.name === 'AbortError') return;
+        // Fall back to clipboard when native sharing is unavailable or fails.
       }
     }
 
