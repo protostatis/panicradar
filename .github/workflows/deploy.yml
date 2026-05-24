@@ -105,8 +105,14 @@ jobs:
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
-            # Pull latest code
-            git fetch origin
+            # Pull latest code. Preserve any EC2-local edits so deployment can
+            # move to the release tag without discarding operational changes.
+            git fetch --tags origin
+            if [ -n "$(git status --porcelain)" ]; then
+              STASH_NAME="pre-deploy-${{ github.ref_name }}-$(date -u +%Y%m%dT%H%M%SZ)"
+              git stash push --include-untracked -m "$STASH_NAME"
+              echo "Stashed EC2 local worktree changes: $STASH_NAME"
+            fi
             git checkout ${{ github.ref_name }}
 
             # Ensure directories exist
