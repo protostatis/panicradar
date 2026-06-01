@@ -77,9 +77,13 @@ if [ ! -f .env ]; then
     echo ""
 fi
 
-# Setup WireGuard VPN if configured
-if grep -q WG_PRIVATE_KEY .env 2>/dev/null; then
-    echo "Setting up WireGuard VPN..."
+# Prefer the app-level residential proxy for Reddit. WireGuard remains only as
+# a legacy fallback for hosts that have not been moved to proxy-based access.
+if grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' .env 2>/dev/null; then
+    echo "Residential proxy configured; skipping WireGuard setup..."
+    sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+elif grep -q WG_PRIVATE_KEY .env 2>/dev/null; then
+    echo "Setting up legacy WireGuard VPN..."
     bash deploy/setup-wireguard.sh .env
 fi
 

@@ -10,18 +10,20 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Domains that require proxy (blocked from datacenter IPs)
-# Note: With WireGuard VPN on the host, proxy is no longer needed for Reddit.
-# Set PROXY_URL env var to re-enable proxy for specific domains if needed.
-PROXY_REQUIRED_DOMAINS: set[str] = set()
+# Domains that require proxy (blocked from datacenter IPs).
+PROXY_REQUIRED_DOMAINS = {"reddit.com"}
 
 # Pool of realistic user agents
 USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.2 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
 ]
 
@@ -81,7 +83,9 @@ class Fetcher:
     Async HTTP fetcher with rate limiting, retries, user-agent rotation, and proxy support.
 
     Proxy Configuration:
-        Set PROXY_URL environment variable for proxy support.
+        Set PROXY_URL environment variable for proxy support. If PROXY_URL is
+        unset, RESIDENTIAL_PROXY is used as a fallback so this can share the
+        same residential proxy configuration as searchagentsky.com.
         Examples:
             - HTTP proxy: http://user:pass@proxy.example.com:8080
             - SOCKS5 proxy: socks5://user:pass@proxy.example.com:1080
@@ -111,7 +115,11 @@ class Fetcher:
         self.rate_limiters: dict[str, RateLimiter] = {}
 
         # Proxy configuration
-        proxy_env = proxy_url or os.environ.get("PROXY_URL", "")
+        proxy_env = (
+            proxy_url
+            or os.environ.get("PROXY_URL")
+            or os.environ.get("RESIDENTIAL_PROXY", "")
+        )
         self.proxies = [p.strip() for p in proxy_env.split(",") if p.strip()]
         self.proxy_index = 0
 
@@ -162,7 +170,10 @@ class Fetcher:
     def _needs_proxy(self, url: str) -> bool:
         """Check if URL requires proxy (blocked domains)."""
         domain = self._get_domain(url)
-        return domain in PROXY_REQUIRED_DOMAINS
+        return any(
+            domain == required_domain or domain.endswith(f".{required_domain}")
+            for required_domain in PROXY_REQUIRED_DOMAINS
+        )
 
     async def _rotate_proxy(self) -> None:
         """Rotate to next proxy (recreate proxy client)."""
@@ -180,7 +191,7 @@ class Fetcher:
     def _get_domain(self, url: str) -> str:
         """Extract domain from URL."""
         parsed = urlparse(url)
-        return parsed.netloc
+        return parsed.hostname or ""
 
     def _get_rate_limiter(self, url: str, rate_limit: float | None = None) -> RateLimiter:
         """Get or create rate limiter for domain."""

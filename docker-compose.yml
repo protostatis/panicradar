@@ -22,6 +22,7 @@ services:
       - WHALE_ALERT_API_KEY=${WHALE_ALERT_API_KEY:-}
       - ETHERSCAN_API_KEY=${ETHERSCAN_API_KEY:-}
       - PROXY_URL=${PROXY_URL:-}
+      - RESIDENTIAL_PROXY=${RESIDENTIAL_PROXY:-}
     depends_on:
       - api
     networks:

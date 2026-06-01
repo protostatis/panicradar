@@ -79,7 +79,7 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
    sudo chown ec2-user:ec2-user /opt/crypto-sentiment
    ```
 6. **Create `.env` file** at `/opt/crypto-sentiment/.env` with API keys (see `.env.docker.example` for template)
-7. **Set up WireGuard VPN** (see below)
+7. **Configure residential proxy for Reddit** (see below)
 8. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
 9. **Set up daily S3 backup cron:**
    ```bash
@@ -89,154 +89,55 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
 
 ---
 
-## WireGuard VPN Setup
+## Residential Proxy Setup
 
-Reddit blocks AWS/datacenter IPs. WireGuard VPN routes outbound traffic through a Mullvad VPN server so the crawler can access `old.reddit.com`.
-
-### How it works
-
-- WireGuard runs on the EC2 **host** (not inside Docker)
-- `AllowedIPs = 0.0.0.0/0` routes all outbound traffic through the VPN
-- Docker containers inherit VPN routing transparently via host NAT
-- Two `PostUp` mechanisms keep non-VPN traffic working correctly:
-
-#### SSH split routing (ip rule)
-
-WireGuard's `AllowedIPs = 0.0.0.0/0` would normally route ALL traffic through
-the VPN, including SSH replies — which would lock you out. The `PostUp` adds:
-
-```
-ip rule add from <EC2_PRIVATE_IP> table main priority 90
-```
-
-This tells the kernel: "packets originating from the EC2's own IP should use
-the normal routing table (eth0), not the VPN." SSH replies have the EC2's IP
-as source, so they bypass the VPN and reach your client normally.
-
-#### Connmark routing (iptables) — Docker + VPN coexistence
-
-The SSH rule above only covers traffic from the EC2's own IP (172.31.x.x).
-Docker containers use a different IP range (172.18.0.x), so their response
-packets to incoming HTTP requests would still get routed through the VPN —
-making the dashboard unreachable from outside.
-
-**The problem in detail:**
-
-```
-1. Client visits dashboard → SYN arrives at eth0 → Docker NAT → container (172.18.0.3)
-2. Container sends SYN-ACK → source IP is 172.18.0.3 (Docker bridge)
-3. Kernel routing: 172.18.0.3 doesn't match the SSH split rule (172.31.x.x)
-4. Falls through to WireGuard routing → sent through VPN tunnel
-5. Client never receives the response → connection timeout
-```
-
-**The fix — connmark:** Linux's connection tracking (conntrack) remembers every
-TCP/UDP connection. Connmark lets you "tag" a connection and later apply that
-tag to individual packets for routing decisions.
-
-Two iptables rules in `PostUp` solve this:
-
-```bash
-# Rule 1: When a NEW connection arrives on eth0, stamp it with mark 0xca6c
-iptables -t mangle -A PREROUTING -i eth0 -m conntrack --ctstate NEW -j CONNMARK --set-mark 0xca6c
-
-# Rule 2: For every packet, copy its connection's mark onto the packet itself
-iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark
-```
-
-How it plays out:
-
-```
-1. Client SYN arrives on eth0     → conntrack creates entry, stamped 0xca6c
-2. Container sends SYN-ACK        → conntrack recognizes same connection
-                                   → restores fwmark 0xca6c onto the packet
-3. WireGuard rule: "fwmark 0xca6c → skip VPN"
-4. Packet routes through eth0     → client gets the response ✓
-```
-
-`0xca6c` is the same fwmark WireGuard uses internally to avoid routing loops.
-By reusing it, incoming-connection responses get the same "bypass VPN" treatment.
-
-Meanwhile, outbound traffic from the crawler originates from Docker (not eth0),
-so it has **no** connmark and still routes through the VPN as intended.
-
-#### Service bypass routes
-
-Some AWS and external services don't work through the VPN and need explicit
-bypass routes through eth0:
-
-| Route | Why |
-|-------|-----|
-| `140.82.112.0/20` | GitHub API — ghcr.io blocks Mullvad IPs, breaking `docker pull` during deploys |
-| `185.199.108.0/22` | GitHub CDN (pkg-containers.githubusercontent.com) — same issue |
-| `169.254.169.254` | EC2 instance metadata — required for IAM credential retrieval (S3 backups, AWS CLI) |
-
-These are added in `PostUp` and removed in `PostDown` automatically by the
-setup script.
-
-**Instance metadata (169.254.169.254):** EC2 instances get IAM credentials by
-querying `http://169.254.169.254/latest/meta-data/`. This is a link-local
-address handled by the hypervisor on the local network interface (eth0). When
-the VPN routes all traffic (`AllowedIPs = 0.0.0.0/0`), metadata requests get
-sent through the WireGuard tunnel instead, where they fail — the Mullvad server
-has no idea what `169.254.169.254` is. Without this route, `aws s3 cp` and any
-AWS SDK call fails with "Unable to locate credentials" because the SDK can't
-reach the metadata endpoint to fetch the IAM role's temporary credentials.
+Reddit blocks AWS/datacenter IPs. The crawler now uses an app-level residential
+HTTP proxy for Reddit domains instead of routing the whole host through
+WireGuard.
 
 ### Setup
 
-1. **Add WireGuard config to `.env`** on the EC2:
-   ```
-   WG_PRIVATE_KEY=<your_wireguard_private_key>
-   WG_ADDRESS=10.x.x.x/32
-   WG_DNS=10.64.0.1
-   WG_PEER_PUBKEY=<mullvad_server_public_key>
-   WG_ENDPOINT=<mullvad_server_ip>:51820
-   ```
-
-2. **Run the setup script:**
+1. **Add the proxy to `/opt/crypto-sentiment/.env`** on EC2:
    ```bash
-   cd /opt/crypto-sentiment
-   bash deploy/setup-wireguard.sh .env
+   # Preferred: reuse the searchagentsky.com value
+   RESIDENTIAL_PROXY=http://user:pass@proxy.example.com:8080
+
+   # Optional override. If set, this takes precedence over RESIDENTIAL_PROXY.
+   PROXY_URL=http://user:pass@proxy.example.com:8080
    ```
 
-3. **Verify:**
+2. **Disable the old host VPN if it is still enabled:**
    ```bash
-   # Should show Mullvad IP (not EC2 IP)
-   curl https://ipinfo.io/ip
-
-   # Should return Reddit HTML (200)
-   curl -L -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
-     https://old.reddit.com/r/cryptocurrency/
-
-   # Dashboard should be accessible from outside
-   curl -I http://<ELASTIC_IP>/
+   sudo systemctl disable --now wg-quick@wg0
    ```
 
-### Key recovery
+3. **Deploy the application.** The release deploy passes `/opt/crypto-sentiment/.env`
+   into the crawler container and stops `wg-quick@wg0` automatically when a proxy
+   is configured.
 
-If the EC2 is terminated and you lose the WireGuard private key:
-
-1. Generate a new key pair:
+4. **Verify:**
    ```bash
-   wg genkey | tee /tmp/wg_private.key | wg pubkey > /tmp/wg_public.key
+   set -a; . /opt/crypto-sentiment/.env; set +a
+   PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
+
+   # Should show the residential proxy egress IP
+   curl -x "$PROXY" https://ipinfo.io/ip
+
+   # Should return a count greater than 0
+   curl -sL -x "$PROXY" \
+     -A "Mozilla/5.0" \
+     https://old.reddit.com/r/cryptocurrency/new/ | grep -c "data-timestamp"
+
+   # The crawler container should have the proxy env
+   docker exec crypto-crawler printenv RESIDENTIAL_PROXY
    ```
-2. Register with Mullvad:
-   ```bash
-   curl -sSL https://api.mullvad.net/wg/ \
-     -d account=YOUR_ACCOUNT_NUMBER \
-     --data-urlencode pubkey="$(cat /tmp/wg_public.key)"
-   ```
-3. Use the returned address as `WG_ADDRESS` and the private key as `WG_PRIVATE_KEY`
 
-### Changing VPN servers
+### Behavior
 
-Not all Mullvad servers work for Reddit. Known working US servers:
-- Atlanta: endpoint `45.134.140.130:51820`
-- Seattle: endpoint `138.199.43.91:51820`
-- Chicago: endpoint `87.249.134.1:51820`
-
-Server public keys can be found at: https://api.mullvad.net/www/relays/wireguard/
+`Fetcher` proxies `reddit.com` and all subdomains, including `old.reddit.com`.
+Other crawler sources continue to fetch directly unless code explicitly forces a
+proxy. `PROXY_URL` is useful if you want a crawler-specific proxy; otherwise use
+the shared `RESIDENTIAL_PROXY` value from searchagentsky.com.
 
 ---
 
@@ -263,34 +164,37 @@ df -h
 swapon --show
 ```
 
-### VPN Issues
+### Reddit Proxy Issues
 ```bash
-# Check VPN status
-sudo wg show
+set -a; . /opt/crypto-sentiment/.env; set +a
+PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
 
-# Check routing rules
-sudo /sbin/ip rule list
+# Confirm proxy env exists on host
+grep -E '^(PROXY_URL|RESIDENTIAL_PROXY)=' /opt/crypto-sentiment/.env
 
-# Check outbound IP
-curl https://ipinfo.io/ip
+# Confirm proxy env exists in crawler container
+docker exec crypto-crawler printenv RESIDENTIAL_PROXY
 
-# Restart VPN
-sudo wg-quick down wg0 && sudo wg-quick up wg0
+# Check proxy egress IP
+curl -x "$PROXY" https://ipinfo.io/ip
+
+# Check Reddit through proxy
+curl -sL -x "$PROXY" -A "Mozilla/5.0" \
+  https://old.reddit.com/r/bitcoin/new/ | grep -c "data-timestamp"
 ```
 
 ### S3 Backup Failing ("Unable to locate credentials")
-The VPN is routing instance metadata requests through the tunnel. Verify:
+Verify the instance can reach EC2 metadata:
 ```bash
 # Should return IAM role info — if it hangs, the route is missing
 curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
 ```
-Fix by re-running the WireGuard setup script (which adds the metadata bypass route):
-```bash
-bash deploy/setup-wireguard.sh .env
-```
+If it fails and WireGuard is still active, disable the legacy VPN with
+`sudo systemctl disable --now wg-quick@wg0`.
 
 ### Dashboard Not Accessible (but SSH works)
-This likely means the VPN conntrack rules are missing. The WireGuard `PostUp` must include iptables connmark rules so Docker response packets route back through eth0 instead of through the VPN tunnel. Re-run:
+If WireGuard is still active from the old setup, Docker responses may route
+through the VPN. Disable the legacy VPN:
 ```bash
-bash deploy/setup-wireguard.sh .env
+sudo systemctl disable --now wg-quick@wg0
 ```
