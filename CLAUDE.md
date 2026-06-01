@@ -40,36 +40,26 @@ The release triggers the deploy workflow automatically. Monitor progress at:
 
 `deploy/push-to-ec2.sh <EC2_IP>` — packages local code, uploads via SCP, rebuilds on EC2. Only use if CI/CD is broken.
 
-## Reddit Access via WireGuard VPN
+## Reddit Access via Residential Proxy
 
-Reddit blocks AWS/EC2 IP addresses. A WireGuard VPN on the EC2 host routes all
-outbound traffic through a clean IP (Mullvad VPN).
+Reddit blocks AWS/EC2 IP addresses. The crawler uses an app-level residential
+proxy for `reddit.com` domains instead of a host-level WireGuard VPN.
 
 ### Setup (one-time):
 
-1. Add WireGuard config to `/opt/crypto-sentiment/.env` (see `.env.example` for template)
-2. Run `deploy/setup-wireguard.sh` on EC2
+1. Add `RESIDENTIAL_PROXY` to `/opt/crypto-sentiment/.env`, reusing the same value as searchagentsky.com.
+2. Use `PROXY_URL` only if the crawler needs a different proxy; it takes precedence over `RESIDENTIAL_PROXY`.
+3. Disable the legacy VPN if it is still enabled: `sudo systemctl disable --now wg-quick@wg0`.
 
-### Verify VPN is active:
+### Verify proxy access:
 
 ```bash
-# Should show Mullvad IP, not EC2 IP
-curl https://httpbin.org/ip
-
-# Check WireGuard status
-sudo wg show
+PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
+curl -x "$PROXY" https://httpbin.org/ip
+curl -sL -x "$PROXY" -A "Mozilla/5.0" \
+  https://old.reddit.com/r/bitcoin/new/ | grep -c "data-timestamp"
 ```
 
 ### If crawler shows "No fresh posts" or 403 errors:
-- VPN may be down: `sudo wg-quick up wg0`
-- Check status: `sudo systemctl status wg-quick@wg0`
-
-### If VPN key is lost:
-Generate a new one — no backup needed:
-```bash
-wg genkey | tee /tmp/wg_private.key | wg pubkey > /tmp/wg_public.key
-curl -X POST https://api.mullvad.net/wg/ \
-  -d account=YOUR_ACCOUNT_NUMBER \
-  --data-urlencode "pubkey=$(cat /tmp/wg_public.key)"
-```
-Update `WG_PRIVATE_KEY` and `WG_ADDRESS` in `.env`, then re-run `deploy/setup-wireguard.sh`.
+- Confirm `docker exec crypto-crawler printenv RESIDENTIAL_PROXY` returns the proxy URL.
+- Confirm Reddit returns posts through the proxy with the verification command above.

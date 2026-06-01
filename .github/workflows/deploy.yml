@@ -119,6 +119,17 @@ jobs:
             sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups /opt/crypto-sentiment/logs
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
+            CRAWLER_ENV_ARGS=""
+            if [ -f /opt/crypto-sentiment/.env ]; then
+              CRAWLER_ENV_ARGS="--env-file /opt/crypto-sentiment/.env"
+              if grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' /opt/crypto-sentiment/.env; then
+                echo "Residential proxy configured; WireGuard is not needed for Reddit."
+                sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+              fi
+            else
+              echo "WARNING: /opt/crypto-sentiment/.env not found; crawler will run without local env config"
+            fi
+
             # ========== PRE-DEPLOYMENT BACKUP ==========
             if [ -f /opt/crypto-sentiment/data/sentiment.db ]; then
               BACKUP_NAME="sentiment_predeploy_$(date +%Y%m%d_%H%M%S).db"
@@ -215,10 +226,10 @@ jobs:
             echo "Starting crawler..."
             docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
+              $CRAWLER_ENV_ARGS \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
-              -e PROXY_URL= \
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 60
 

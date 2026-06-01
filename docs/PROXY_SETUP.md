@@ -1,273 +1,76 @@
-# Proxy Setup for Reddit Access from EC2
+# Residential Proxy Setup for Reddit Access
 
-Reddit blocks AWS/cloud IP addresses. This proxy setup routes Reddit requests through your local machine's residential IP.
+Reddit blocks AWS/cloud IP addresses. The crawler routes Reddit requests through
+an app-level residential HTTP proxy instead of a host-level WireGuard VPN.
 
-## Architecture
+## Configuration
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         YOUR LOCAL MAC                                   │
-│                                                                          │
-│  ┌──────────────────┐         ┌──────────────────┐                      │
-│  │ simple_proxy.py  │◄────────│   SSH Tunnel     │                      │
-│  │ (port 18888)     │         │ (reverse -R)     │                      │
-│  │                  │         │                  │                      │
-│  │ HTTP CONNECT     │         │ Listens on EC2   │                      │
-│  │ proxy server     │         │ port 18888       │                      │
-│  └────────┬─────────┘         └────────▲─────────┘                      │
-│           │                            │                                 │
-│           ▼                            │                                 │
-│  ┌──────────────────┐                  │                                 │
-│  │    Internet      │                  │                                 │
-│  │  (Reddit, etc)   │                  │                                 │
-│  │                  │                  │                                 │
-│  │ Your home IP     │                  │                                 │
-│  └──────────────────┘                  │                                 │
-└────────────────────────────────────────┼────────────────────────────────┘
-                                         │
-                                         │ SSH Connection
-                                         │
-┌────────────────────────────────────────┼────────────────────────────────┐
-│                         AWS EC2        │                                 │
-│                                        │                                 │
-│  ┌──────────────────┐         ┌────────┴─────────┐                      │
-│  │  Docker crawler  │────────►│  socat forwarder │                      │
-│  │                  │         │                  │                      │
-│  │ PROXY_URL=       │         │ 172.18.0.1:18889 │                      │
-│  │ 172.18.0.1:18889 │         │       ▼          │                      │
-│  └──────────────────┘         │ 127.0.0.1:18888  │                      │
-│                               │ (SSH tunnel end) │                      │
-│                               └──────────────────┘                      │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-## Components
-
-### 1. Local Proxy Server (`/tmp/simple_proxy.py`)
-
-A simple HTTP CONNECT proxy that:
-- Listens on `127.0.0.1:18888`
-- Handles HTTP CONNECT requests for HTTPS tunneling
-- Forwards traffic to target servers (Reddit)
-- Uses your residential IP (not blocked)
-
-### 2. SSH Reverse Tunnel
-
-Creates a tunnel from EC2 back to your local machine:
-```bash
-ssh -R 18888:127.0.0.1:18888 ec2-user@<EC2_IP>
-```
-- `-R 18888:127.0.0.1:18888` - EC2 port 18888 forwards to local port 18888
-- `-N` - No remote command (tunnel only)
-- `-f` - Run in background
-
-### 3. Socat Forwarder (on EC2)
-
-Docker containers can't access `127.0.0.1` on the host. Socat bridges the gap:
-```bash
-socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888
-```
-- Listens on Docker network gateway (`172.18.0.1:18889`)
-- Forwards to SSH tunnel endpoint (`127.0.0.1:18888`)
-
-## Data Flow
-
-1. **Crawler** requests `old.reddit.com`
-2. **Crawler** sends to proxy `172.18.0.1:18889`
-3. **Socat** forwards to `127.0.0.1:18888` (SSH tunnel)
-4. **SSH tunnel** sends to your Mac's port `18888`
-5. **Local proxy** fetches Reddit using your home IP
-6. **Response** flows back the same path
-
-## Setup Instructions
-
-### Start Local Proxy
+Set one of these in `/opt/crypto-sentiment/.env` on EC2:
 
 ```bash
-# Create the proxy script
-cat > /tmp/simple_proxy.py << 'EOF'
-#!/usr/bin/env python3
-"""Simple HTTP CONNECT proxy for tunneling HTTPS requests."""
-import socket
-import threading
-import select
+# Preferred: reuse the searchagentsky.com proxy value
+RESIDENTIAL_PROXY=http://user:pass@proxy.example.com:8080
 
-def handle_client(client_socket):
-    try:
-        request = client_socket.recv(4096).decode('utf-8', errors='ignore')
-        if not request:
-            return
-
-        first_line = request.split('\n')[0]
-        if not first_line.startswith('CONNECT'):
-            client_socket.close()
-            return
-
-        parts = first_line.split()
-        if len(parts) < 2:
-            return
-        host_port = parts[1]
-        if ':' in host_port:
-            host, port = host_port.split(':')
-            port = int(port)
-        else:
-            host, port = host_port, 443
-
-        remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote.settimeout(10)
-        try:
-            remote.connect((host, port))
-        except:
-            client_socket.send(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
-            return
-
-        client_socket.send(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-
-        remote.setblocking(False)
-        client_socket.setblocking(False)
-
-        while True:
-            r, _, _ = select.select([client_socket, remote], [], [], 30)
-            if not r:
-                break
-            for sock in r:
-                try:
-                    data = sock.recv(8192)
-                    if not data:
-                        return
-                    if sock is client_socket:
-                        remote.send(data)
-                    else:
-                        client_socket.send(data)
-                except:
-                    return
-    except:
-        pass
-    finally:
-        try:
-            client_socket.close()
-        except:
-            pass
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(('127.0.0.1', 18888))
-server.listen(10)
-print('HTTP CONNECT proxy running on 127.0.0.1:18888', flush=True)
-
-while True:
-    client, _ = server.accept()
-    threading.Thread(target=handle_client, args=(client,), daemon=True).start()
-EOF
-
-# Run in background
-python3 /tmp/simple_proxy.py &
+# Optional override. If set, this takes precedence over RESIDENTIAL_PROXY.
+PROXY_URL=http://user:pass@proxy.example.com:8080
 ```
 
-### Create SSH Tunnel
+The crawler accepts comma-separated proxy URLs for rotation:
 
 ```bash
-# Replace <EC2_IP> with your EC2 public IP
-ssh -i ~/.ssh/crypto-sentiment-key.pem \
-    -o StrictHostKeyChecking=no \
-    -o ServerAliveInterval=30 \
-    -R 18888:127.0.0.1:18888 \
-    -N -f \
-    ec2-user@<EC2_IP>
+PROXY_URL=http://proxy1.example:8080,http://proxy2.example:8080
 ```
 
-### Start Socat on EC2
+## How It Works
 
-```bash
-ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<EC2_IP> \
-    "nohup socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888 > /tmp/socat.log 2>&1 &"
-```
+1. The crawler requests Reddit through `crypto_sentiment_crawler.crawler.fetcher.Fetcher`.
+2. `Fetcher` detects `reddit.com` and its subdomains, including `old.reddit.com`.
+3. If `PROXY_URL` or `RESIDENTIAL_PROXY` is set, the request uses the proxy.
+4. Non-Reddit sources continue to fetch directly unless `force_proxy=True` is used.
 
-## Quick Restart Script
+## Deployment
 
-Save this as `start_proxy.sh`:
+The release deploy reads `/opt/crypto-sentiment/.env` into the crawler container.
+When a proxy is configured, deploy also stops `wg-quick@wg0` if it is still
+enabled from the old WireGuard setup.
 
-```bash
-#!/bin/bash
-EC2_IP="34.229.95.72"  # Update with your EC2 IP
-KEY="~/.ssh/crypto-sentiment-key.pem"
-
-echo "Starting local proxy..."
-pkill -f "simple_proxy.py" 2>/dev/null
-python3 /tmp/simple_proxy.py &
-sleep 2
-
-echo "Creating SSH tunnel..."
-pkill -f "ssh.*18888.*$EC2_IP" 2>/dev/null
-ssh -i $KEY -o StrictHostKeyChecking=no -o ServerAliveInterval=30 \
-    -R 18888:127.0.0.1:18888 -N -f ec2-user@$EC2_IP
-
-echo "Starting socat on EC2..."
-ssh -i $KEY ec2-user@$EC2_IP \
-    "pkill -f 'socat.*18889' 2>/dev/null; nohup socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888 > /tmp/socat.log 2>&1 &"
-
-echo "Proxy setup complete!"
-```
+For manual Docker Compose runs, `docker-compose.yml` passes both `PROXY_URL` and
+`RESIDENTIAL_PROXY` into the crawler service.
 
 ## Verification
 
-### Test Local Proxy
+From EC2, verify the proxy egress IP:
+
 ```bash
-curl -x http://127.0.0.1:18888 https://httpbin.org/ip
-# Should show your home IP
+set -a; . /opt/crypto-sentiment/.env; set +a
+PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
+curl -x "$PROXY" https://httpbin.org/ip
 ```
 
-### Test from EC2
+Verify Reddit returns crawlable HTML through the proxy:
+
 ```bash
-ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<EC2_IP> \
-    "curl -x http://127.0.0.1:18888 https://httpbin.org/ip"
-# Should show your home IP (not EC2 IP)
+set -a; . /opt/crypto-sentiment/.env; set +a
+PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
+curl -sL -x "$PROXY" \
+  -A "Mozilla/5.0" \
+  "https://old.reddit.com/r/bitcoin/new/" | grep -c "data-timestamp"
 ```
 
-### Test Reddit Access
+The result should be greater than `0`.
+
+Verify the running container received the proxy env:
+
 ```bash
-ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<EC2_IP> \
-    "curl -sL -x http://172.18.0.1:18889 'https://old.reddit.com/r/bitcoin/new/' -H 'User-Agent: Mozilla/5.0' | grep -c 'data-timestamp'"
-# Should return a number > 0
+docker exec crypto-crawler printenv RESIDENTIAL_PROXY
 ```
 
-## Troubleshooting
+## Notes
 
-### Proxy not responding
+The old SSH tunnel and WireGuard setup are no longer required for Reddit. If
+`wg-quick@wg0` is still running, stop it after confirming the residential proxy
+works:
+
 ```bash
-# Check if proxy is running
-ps aux | grep simple_proxy
-
-# Restart proxy
-pkill -f simple_proxy.py
-python3 /tmp/simple_proxy.py &
+sudo systemctl disable --now wg-quick@wg0
 ```
-
-### SSH tunnel disconnected
-```bash
-# Check tunnel
-ps aux | grep "ssh.*18888"
-
-# Recreate tunnel
-ssh -i ~/.ssh/crypto-sentiment-key.pem -R 18888:127.0.0.1:18888 -N -f ec2-user@<EC2_IP>
-```
-
-### Socat not running on EC2
-```bash
-ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<EC2_IP> "ps aux | grep socat"
-
-# Restart socat
-ssh -i ~/.ssh/crypto-sentiment-key.pem ec2-user@<EC2_IP> \
-    "nohup socat TCP-LISTEN:18889,bind=172.18.0.1,fork,reuseaddr TCP:127.0.0.1:18888 &"
-```
-
-## Why Reddit Blocks Cloud IPs
-
-| IP Type | Example | Reddit Access |
-|---------|---------|---------------|
-| Residential | Home ISP IP | Allowed |
-| AWS EC2 | 34.x.x.x, 54.x.x.x | Blocked |
-| GCP | 35.x.x.x | Blocked |
-| Azure | Various | Blocked |
-
-Reddit maintains blocklists of datacenter IP ranges to prevent scraping and bot activity.
