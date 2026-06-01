@@ -1,76 +1,77 @@
-# Residential Proxy Setup for Reddit Access
+# WireGuard Setup for Reddit Access
 
-Reddit blocks AWS/cloud IP addresses. The crawler routes Reddit requests through
-an app-level residential HTTP proxy instead of a host-level WireGuard VPN.
+Reddit blocks AWS/cloud IP addresses. Production uses a WireGuard VPN on the EC2
+host so Docker containers inherit the VPN egress path through host NAT.
 
 ## Configuration
 
-Set one of these in `/opt/crypto-sentiment/.env` on EC2:
+Add the WireGuard values to `/opt/crypto-sentiment/.env` on EC2:
 
 ```bash
-# Preferred: reuse the searchagentsky.com proxy value
-RESIDENTIAL_PROXY=http://user:pass@proxy.example.com:8080
-
-# Optional override. If set, this takes precedence over RESIDENTIAL_PROXY.
-PROXY_URL=http://user:pass@proxy.example.com:8080
+WG_PRIVATE_KEY=your_wireguard_private_key
+WG_ADDRESS=10.x.x.x/32
+WG_DNS=10.64.0.1
+WG_PEER_PUBKEY=server_public_key
+WG_ENDPOINT=server_ip:51820
 ```
 
-The crawler accepts comma-separated proxy URLs for rotation:
+`PROXY_URL` is still supported as an optional crawler override, but it is not
+needed when WireGuard is active.
+
+## Setup
+
+Run the setup script on EC2:
 
 ```bash
-PROXY_URL=http://proxy1.example:8080,http://proxy2.example:8080
+cd /home/ec2-user/crypto_sentiment_crawler
+bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
 ```
 
-## How It Works
-
-1. The crawler requests Reddit through `crypto_sentiment_crawler.crawler.fetcher.Fetcher`.
-2. `Fetcher` detects `reddit.com` and its subdomains, including `old.reddit.com`.
-3. If `PROXY_URL` or `RESIDENTIAL_PROXY` is set, the request uses the proxy.
-4. Non-Reddit sources continue to fetch directly unless `force_proxy=True` is used.
+The script writes `/etc/wireguard/wg0.conf`, starts `wg0`, and enables
+`wg-quick@wg0` on boot.
 
 ## Deployment
 
-The release deploy reads `/opt/crypto-sentiment/.env` into the crawler container.
-When a proxy is configured, deploy also stops `wg-quick@wg0` if it is still
-enabled from the old WireGuard setup.
-
-For manual Docker Compose runs, `docker-compose.yml` passes both `PROXY_URL` and
-`RESIDENTIAL_PROXY` into the crawler service.
+Release deploys set up WireGuard from `/opt/crypto-sentiment/.env` after Docker
+images are pulled and before the crawler starts. The crawler is started with
+`PROXY_URL` and `RESIDENTIAL_PROXY` blank so Reddit traffic uses the host VPN.
 
 ## Verification
 
-From EC2, verify the proxy egress IP:
+Verify the host egress IP:
 
 ```bash
-set -a; . /opt/crypto-sentiment/.env; set +a
-PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
-curl -x "$PROXY" https://httpbin.org/ip
+curl https://httpbin.org/ip
+sudo wg show
 ```
 
-Verify Reddit returns crawlable HTML through the proxy:
+Verify Reddit returns crawlable HTML from EC2:
 
 ```bash
-set -a; . /opt/crypto-sentiment/.env; set +a
-PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
-curl -sL -x "$PROXY" \
-  -A "Mozilla/5.0" \
+curl -sL -A "Mozilla/5.0" \
   "https://old.reddit.com/r/bitcoin/new/" | grep -c "data-timestamp"
 ```
 
 The result should be greater than `0`.
 
-Verify the running container received the proxy env:
+Verify the crawler is not using an app-level proxy:
 
 ```bash
+docker exec crypto-crawler printenv PROXY_URL
 docker exec crypto-crawler printenv RESIDENTIAL_PROXY
 ```
 
-## Notes
+Both commands should print nothing.
 
-The old SSH tunnel and WireGuard setup are no longer required for Reddit. If
-`wg-quick@wg0` is still running, stop it after confirming the residential proxy
-works:
+## Troubleshooting
+
+If Reddit returns `403` or the crawler logs no fresh posts:
 
 ```bash
-sudo systemctl disable --now wg-quick@wg0
+sudo wg show
+sudo systemctl status wg-quick@wg0
+sudo wg-quick down wg0 && sudo wg-quick up wg0
 ```
+
+If Docker pulls or S3 backups fail while the VPN is up, re-run the setup script
+to restore the bypass routes for GitHub and EC2 instance metadata.

@@ -93,52 +93,17 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          RESIDENTIAL_PROXY: ${{ secrets.RESIDENTIAL_PROXY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 20m
-          envs: RESIDENTIAL_PROXY
           script: |
             set -e
 
             echo "========== DEPLOYMENT START: ${{ github.ref_name }} =========="
 
             cd /home/ec2-user/crypto_sentiment_crawler
-
-            # Disable the legacy Reddit VPN before the first GitHub/Docker
-            # network operation. This deploy path now uses an app-level proxy.
-            echo "Disabling legacy WireGuard before network operations."
-            sudo systemctl stop wg-quick@wg0 2>/dev/null || true
-            sudo wg-quick down wg0 2>/dev/null || true
-            sudo systemctl disable wg-quick@wg0 2>/dev/null || true
-
-            # wg-quick can leave the host pointed at VPN DNS after shutdown.
-            # Prefer systemd-resolved recovery because /etc/resolv.conf may be
-            # a read-only managed mount on EC2 images.
-            echo "Restoring EC2 DNS resolver if needed."
-            if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
-              sudo systemctl restart systemd-resolved 2>/dev/null || true
-
-              DEFAULT_IFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
-              if [ -n "$DEFAULT_IFACE" ] && command -v resolvectl >/dev/null 2>&1; then
-                sudo resolvectl revert wg0 2>/dev/null || true
-                sudo resolvectl dns "$DEFAULT_IFACE" 169.254.169.253 1.1.1.1 8.8.8.8 2>/dev/null || true
-                sudo resolvectl domain "$DEFAULT_IFACE" "~." 2>/dev/null || true
-                sudo resolvectl flush-caches 2>/dev/null || true
-              fi
-
-              if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
-                echo "systemd DNS recovery did not resolve GitHub hosts; trying /etc/resolv.conf fallback."
-                if ! sudo sh -c 'printf "nameserver 169.254.169.253\nnameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:2 attempts:3\n" > /etc/resolv.conf' 2>/dev/null; then
-                  echo "WARNING: Could not write /etc/resolv.conf; continuing to final DNS check."
-                fi
-              fi
-            fi
-            getent hosts github.com >/dev/null
-            getent hosts ghcr.io >/dev/null
 
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
@@ -155,19 +120,8 @@ jobs:
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
             CRAWLER_ENV_ARGS=""
-            CRAWLER_SECRET_ENV_ARGS=""
-            if [ -n "$RESIDENTIAL_PROXY" ]; then
-              echo "Residential proxy secret available for crawler."
-              CRAWLER_SECRET_ENV_ARGS="-e RESIDENTIAL_PROXY=$RESIDENTIAL_PROXY"
-            fi
             if [ -f /opt/crypto-sentiment/.env ]; then
               CRAWLER_ENV_ARGS="--env-file /opt/crypto-sentiment/.env"
-              if grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' /opt/crypto-sentiment/.env; then
-                echo "Residential proxy configured; WireGuard is not needed for Reddit."
-                sudo systemctl stop wg-quick@wg0 2>/dev/null || true
-                sudo wg-quick down wg0 2>/dev/null || true
-                sudo systemctl disable wg-quick@wg0 2>/dev/null || true
-              fi
             else
               echo "WARNING: /opt/crypto-sentiment/.env not found; crawler will run without local env config"
             fi
@@ -216,6 +170,15 @@ jobs:
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest crypto-sentiment-crawler:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto-sentiment-frontend:latest
+
+            # Restore host-level VPN for Reddit before starting the crawler.
+            # Keep this after image pulls so GitHub/GHCR access is unaffected.
+            if [ -f /opt/crypto-sentiment/.env ] && grep -q '^WG_PRIVATE_KEY=' /opt/crypto-sentiment/.env; then
+              echo "Setting up WireGuard VPN for Reddit access."
+              bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
+            else
+              echo "WARNING: WireGuard config not found; Reddit may block EC2 crawler traffic."
+            fi
 
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
@@ -269,10 +232,11 @@ jobs:
             docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
               $CRAWLER_ENV_ARGS \
-              $CRAWLER_SECRET_ENV_ARGS \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
+              -e PROXY_URL= \
+              -e RESIDENTIAL_PROXY= \
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 60
 

@@ -79,7 +79,7 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
    sudo chown ec2-user:ec2-user /opt/crypto-sentiment
    ```
 6. **Create `.env` file** at `/opt/crypto-sentiment/.env` with API keys (see `.env.docker.example` for template)
-7. **Configure residential proxy for Reddit** (see below)
+7. **Set up WireGuard VPN for Reddit** (see below)
 8. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
 9. **Set up daily S3 backup cron:**
    ```bash
@@ -89,55 +89,49 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
 
 ---
 
-## Residential Proxy Setup
+## WireGuard VPN Setup
 
-Reddit blocks AWS/datacenter IPs. The crawler now uses an app-level residential
-HTTP proxy for Reddit domains instead of routing the whole host through
-WireGuard.
+Reddit blocks AWS/datacenter IPs. WireGuard runs on the EC2 host and routes
+outbound crawler traffic through the VPN. Docker containers inherit that route
+through host NAT.
 
 ### Setup
 
-1. **Add the proxy to `/opt/crypto-sentiment/.env`** on EC2:
+1. **Add WireGuard config to `/opt/crypto-sentiment/.env`** on EC2:
    ```bash
-   # Preferred: reuse the searchagentsky.com value
-   RESIDENTIAL_PROXY=http://user:pass@proxy.example.com:8080
-
-   # Optional override. If set, this takes precedence over RESIDENTIAL_PROXY.
-   PROXY_URL=http://user:pass@proxy.example.com:8080
+   WG_PRIVATE_KEY=your_wireguard_private_key
+   WG_ADDRESS=10.x.x.x/32
+   WG_DNS=10.64.0.1
+   WG_PEER_PUBKEY=server_public_key
+   WG_ENDPOINT=server_ip:51820
    ```
 
-2. **Disable the old host VPN if it is still enabled:**
+2. **Run the setup script:**
    ```bash
-   sudo systemctl disable --now wg-quick@wg0
+   cd /home/ec2-user/crypto_sentiment_crawler
+   bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
    ```
 
-3. **Deploy the application.** The release deploy passes `/opt/crypto-sentiment/.env`
-   into the crawler container and stops `wg-quick@wg0` automatically when a proxy
-   is configured.
+3. **Deploy the application.** Release deploys also run the setup script after
+   Docker images are pulled and before the crawler starts.
 
 4. **Verify:**
    ```bash
-   set -a; . /opt/crypto-sentiment/.env; set +a
-   PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
-
-   # Should show the residential proxy egress IP
-   curl -x "$PROXY" https://ipinfo.io/ip
+   # Should show the VPN egress IP, not the EC2 IP
+   curl https://ipinfo.io/ip
 
    # Should return a count greater than 0
-   curl -sL -x "$PROXY" \
-     -A "Mozilla/5.0" \
+   curl -sL -A "Mozilla/5.0" \
      https://old.reddit.com/r/cryptocurrency/new/ | grep -c "data-timestamp"
 
-   # The crawler container should have the proxy env
-   docker exec crypto-crawler printenv RESIDENTIAL_PROXY
+   sudo wg show
    ```
 
 ### Behavior
 
-`Fetcher` proxies `reddit.com` and all subdomains, including `old.reddit.com`.
-Other crawler sources continue to fetch directly unless code explicitly forces a
-proxy. `PROXY_URL` is useful if you want a crawler-specific proxy; otherwise use
-the shared `RESIDENTIAL_PROXY` value from searchagentsky.com.
+`Fetcher` does not proxy Reddit by default. Reddit traffic leaves the crawler
+container through the EC2 host VPN. `PROXY_URL` remains available only as an
+explicit override for future non-VPN proxy use.
 
 ---
 
@@ -164,22 +158,17 @@ df -h
 swapon --show
 ```
 
-### Reddit Proxy Issues
+### Reddit VPN Issues
 ```bash
-set -a; . /opt/crypto-sentiment/.env; set +a
-PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
+# Check VPN status
+sudo wg show
+sudo systemctl status wg-quick@wg0
 
-# Confirm proxy env exists on host
-grep -E '^(PROXY_URL|RESIDENTIAL_PROXY)=' /opt/crypto-sentiment/.env
+# Check VPN egress IP
+curl https://ipinfo.io/ip
 
-# Confirm proxy env exists in crawler container
-docker exec crypto-crawler printenv RESIDENTIAL_PROXY
-
-# Check proxy egress IP
-curl -x "$PROXY" https://ipinfo.io/ip
-
-# Check Reddit through proxy
-curl -sL -x "$PROXY" -A "Mozilla/5.0" \
+# Check Reddit through VPN
+curl -sL -A "Mozilla/5.0" \
   https://old.reddit.com/r/bitcoin/new/ | grep -c "data-timestamp"
 ```
 
@@ -189,12 +178,16 @@ Verify the instance can reach EC2 metadata:
 # Should return IAM role info — if it hangs, the route is missing
 curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
 ```
-If it fails and WireGuard is still active, disable the legacy VPN with
-`sudo systemctl disable --now wg-quick@wg0`.
+If it fails, re-run the WireGuard setup script to restore the metadata bypass
+route:
+
+```bash
+bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
+```
 
 ### Dashboard Not Accessible (but SSH works)
-If WireGuard is still active from the old setup, Docker responses may route
-through the VPN. Disable the legacy VPN:
+If Docker response packets route through the VPN, the WireGuard connmark rules
+are missing. Re-run setup:
 ```bash
-sudo systemctl disable --now wg-quick@wg0
+bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
 ```

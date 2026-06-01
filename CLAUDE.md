@@ -40,26 +40,26 @@ The release triggers the deploy workflow automatically. Monitor progress at:
 
 `deploy/push-to-ec2.sh <EC2_IP>` — packages local code, uploads via SCP, rebuilds on EC2. Only use if CI/CD is broken.
 
-## Reddit Access via Residential Proxy
+## Reddit Access via WireGuard VPN
 
-Reddit blocks AWS/EC2 IP addresses. The crawler uses an app-level residential
-proxy for `reddit.com` domains instead of a host-level WireGuard VPN.
+Reddit blocks AWS/EC2 IP addresses. A WireGuard VPN on the EC2 host routes
+outbound crawler traffic through a clean IP.
 
 ### Setup (one-time):
 
-1. Add `RESIDENTIAL_PROXY` to `/opt/crypto-sentiment/.env`, reusing the same value as searchagentsky.com.
-2. Use `PROXY_URL` only if the crawler needs a different proxy; it takes precedence over `RESIDENTIAL_PROXY`.
-3. Disable the legacy VPN if it is still enabled: `sudo systemctl disable --now wg-quick@wg0`.
+1. Add WireGuard config to `/opt/crypto-sentiment/.env` (see `.env.docker.example` for template).
+2. Run `deploy/setup-wireguard.sh /opt/crypto-sentiment/.env` on EC2.
 
-### Verify proxy access:
+### Verify VPN is active:
 
 ```bash
-PROXY="${PROXY_URL:-$RESIDENTIAL_PROXY}"
-curl -x "$PROXY" https://httpbin.org/ip
-curl -sL -x "$PROXY" -A "Mozilla/5.0" \
-  https://old.reddit.com/r/bitcoin/new/ | grep -c "data-timestamp"
+# Should show the VPN egress IP, not the EC2 IP
+curl https://httpbin.org/ip
+
+# Check WireGuard status
+sudo wg show
 ```
 
 ### If crawler shows "No fresh posts" or 403 errors:
-- Confirm `docker exec crypto-crawler printenv RESIDENTIAL_PROXY` returns the proxy URL.
-- Confirm Reddit returns posts through the proxy with the verification command above.
+- VPN may be down: `sudo wg-quick up wg0`.
+- Check status: `sudo systemctl status wg-quick@wg0`.
