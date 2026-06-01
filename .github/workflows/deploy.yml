@@ -93,11 +93,14 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          RESIDENTIAL_PROXY: ${{ secrets.RESIDENTIAL_PROXY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 20m
+          envs: RESIDENTIAL_PROXY
           script: |
             set -e
 
@@ -105,14 +108,10 @@ jobs:
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
-            # If the host still has the legacy Reddit VPN enabled, disable it
-            # before the first GitHub/Docker network operation. GitHub fetches
-            # can fail through the old VPN path before the normal deploy setup
-            # gets a chance to stop wg-quick@wg0.
-            if [ -f /opt/crypto-sentiment/.env ] && grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' /opt/crypto-sentiment/.env; then
-              echo "Residential proxy configured; disabling legacy WireGuard before network operations."
-              sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
-            fi
+            # Disable the legacy Reddit VPN before the first GitHub/Docker
+            # network operation. This deploy path now uses an app-level proxy.
+            echo "Disabling legacy WireGuard before network operations."
+            sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
 
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
@@ -129,6 +128,11 @@ jobs:
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
             CRAWLER_ENV_ARGS=""
+            CRAWLER_SECRET_ENV_ARGS=""
+            if [ -n "$RESIDENTIAL_PROXY" ]; then
+              echo "Residential proxy secret available for crawler."
+              CRAWLER_SECRET_ENV_ARGS="-e RESIDENTIAL_PROXY=$RESIDENTIAL_PROXY"
+            fi
             if [ -f /opt/crypto-sentiment/.env ]; then
               CRAWLER_ENV_ARGS="--env-file /opt/crypto-sentiment/.env"
               if grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' /opt/crypto-sentiment/.env; then
@@ -236,6 +240,7 @@ jobs:
             docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
               $CRAWLER_ENV_ARGS \
+              $CRAWLER_SECRET_ENV_ARGS \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
