@@ -105,6 +105,15 @@ jobs:
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
+            # If the host still has the legacy Reddit VPN enabled, disable it
+            # before the first GitHub/Docker network operation. GitHub fetches
+            # can fail through the old VPN path before the normal deploy setup
+            # gets a chance to stop wg-quick@wg0.
+            if [ -f /opt/crypto-sentiment/.env ] && grep -Eq '^(PROXY_URL|RESIDENTIAL_PROXY)=[^[:space:]]+' /opt/crypto-sentiment/.env; then
+              echo "Residential proxy configured; disabling legacy WireGuard before network operations."
+              sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+            fi
+
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
             git fetch --tags origin
