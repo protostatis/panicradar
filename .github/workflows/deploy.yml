@@ -113,6 +113,13 @@ jobs:
             echo "Disabling legacy WireGuard before network operations."
             sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
 
+            # wg-quick can leave the host pointed at VPN DNS after shutdown.
+            # Restore the EC2 VPC resolver so git fetch and docker pull can
+            # resolve github.com/ghcr.io before the deploy proceeds.
+            echo "Restoring EC2 DNS resolver."
+            sudo sh -c 'printf "nameserver 169.254.169.253\noptions timeout:2 attempts:3\n" > /etc/resolv.conf'
+            getent hosts github.com >/dev/null
+
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
             git fetch --tags origin
