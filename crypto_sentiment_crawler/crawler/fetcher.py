@@ -11,7 +11,9 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Domains that require proxy (blocked from datacenter IPs).
-PROXY_REQUIRED_DOMAINS = {"reddit.com"}
+# Reddit access is handled by the EC2 host WireGuard VPN, so no app-level proxy
+# is required by default. Set PROXY_URL and add domains here only for overrides.
+PROXY_REQUIRED_DOMAINS: set[str] = set()
 
 # Pool of realistic user agents
 USER_AGENTS = [
@@ -83,9 +85,7 @@ class Fetcher:
     Async HTTP fetcher with rate limiting, retries, user-agent rotation, and proxy support.
 
     Proxy Configuration:
-        Set PROXY_URL environment variable for proxy support. If PROXY_URL is
-        unset, RESIDENTIAL_PROXY is used as a fallback so this can share the
-        same residential proxy configuration as searchagentsky.com.
+        Set PROXY_URL environment variable for optional proxy support.
         Examples:
             - HTTP proxy: http://user:pass@proxy.example.com:8080
             - SOCKS5 proxy: socks5://user:pass@proxy.example.com:1080
@@ -93,7 +93,7 @@ class Fetcher:
         Multiple proxies can be comma-separated for rotation:
             PROXY_URL=http://proxy1:8080,http://proxy2:8080
 
-        Proxies are automatically used for blocked domains (Reddit, etc.)
+        Proxies are automatically used for domains listed in PROXY_REQUIRED_DOMAINS.
     """
 
     def __init__(
@@ -115,11 +115,7 @@ class Fetcher:
         self.rate_limiters: dict[str, RateLimiter] = {}
 
         # Proxy configuration
-        proxy_env = (
-            proxy_url
-            or os.environ.get("PROXY_URL")
-            or os.environ.get("RESIDENTIAL_PROXY", "")
-        )
+        proxy_env = proxy_url or os.environ.get("PROXY_URL", "")
         self.proxies = [p.strip() for p in proxy_env.split(",") if p.strip()]
         self.proxy_index = 0
 
