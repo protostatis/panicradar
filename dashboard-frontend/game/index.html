@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07110f" />
+    <title>BlockCoined — A PanicRadar Match-3 Strategy Game</title>
+    <meta name="description" content="Play BlockCoined, a free match-3 strategy game from PanicRadar. Outscore a local computer opponent across three streets using demo credits only." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://panicradar.ai/game/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://panicradar.ai/game/" />
+    <meta property="og:site_name" content="PanicRadar.ai" />
+    <meta property="og:title" content="BlockCoined — Read the board. Beat the panic." />
+    <meta property="og:description" content="A free match-3 strategy game against a local computer opponent. Demo credits only." />
+    <meta property="og:image" content="https://panicradar.ai/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@PanicRadar_AI" />
+    <meta name="twitter:title" content="BlockCoined — Read the board. Beat the panic." />
+    <meta name="twitter:description" content="A free match-3 strategy game from PanicRadar. Demo credits only." />
+    <meta name="twitter:image" content="https://panicradar.ai/og-image.png" />
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "VideoGame",
+      "name": "BlockCoined",
+      "url": "https://panicradar.ai/game/",
+      "description": "A free browser-based match-3 strategy game against a local computer opponent.",
+      "applicationCategory": "Game",
+      "gamePlatform": "Web browser",
+      "playMode": "SinglePlayer",
+      "isAccessibleForFree": true,
+      "publisher": {
+        "@type": "Organization",
+        "name": "PanicRadar.ai",
+        "url": "https://panicradar.ai"
+      }
+    }
+    </script>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-HN1LGJT0FB"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      window.__PANICRADAR_ENABLE_ANALYTICS__ = !['localhost', '127.0.0.1'].includes(window.location.hostname);
+      function gtag(){dataLayer.push(arguments);}
+      if (window.__PANICRADAR_ENABLE_ANALYTICS__) {
+        gtag('js', new Date());
+        gtag('config', 'G-HN1LGJT0FB', { send_page_view: false });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

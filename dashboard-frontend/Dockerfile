@@ -2,7 +2,20 @@
 # Multi-stage build for optimized production image
 
 # ============================================
-# Build Stage
+# Standalone game build stage
+# ============================================
+FROM node:20-alpine AS game-build
+
+WORKDIR /game
+
+COPY game/package*.json ./
+RUN npm ci
+
+COPY game ./
+RUN npm run build
+
+# ============================================
+# Main site build stage
 # ============================================
 FROM node:20-alpine AS build
 
@@ -34,6 +47,9 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy built assets
 COPY --from=build /app/dist /usr/share/nginx/html
+
+# Keep the game isolated from the main React bundle and serve it at /game/.
+COPY --from=game-build /game/dist /usr/share/nginx/html/game
 
 # Expose ports
 EXPOSE 80 443
