@@ -29,6 +29,7 @@ const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
+    { path: '/game/', label: 'Game', standalone: true },
     { path: '/news', label: 'News' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/beliefs', label: 'Beliefs' },
@@ -49,20 +50,24 @@ const Header = () => {
           </Link>
 
           {/* Desktop nav */}
-          <nav className="hidden md:flex gap-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  location.pathname === item.path
-                    ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/70'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+          <nav className="hidden md:flex gap-0.5 lg:gap-1">
+            {navItems.map((item) => {
+              const className = `px-2.5 lg:px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                location.pathname === item.path
+                  ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/70'
+              }`;
+
+              return item.standalone ? (
+                <a key={item.path} href={item.path} className={className}>
+                  {item.label}
+                </a>
+              ) : (
+                <Link key={item.path} to={item.path} className={className}>
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
 
           {/* Mobile hamburger button */}
@@ -89,20 +94,28 @@ const Header = () => {
       {mobileMenuOpen && (
         <nav className="md:hidden border-t border-slate-800 bg-slate-950/95 backdrop-blur-sm">
           <div className="px-4 py-3 space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`block px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
-                  location.pathname === item.path
-                    ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              const className = `block px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                location.pathname === item.path
+                  ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`;
+
+              return item.standalone ? (
+                <a key={item.path} href={item.path} className={className}>
+                  {item.label}
+                </a>
+              ) : (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={className}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </div>
         </nav>
       )}

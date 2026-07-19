@@ -52,7 +52,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: dashboard-frontend/package-lock.json
+          cache-dependency-path: |
+            dashboard-frontend/package-lock.json
+            dashboard-frontend/game/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -61,6 +63,22 @@ jobs:
         run: npm run lint || true
 
       - name: Build
+        run: npm run build
+
+      - name: Install game dependencies
+        working-directory: dashboard-frontend/game
+        run: npm ci
+
+      - name: Lint game
+        working-directory: dashboard-frontend/game
+        run: npm run lint
+
+      - name: Test game
+        working-directory: dashboard-frontend/game
+        run: npm test
+
+      - name: Build game
+        working-directory: dashboard-frontend/game
         run: npm run build
 
   build-docker:
