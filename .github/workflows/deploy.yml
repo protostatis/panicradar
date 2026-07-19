@@ -81,6 +81,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and push game server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard-frontend/game
+          file: ./dashboard-frontend/game/server/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
@@ -165,11 +177,13 @@ jobs:
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest
 
             # Tag images for local use
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest crypto-sentiment-crawler:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto-sentiment-frontend:latest
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest crypto-sentiment-game-server:latest
 
             # Restore host-level VPN for Reddit before starting the crawler.
             # Keep this after image pulls so GitHub/GHCR access is unaffected.
@@ -189,8 +203,8 @@ jobs:
 
             # ========== STOP OLD CONTAINERS ==========
             echo "Stopping old containers..."
-            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals 2>/dev/null || true
-            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals 2>/dev/null || true
+            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server 2>/dev/null || true
+            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server 2>/dev/null || true
 
             # ========== START SERVICES ==========
             echo "Starting API..."
@@ -219,6 +233,35 @@ jobs:
               sleep 2
             done
 
+            echo "Starting game server..."
+            docker run -d --name crypto-game-server --restart unless-stopped \
+              --network crypto-sentiment_crypto-net \
+              --network-alias game-server \
+              --cpus 0.5 \
+              --memory 256m \
+              --pids-limit 50 \
+              -e NODE_ENV=production \
+              -e ALLOWED_ORIGINS=https://panicradar.ai,https://www.panicradar.ai \
+              crypto-sentiment-game-server:latest
+
+            # Wait for game server health
+            echo "Waiting for game server to be healthy..."
+            for i in $(seq 1 15); do
+              GAME_HEALTH=$(docker inspect --format '{{.State.Health.Status}}' crypto-game-server 2>/dev/null || echo "missing")
+              if [ "$GAME_HEALTH" = "healthy" ]; then
+                echo "Game server is healthy!"
+                break
+              fi
+              if [ $i -eq 15 ]; then
+                echo "ERROR: Game server health check failed (status: $GAME_HEALTH)"
+                docker logs crypto-game-server --tail 50
+                exit 1
+              fi
+              sleep 2
+            done
+
+            # Nginx resolves the game-server network alias at startup, so the
+            # upstream container must be healthy before frontend starts.
             echo "Starting frontend..."
             docker run -d --name crypto-frontend --restart unless-stopped \
               -p 80:80 -p 443:443 \
@@ -263,14 +306,14 @@ jobs:
             echo "Verifying all containers are running..."
             sleep 5
 
-            RUNNING=$(docker ps --format '{{.Names}}' | grep -E '^crypto-(api|frontend|crawler|signals)$' | wc -l)
-            if [ "$RUNNING" -ne 4 ]; then
+            RUNNING=$(docker ps --format '{{.Names}}' | grep -E '^crypto-(api|frontend|crawler|signals|game-server)$' | wc -l)
+            if [ "$RUNNING" -ne 5 ]; then
               echo "ERROR: Not all containers are running!"
               docker ps -a
               exit 1
             fi
 
-            echo "All 4 containers running. Checking frontend..."
+            echo "All 5 containers running. Checking frontend..."
             if ! curl -sf -o /dev/null https://localhost --insecure 2>/dev/null; then
               echo "WARNING: Frontend HTTPS check failed (may be normal if cert issue)"
             fi

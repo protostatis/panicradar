@@ -1,0 +1,15 @@
+{
+  "name": "panicradar-blockcoined-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-hardened V2 PvP WebSocket server for PanicRadar BlockCoined (guest-only demo).",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test *.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -81,6 +81,18 @@ jobs:
         working-directory: dashboard-frontend/game
         run: npm run build
 
+      - name: Install game server dependencies
+        working-directory: dashboard-frontend/game/server
+        run: npm ci
+
+      - name: Test game server
+        working-directory: dashboard-frontend/game/server
+        run: npm test
+
+      - name: Check game server entrypoint
+        working-directory: dashboard-frontend/game/server
+        run: node --check index.js
+
   build-docker:
     name: Build Docker Images
     runs-on: ubuntu-latest
@@ -131,5 +143,15 @@ jobs:
           target: production
           push: false
           tags: crypto-sentiment-frontend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build game server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard-frontend/game
+          file: ./dashboard-frontend/game/server/Dockerfile
+          push: false
+          tags: crypto-sentiment-game-server:test
           cache-from: type=gha
           cache-to: type=gha,mode=max

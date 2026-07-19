@@ -329,6 +329,25 @@ export function autoAct(w, actorId) {
 }
 
 /**
+ * End a hand when a player leaves or exceeds an authoritative match deadline.
+ * Unlike a normal betting fold, a forfeit is valid during any active phase.
+ */
+export function forfeit(w, actorId, reason = 'forfeits') {
+  if (!w || w.phase === WAGER_PHASE.COMPLETE || w.settled) return w;
+
+  const actor = w.seats.find((seat) => seat.id === actorId);
+  if (!actor || actor.folded) return w;
+
+  const next = clone(w);
+  const forfeitingSeat = next.seats.find((seat) => seat.id === actorId);
+  forfeitingSeat.folded = true;
+  forfeitingSeat.actedThisStreet = true;
+  pushLog(next, `${forfeitingSeat.name} ${reason}.`);
+
+  return activeSeats(next).length <= 1 ? settle(next) : next;
+}
+
+/**
  * Showdown: pot goes to highest score among non-folded seats; ties split.
  * `scores` is a map { seatId: score }.
  */
