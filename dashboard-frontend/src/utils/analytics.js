@@ -9,6 +9,7 @@ export const GA_EVENTS = {
   NEWS_VIEW: 'news_view',
   NEWS_CTA_CLICK: 'news_cta_click',
   NEWS_SHARE_CLICK: 'news_share_click',
+  GAME_PROMO_CLICK: 'game_promo_click',
 };
 
 export function trackEvent(eventName, params = {}) {

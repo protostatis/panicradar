@@ -141,3 +141,50 @@ pre,
 .animate-ticker:hover {
   animation-play-state: paused;
 }
+
+.game-promo {
+  align-items: center;
+  background: linear-gradient(135deg, #1a1f2e, #0d1117);
+  border: 1px solid #4facfe;
+  border-radius: 999px;
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 4px 20px rgba(79, 172, 254, 0.25), 0 1px 4px rgba(0, 0, 0, 0.4);
+  color: #e6edf3;
+  display: flex;
+  font-size: 0.82rem;
+  font-weight: 600;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.625rem 1rem;
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right, 0px));
+  text-decoration: none;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+  white-space: nowrap;
+  z-index: 900;
+}
+
+.game-promo:hover {
+  box-shadow: 0 6px 28px rgba(79, 172, 254, 0.45), 0 1px 6px rgba(0, 0, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+.game-promo:focus-visible {
+  outline: 2px solid #4facfe;
+  outline-offset: 3px;
+}
+
+.game-promo__icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ticker {
+    animation: none;
+  }
+
+  .game-promo {
+    transition: none;
+  }
+}

@@ -79,6 +79,7 @@ const Landing = () => {
   }, []);
 
   return (
+    <>
     <div className="space-y-20">
       {/* Today's Intelligence Banner + Hero */}
       <div>
@@ -339,6 +340,17 @@ const Landing = () => {
         </div>
       </section>
     </div>
+    {/* BlockCoined game promo — fixed floating button, home page only */}
+    <a
+      href="/game/"
+      onClick={() => trackEvent(GA_EVENTS.GAME_PROMO_CLICK)}
+      className="game-promo"
+      aria-label="Play BlockCoined — a free multiplayer match-3 strategy game"
+    >
+      <span className="game-promo__icon" aria-hidden="true">&#x1FA99;</span>
+      <span>BlockCoined &#8212; Play now</span>
+    </a>
+    </>
   );
 };
 

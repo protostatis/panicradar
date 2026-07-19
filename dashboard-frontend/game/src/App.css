@@ -959,6 +959,299 @@ body {
   .hud-chip { min-width: 0; flex: 1 1 40%; }
 }
 
+/* ---- V2 PvP Lobby ---- */
+
+.match-lobby {
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.match-lobby--opening {
+  padding-top: 20px;
+}
+
+.lobby-kicker {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #6e7681;
+  text-align: center;
+  margin: 0;
+}
+
+.match-lobby-intro {
+  text-align: center;
+}
+
+.lobby-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.lobby-identity strong {
+  display: block;
+  color: #e6edf3;
+  font-size: 0.95rem;
+  margin-top: 2px;
+}
+
+.identity-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(240, 147, 251, 0.15);
+  color: #f093fb;
+}
+
+.identity-id {
+  display: block;
+  font-size: 0.72rem;
+  color: #6e7681;
+  margin-top: 1px;
+}
+
+.challenge-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #161b22;
+  flex-wrap: wrap;
+}
+
+.challenge-card--incoming {
+  border: 1px solid #f5576c;
+  box-shadow: 0 0 0 1px rgba(245, 87, 108, 0.2);
+}
+
+.challenge-card--outgoing {
+  border: 1px solid #4facfe;
+  box-shadow: 0 0 0 1px rgba(79, 172, 254, 0.2);
+}
+
+.challenge-eyebrow {
+  display: block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b949e;
+  margin-bottom: 2px;
+}
+
+.challenge-card strong {
+  display: block;
+  color: #e6edf3;
+  font-size: 0.95rem;
+}
+
+.challenge-card span {
+  display: block;
+  font-size: 0.78rem;
+  color: #8b949e;
+}
+
+.challenge-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.presence-panel {
+  width: 100%;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.presence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.presence-overline {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6e7681;
+}
+
+.presence-head strong {
+  display: block;
+  color: #e6edf3;
+  font-size: 0.95rem;
+}
+
+.presence-available {
+  font-size: 0.8rem;
+  color: #43e97b;
+  font-weight: 600;
+}
+
+.presence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.presence-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #21262d;
+  gap: 10px;
+}
+
+.presence-row:last-child {
+  border-bottom: none;
+}
+
+.presence-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.presence-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.presence-avatar--guest {
+  background: #30363d;
+  color: #8b949e;
+}
+
+.presence-player strong {
+  display: block;
+  color: #e6edf3;
+  font-size: 0.88rem;
+}
+
+.presence-player span {
+  display: block;
+  font-size: 0.72rem;
+  color: #8b949e;
+}
+
+.presence-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.presence-status {
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.presence-status--available {
+  color: #43e97b;
+}
+
+.presence-status--in_match {
+  color: #f4d03f;
+}
+
+.presence-status--challenging {
+  color: #f093fb;
+}
+
+.match-live-pill {
+  background: #161b22;
+  border: 1px solid #43e97b;
+  border-radius: 20px;
+  padding: 3px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #43e97b;
+}
+
+.rematch-status {
+  font-size: 0.8rem;
+  color: #8b949e;
+  margin: 6px 0 0;
+}
+
+/* Swap turn banner for PvP */
+.swap-turn-banner {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 8px auto 4px;
+  background: #161b22;
+  border: 1px solid #f5d742;
+  border-radius: 12px;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.swap-turn-banner--waiting {
+  border-color: #f5576c;
+}
+
+.swap-turn-banner--resolving {
+  border-color: #f093fb;
+  background: rgba(240, 147, 251, 0.1);
+}
+
+.swap-turn-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #f5d742;
+}
+
+.swap-turn-banner--waiting .swap-turn-label {
+  color: #f5576c;
+}
+
+.swap-turn-banner--resolving .swap-turn-label {
+  color: #f093fb;
+}
+
+.swap-turn-banner strong {
+  color: #e6edf3;
+  font-size: 0.9rem;
+}
+
+.swap-turn-time {
+  font-size: 0.78rem;
+  color: #8b949e;
+}
+
 /* ---- Accessibility ---- */
 
 /* Visible focus ring for keyboard navigation */
