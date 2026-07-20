@@ -22,7 +22,7 @@ class RegimeCollector:
     - Alternative.me for Fear & Greed Index
     - CoinGecko for BTC dominance and market cap
     - Binance for funding rates
-    - CryptoCompare for historical prices (volatility calculation)
+    - CoinGecko / Coinbase hourly prices for volatility (no API key)
     """
 
     FEAR_GREED_URL = "https://api.alternative.me/fng/"
@@ -31,7 +31,24 @@ class RegimeCollector:
     BINANCE_FUNDING_URL = "https://www.binance.com/fapi/v1/fundingRate"
     # Alternative: use Coinglass or other funding rate aggregators
     COINGLASS_FUNDING_URL = "https://open-api.coinglass.com/public/v2/funding"
-    CRYPTOCOMPARE_URL = "https://min-api.cryptocompare.com/data/v2/histohour"
+    # Hourly price sources for volatility (no API key required).
+    # CryptoCompare's free histohour endpoint now requires an API key
+    # (HTTP 401), so we use these instead. CoinGecko is primary; Coinbase
+    # is a fallback in case CoinGecko is rate-limited or geo-restricted.
+    COINGECKO_MARKET_CHART_URL = "https://api.coingecko.com/api/v3/coins/{coin}/market_chart"
+    COINBASE_CANDLES_URL = "https://api.exchange.coinbase.com/products/{pair}/candles"
+
+    # Map our coin symbols to CoinGecko ids and Coinbase pairs.
+    COINGECKO_IDS = {
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "SOL": "solana",
+    }
+    COINBASE_PAIRS = {
+        "BTC": "BTC-USD",
+        "ETH": "ETH-USD",
+        "SOL": "SOL-USD",
+    }
 
     def __init__(self):
         self.client: httpx.AsyncClient | None = None
@@ -131,61 +148,100 @@ class RegimeCollector:
         # Return None if all endpoints fail (not an error, just unavailable)
         return {"funding_rate": None}
 
+    async def _fetch_hourly_closes(self, coin: str, hours: int) -> list[float] | None:
+        """
+        Fetch `hours + 1` hourly closing prices for `coin`.
+
+        Tries CoinGecko first, then falls back to Coinbase public candles.
+        Returns a list of closes (oldest -> newest) or None if both fail.
+        """
+        coin = coin.upper()
+
+        # --- Primary: CoinGecko market_chart (hourly) ---
+        coin_id = self.COINGECKO_IDS.get(coin, coin.lower())
+        try:
+            params = {
+                "vs_currency": "usd",
+                "days": max(1, (hours + 1) // 24 + 1),
+                "interval": "hourly",
+            }
+            response = await self.client.get(
+                self.COINGECKO_MARKET_CHART_URL.format(coin=coin_id),
+                params=params,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            prices = payload.get("prices")
+            if prices:
+                # CoinGecko returns [[ts_ms, price], ...], oldest -> newest.
+                return [float(p[1]) for p in prices if p and p[1] is not None]
+        except Exception as e:
+            logger.debug(f"CoinGecko volatility source failed for {coin}: {e}")
+
+        # --- Fallback: Coinbase public candles (granularity = 3600s) ---
+        pair = self.COINBASE_PAIRS.get(coin, f"{coin}-USD")
+        try:
+            response = await self.client.get(
+                self.COINBASE_CANDLES_URL.format(pair=pair),
+                params={"granularity": 3600},
+                headers={"Accept": "application/json"},
+            )
+            response.raise_for_status()
+            candles = response.json()
+            if candles:
+                # Coinbase returns [ts, low, high, open, close, volume],
+                # newest -> oldest. Reverse and take closes.
+                closes = [float(c[4]) for c in candles if c and c[4] is not None]
+                closes.reverse()
+                return closes
+        except Exception as e:
+            logger.debug(f"Coinbase volatility source failed for {coin}: {e}")
+
+        return None
+
     async def calculate_volatility(self, coin: str = "BTC", hours: int = 24) -> dict[str, Any]:
         """
         Calculate realized volatility from hourly returns.
 
-        Uses CryptoCompare hourly data.
+        Uses key-free hourly price sources (CoinGecko, falling back to
+        Coinbase). Previously this used CryptoCompare's histohour endpoint,
+        which now requires an API key (HTTP 401) and produced NULL / N/A in
+        production. Falls back to an error result (stored as NULL) if both
+        sources fail or return insufficient data.
         """
         if not self.client:
             await self.start()
 
         try:
-            params = {
-                "fsym": coin,
-                "tsym": "USD",
-                "limit": hours + 1,
-            }
-            response = await self.client.get(self.CRYPTOCOMPARE_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            prices = [
-                point.get("close")
-                for point in data.get("Data", {}).get("Data", [])
-                if point.get("close")
-            ]
-
-            if len(prices) < 2:
+            closes = await self._fetch_hourly_closes(coin, hours)
+            if not closes or len(closes) < 2:
                 return {"error": "Insufficient price data"}
 
-            # Calculate hourly returns
+            # Hourly simple returns.
             returns = []
-            for i in range(1, len(prices)):
-                if prices[i-1] > 0:
-                    ret = (prices[i] - prices[i-1]) / prices[i-1]
-                    returns.append(ret)
+            for i in range(1, len(closes)):
+                if closes[i - 1] > 0:
+                    returns.append((closes[i] - closes[i - 1]) / closes[i - 1])
 
             if not returns:
                 return {"error": "No returns calculated"}
 
-            # Realized volatility (std of returns, annualized)
+            # Realized volatility over the requested window (as a percentage).
+            # std of hourly returns scaled to the window length (sqrt(n)).
             mean_return = sum(returns) / len(returns)
             variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
             std_dev = math.sqrt(variance)
-
-            # Annualize (hourly to annual: sqrt(24 * 365))
-            annualized_vol = std_dev * math.sqrt(24 * 365) * 100  # as percentage
+            window_vol_pct = std_dev * math.sqrt(len(returns)) * 100
 
             # 7-day trend (if we have enough data)
             trend_7d = None
-            if len(prices) >= 168:  # 7 days of hourly data
-                trend_7d = ((prices[-1] - prices[-168]) / prices[-168]) * 100
+            if len(closes) >= 168:  # 7 days of hourly data
+                trend_7d = ((closes[-1] - closes[-168]) / closes[-168]) * 100
 
             return {
-                "volatility_24h": annualized_vol,
+                "volatility_24h": window_vol_pct,
                 "trend_7d": trend_7d,
-                "current_price": prices[-1] if prices else None,
+                "current_price": closes[-1] if closes else None,
             }
         except Exception as e:
             logger.error(f"Volatility calculation error: {e}")
