@@ -47,7 +47,7 @@ function nextIndex(index, key) {
  * and refill drop-in via CSS keyframes (effects only, so they never fight the
  * slot's translate).
  */
-function Gem({ index, cell, selected, matched, hinted, interactive, onPick, onKeyDown, onFocus, tabIndex, gemRef }) {
+function Gem({ index, cell, selected, matched, hinted, tutMatch, interactive, onPick, onKeyDown, onFocus, tabIndex, gemRef }) {
   const color = GEM_COLORS[cell.type];
   const name = GEM_NAMES[cell.type];
   const icon = ICONS[name];
@@ -67,7 +67,8 @@ function Gem({ index, cell, selected, matched, hinted, interactive, onPick, onKe
         tabIndex={tabIndex}
         aria-label={label}
         aria-pressed={selected}
-        className={`gem ${color}${selected ? ' selected' : ''}${matched ? ' matched' : ''}${hinted ? ' hinted' : ''}`}
+        data-index={index}
+        className={`gem ${color}${selected ? ' selected' : ''}${matched ? ' matched' : ''}${hinted ? ' hinted' : ''}${tutMatch ? ' tut-match' : ''}`}
         onClick={interactive ? () => onPick(index) : undefined}
         onKeyDown={interactive ? onKeyDown : undefined}
         onFocus={interactive ? onFocus : undefined}
@@ -78,10 +79,11 @@ function Gem({ index, cell, selected, matched, hinted, interactive, onPick, onKe
   );
 }
 
-export default function Board({ cells, selected, matchedIndices, hintIndices, interactive, onPick }) {
+export default function Board({ cells, selected, matchedIndices, hintIndices, tutorialHighlight, interactive, onPick }) {
   const refs = useRef([]);
   const [focusIndex, setFocusIndex] = useState(0);
   const hints = hintIndices || [];
+  const tutHL = tutorialHighlight || [];
 
   const handleKeyDown = (event, index) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
@@ -109,6 +111,7 @@ export default function Board({ cells, selected, matchedIndices, hintIndices, in
         selected={selected === i}
         matched={matchedIndices.includes(i)}
         hinted={hints.includes(i)}
+        tutMatch={tutHL.includes(i)}
         interactive={interactive}
         onPick={onPick}
         onKeyDown={(e) => handleKeyDown(e, i)}

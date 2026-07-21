@@ -122,32 +122,68 @@ export function useWagerController(opts = {}) {
   }, []);
 
   const runCascade = useCallback(async (gen, engine, init) => {
+    // Phase 1: visual swap animation
     setCells(engine.cells.map((c) => ({ ...c })));
     await delay(T_SWAP);
-    let matched = init.matchedIndices;
-    let points = 0;
+    if (genRef.current !== gen) return points;
+
+    // Phase 2: find and highlight matches
+    const matched = engine.findMatches();
+    if (matched.length === 0) {
+      // Invalid swap - swap back for visual consistency
+      engine.swapCells(init.i, init.j);
+      setCells(engine.cells.map((c) => ({ ...c })));
+      return 0;
+    }
+
+    // Phase 3: match highlight
+    setMatchedIndices(matched);
+    setPhase('matching');
+    await delay(T_MATCH);
+    if (genRef.current !== gen) return points;
+
+    // Phase 4: gem pop animation
+    playScoreSound();
+    await delay(T_MATCH);
+    if (genRef.current !== gen) return points;
+
+    // Phase 5: run cascade (gravity + fill + chain detection)
+    const cascadeStep = engine.runCascadeStep(matched);
+    setCells(engine.cells.map((c) => ({ ...c })));
+    setMatchedIndices([]);
+    setPhase('cascading');
+    await delay(T_CASCADE);
+    if (genRef.current !== gen) return points;
+
+    // Phase 6: handle chain extensions
+    let totalPoints = matched.length;
+    let nextChain = cascadeStep.chainMatched;
     let safety = 0;
-    while (matched.length > 0 && safety < 20) {
+    while (nextChain.length > 0 && safety < 20) {
       if (genRef.current !== gen) return points;
-      setMatchedIndices(matched);
+      setMatchedIndices(nextChain);
       setPhase('matching');
+      playScoreSound();
       await delay(T_MATCH);
-      const step = engine.runCascadeStep(matched);
-      points += step.points;
-      if (step.points > 0) playScoreSound();
+      if (genRef.current !== gen) return points;
+      const nextStep = engine.runCascadeStep(nextChain);
+      totalPoints += nextStep.points;
       setCells(engine.cells.map((c) => ({ ...c })));
       setMatchedIndices([]);
       setPhase('cascading');
       await delay(T_CASCADE);
-      matched = step.chainMatched;
+      nextChain = nextStep.chainMatched;
       safety++;
     }
+
+    // Phase 7: final cleanup
     if (genRef.current !== gen) return points;
-    if (engine.hasValidMoves() === false) {
+    engine.endTurn();
+    if (!engine.hasValidMoves()) {
       engine.reshuffle();
       setCells(engine.cells.map((c) => ({ ...c })));
     }
-    return points;
+    return totalPoints;
   }, []);
 
   // Scores accumulate per seat across streets for showdown.

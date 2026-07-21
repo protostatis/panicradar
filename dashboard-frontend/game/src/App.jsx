@@ -3,11 +3,13 @@ import './App.css';
 import WagerScreen from './components/WagerScreen';
 import V2PvpLobby from './components/V2PvpLobby';
 import V2PvpScreen from './components/V2PvpScreen';
+import TutorialScreen from './components/TutorialScreen';
 import { V2PvpTransport } from './transports/v2PvpTransport';
 import { trackGameEvent, trackGamePageView } from './utils/analytics';
 
 export default function App() {
   const [playing, setPlaying] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
   const [showPvP, setShowPvP] = useState(false);
   const [v2PvpSession, setV2PvpSession] = useState(null);
   const [v2PvpMatch, setV2PvpMatch] = useState(null);
@@ -85,6 +87,7 @@ export default function App() {
       v2Transport.close();
     }
     setPlaying(false);
+    setShowTutorial(false);
     setShowPvP(false);
     setV2PvpSession(null);
     setV2PvpMatch(null);
@@ -122,6 +125,19 @@ export default function App() {
     );
   }
 
+  // ---- Tutorial ----
+  if (showTutorial) {
+    return (
+      <div className="app">
+        <TutorialScreen
+          onDone={() => { setShowTutorial(false); setPlaying(true); }}
+          onSkip={() => { setShowTutorial(false); setPlaying(true); }}
+        />
+        <button className="btn btn-menu" onClick={backToMenu}>← Menu</button>
+      </div>
+    );
+  }
+
   // ---- PvA game ----
   if (playing) {
     return (
@@ -147,6 +163,17 @@ export default function App() {
         <h1 className="app-title">BlockCoined</h1>
         <p className="app-subtitle">A multiplayer match-3 game of skill — play vs AI or challenge a friend</p>
       </header>
+      <div className="v2-card v2-card--tutorial">
+        <h2 className="v2-card-title">✨ Try the Game</h2>
+        <p className="v2-card-desc">
+          New to BlockCoined? Step through a quick interactive tutorial &mdash; learn
+          how to swap, match, and chain in under a minute. No opponent, no timer,
+          no coins at stake.
+        </p>
+        <button className="btn btn-tutorial" onClick={() => setShowTutorial(true)}>
+          Start Tutorial
+        </button>
+      </div>
       <div className="v2-card">
         <h2 className="v2-card-title">Wagered vs AI</h2>
         <p className="v2-card-desc">
