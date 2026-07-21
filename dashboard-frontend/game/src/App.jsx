@@ -163,9 +163,17 @@ export default function App() {
         <h1 className="app-title">BlockCoined</h1>
         <p className="app-subtitle">A multiplayer match-3 game of skill — play vs AI or challenge a friend</p>
       </header>
-      <button className="btn btn-tutorial" onClick={() => setShowTutorial(true)}>
-        ✨ Try the Game
-      </button>
+      <div className="v2-card v2-card--tutorial">
+        <h2 className="v2-card-title">✨ Try the Game</h2>
+        <p className="v2-card-desc">
+          New to BlockCoined? Step through a quick interactive tutorial &mdash; learn
+          how to swap, match, and chain in under a minute. No opponent, no timer,
+          no coins at stake.
+        </p>
+        <button className="btn btn-tutorial" onClick={() => setShowTutorial(true)}>
+          Start Tutorial
+        </button>
+      </div>
       <div className="v2-card">
         <h2 className="v2-card-title">Wagered vs AI</h2>
         <p className="v2-card-desc">

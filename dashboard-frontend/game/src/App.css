@@ -45,6 +45,10 @@ body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   text-align: center;
 }
+.v2-card--tutorial {
+  border-color: #ffd54a;
+  box-shadow: 0 0 0 1px rgba(255, 213, 74, 0.15), 0 10px 30px rgba(0, 0, 0, 0.35);
+}
 .v2-card-title {
   margin: 0;
   font-size: 1.35rem;
@@ -1070,7 +1074,6 @@ body {
 
 /* Landing page tutorial button */
 .btn-tutorial {
-  margin-top: 14px;
   background: linear-gradient(135deg, #ffd54a, #ff9800);
   color: #1a1a2e;
   border: none;
