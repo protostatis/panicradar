@@ -277,7 +277,6 @@ export function useWagerController(opts = {}) {
     (async () => {
       const points = await runCascade(gen, engine, init);
       if (genRef.current !== gen) return;
-      engine.endTurn();
       scoreRef.current[actorId] = (scoreRef.current[actorId] || 0) + (points || 0);
        const next = recordStreetMove(w, actorId, scoreRef.current);
        setW(next);
@@ -335,7 +334,6 @@ export function useWagerController(opts = {}) {
     setPhase('swapping');
     const points = await runCascade(gen, engine, init);
     if (genRef.current !== gen) return;
-    engine.endTurn();
     scoreRef.current[actorId] = (scoreRef.current[actorId] || 0) + (points || 0);
     const next = recordStreetMove(w, actorId, scoreRef.current);
     setW(next);
