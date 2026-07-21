@@ -187,7 +187,7 @@ export function useTutorialController() {
       genRef.current += 1;
       // Restore board to pre-swap state from snapshot
       if (savedBoardRef.current) {
-        engine.cells = savedBoardRef.current;
+        engine.cells = savedBoardRef.current.map((c) => c.clone());
         syncCells(engine);
       }
       stepRef.current = 1;
@@ -317,10 +317,15 @@ export function useTutorialController() {
         if (hasChain) {
           setMessage('Chain! New gems fell in and matched again — free bonus points!');
         } else {
-          // Try to find a board with a chain
+          // Search for a chain-producing move without leaving a probe board in play.
+          const boardBeforeSearch = engine.cells.map((c) => c.clone());
+          const nextIdBeforeSearch = engine._nextId;
+          const scoreBeforeSearch = engine.score;
           let found = false;
           for (let attempt = 0; attempt < 10; attempt++) {
             engine.initBoard();
+            const candidateBoard = engine.cells.map((c) => c.clone());
+            const candidateNextId = engine._nextId;
             syncCells(engine);
             const moves = engine.getValidMoves();
             for (const [a, b] of moves) {
@@ -329,20 +334,28 @@ export function useTutorialController() {
               if (matches.length > 0) {
                 const firstStep = engine.runCascadeStep(matches);
                 if (firstStep.chainMatched.length > 0) {
-                  engine.swapCells(a, b); // swap back
+                  engine.cells = candidateBoard.map((c) => c.clone());
+                  engine._nextId = candidateNextId;
+                  engine.score = scoreBeforeSearch;
                   syncCells(engine);
                   showHints(engine, [a, b]);
                   setMessage('Try another swap — watch what happens after the gems pop!');
                   found = true;
                   break;
                 }
-                engine.swapCells(a, b); // swap back
+                engine.cells = candidateBoard.map((c) => c.clone());
+                engine._nextId = candidateNextId;
+                engine.score = scoreBeforeSearch;
               }
               if (found) break;
             }
             if (found) break;
           }
           if (!found) {
+            engine.cells = boardBeforeSearch;
+            engine._nextId = nextIdBeforeSearch;
+            engine.score = scoreBeforeSearch;
+            syncCells(engine);
             setMessage('Sometimes falling gems match too — that\'s a chain combo!');
           }
         }
@@ -383,7 +396,6 @@ export function useTutorialController() {
       engine.initBoard();
     }
     engineRef.current = engine;
-    if (typeof window !== 'undefined') window.__tutEngine = engine;
 
     setStep(0);
     stepRef.current = 0;

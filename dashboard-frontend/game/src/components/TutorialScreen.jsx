@@ -13,11 +13,12 @@ import { useTutorialController } from '../game/useTutorialController';
 
 export default function TutorialScreen({ onDone, onSkip }) {
   const c = useTutorialController();
+  const { start, reset } = c;
 
   useEffect(() => {
-    c.start();
-    return () => c.reset();
-  }, []); // eslint-disable-line
+    start();
+    return reset;
+  }, [start, reset]);
 
   return (
     <div className="game-screen tutorial-screen">
