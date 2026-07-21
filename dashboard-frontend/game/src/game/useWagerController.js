@@ -125,7 +125,7 @@ export function useWagerController(opts = {}) {
     // Phase 1: visual swap animation
     setCells(engine.cells.map((c) => ({ ...c })));
     await delay(T_SWAP);
-    if (genRef.current !== gen) return points;
+    if (genRef.current !== gen) return 0;
 
     // Phase 2: find and highlight matches
     const matched = engine.findMatches();
@@ -140,12 +140,12 @@ export function useWagerController(opts = {}) {
     setMatchedIndices(matched);
     setPhase('matching');
     await delay(T_MATCH);
-    if (genRef.current !== gen) return points;
+    if (genRef.current !== gen) return 0;
 
     // Phase 4: gem pop animation
     playScoreSound();
     await delay(T_MATCH);
-    if (genRef.current !== gen) return points;
+    if (genRef.current !== gen) return 0;
 
     // Phase 5: run cascade (gravity + fill + chain detection)
     const cascadeStep = engine.runCascadeStep(matched);
@@ -153,19 +153,19 @@ export function useWagerController(opts = {}) {
     setMatchedIndices([]);
     setPhase('cascading');
     await delay(T_CASCADE);
-    if (genRef.current !== gen) return points;
+    if (genRef.current !== gen) return 0;
 
     // Phase 6: handle chain extensions
     let totalPoints = matched.length;
     let nextChain = cascadeStep.chainMatched;
     let safety = 0;
     while (nextChain.length > 0 && safety < 20) {
-      if (genRef.current !== gen) return points;
+      if (genRef.current !== gen) return totalPoints;
       setMatchedIndices(nextChain);
       setPhase('matching');
       playScoreSound();
       await delay(T_MATCH);
-      if (genRef.current !== gen) return points;
+      if (genRef.current !== gen) return totalPoints;
       const nextStep = engine.runCascadeStep(nextChain);
       totalPoints += nextStep.points;
       setCells(engine.cells.map((c) => ({ ...c })));
@@ -177,7 +177,7 @@ export function useWagerController(opts = {}) {
     }
 
     // Phase 7: final cleanup
-    if (genRef.current !== gen) return points;
+    if (genRef.current !== gen) return totalPoints;
     engine.endTurn();
     if (!engine.hasValidMoves()) {
       engine.reshuffle();

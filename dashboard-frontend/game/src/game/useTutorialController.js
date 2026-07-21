@@ -179,7 +179,6 @@ export function useTutorialController() {
     const engine = engineRef.current;
     if (!engine || lockRef.current) return;
 
-    const gen = genRef.current;
     const currentStep = stepRef.current;
 
     // ── Step 0: click during demo — skip to step 1 ──
