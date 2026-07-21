@@ -2,8 +2,12 @@
 
 The game engine, wagering reducer, controller, components, styles, and binary
 assets (coin icons + score sound) are synchronized from
-`protostatis/blockcoined2` through commit `e6c98a7`
-(`fix: restore V2 PvP cascade effects`), based on the PvP merge at `54862d5`.
+`protostatis/blockcoined2` through commit `ff4d798`
+(`feat: complete tutorial animation flow and unified cascade system`),
+based on the PvP merge at `54862d5` and the cascade-fix at `e6c98a7`.
+
+**Upstream HEAD at sync:** `ff4d798` on `origin/fix/v2-pvp-presentation` (not merged to `master`).
+**Last sync check:** 2026-07-20.
 
 ## Integrated
 
@@ -23,6 +27,8 @@ assets (coin icons + score sound) are synchronized from
   challenges, and server-authoritative V2WagerRoom match flow
 - Server-authored cascade traces for presentation-only PvP board animation
 - Rematch consensus flow with both-players-must-agree semantics
+- Step-by-step ELI5 tutorial (swap → match → chain → free play) with auto-animated demo
+- Unified 7-phase cascade animation (swap → match → pop → cascade → chains → cleanup) across all modes
 
 ## Excluded
 
@@ -62,6 +68,29 @@ included, as they are either unreachable or out of scope:
   check, strict origin allowlist, per-IP/per-socket rate limits, heartbeat,
   graceful shutdown, dead-board reshuffle, and deadline/disconnect
   forfeit/settlement policies
+
+## Sync process
+
+When a new upstream change lands, follow these steps on a **feature branch**:
+
+1. **Fetch upstream** — `gh api repos/protostatis/blockcoined2/git/ref/heads/master` to get new HEAD.
+2. **Pin the old commit** — verify `e6c98a7` is an ancestor of the new HEAD.
+3. **Diff old → new** — `gh api repos/protostatis/blockcoined2/compare/e6c98a7...<NEW_SHA>` and classify every changed file as:
+   - **Imported** — clean port (game engine, components, styles, assets)
+   - **Excluded** — skip (legacy modes, Google OAuth, EOS, OpenRouter UI)
+   - **Adapted** — manually merge (files listed in Adaptations above)
+4. **Commit changes** — update client and `server/` atomically in a single commit.
+5. **Update this file** — bump the canonical commit SHA, add the tree hash, update date.
+6. **Verify** — run all checks:
+   ```
+   cd server && npm test && node --check index.js
+   cd ..  && CI=true npm test -- --watchAll=false
+   npm run build
+   ```
+   Then two-browser PvP smoke test: lobby → challenge → swap → cascade → bet → showdown → rematch.
+7. **Open PR** into `panicradar/main` with a summary of upstream changes and any adaptations applied.
+
+> **Never** use `git subtree pull`, automatic cherry-pick, or `git merge` — the adaptations in this directory (Vite build, guest-only auth, origin allowlist, etc.) will silently break.
 
 ## License
 

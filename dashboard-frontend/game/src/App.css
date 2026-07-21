@@ -517,6 +517,17 @@ body {
   z-index: 15 !important;
 }
 
+/* Tutorial step 0: show which coins are "lined up" as a match. */
+.gem.tut-match {
+  box-shadow: 0 0 0 3px #43e97b, 0 0 22px rgba(67, 233, 123, 0.75);
+  animation: tutMatchPulse 1.2s ease-in-out infinite;
+  z-index: 14 !important;
+}
+@keyframes tutMatchPulse {
+  0%, 100% { box-shadow: 0 0 0 3px #43e97b, 0 0 14px rgba(67, 233, 123, 0.5); }
+  50%      { box-shadow: 0 0 0 5px #2dd36f, 0 0 34px rgba(67, 233, 123, 0.95); }
+}
+
 /* Tutorial / hint highlight: pulsing ring to show a coin can be swapped. */
 .gem.hinted {
   box-shadow: 0 0 0 3px #ffd54a, 0 0 22px rgba(255, 213, 74, 0.75);
@@ -920,6 +931,164 @@ body {
 }
 .sound-toggle:hover {
   background: rgba(255, 255, 255, 0.16);
+}
+
+/* ---- ELI5 Tutorial ---- */
+
+.tutorial-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 12px 20px;
+  gap: 10px;
+}
+
+/* Step indicator dots */
+.tut-steps {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.tut-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2a3140;
+  border: 2px solid #3a4250;
+  transition: all 0.3s ease;
+}
+.tut-dot--active {
+  background: #ffd54a;
+  border-color: #ffd54a;
+  box-shadow: 0 0 8px rgba(255, 213, 74, 0.5);
+}
+.tut-dot--done {
+  background: #43e97b;
+  border-color: #43e97b;
+  box-shadow: 0 0 6px rgba(67, 233, 123, 0.4);
+}
+
+/* Step title */
+.tut-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ffd54a, #ff9800);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-align: center;
+}
+
+/* Instruction card */
+.tut-card {
+  background: linear-gradient(180deg, #161b26, #11151d);
+  border: 1px solid #2a3140;
+  border-radius: 12px;
+  padding: 14px 18px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+}
+.tut-instruction {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #e6edf3;
+  line-height: 1.5;
+}
+.tut-tip {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: #8b949e;
+  font-style: italic;
+}
+
+/* Score badge */
+.tut-score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(67, 233, 123, 0.1);
+  border: 1px solid rgba(67, 233, 123, 0.3);
+  border-radius: 20px;
+  padding: 4px 14px;
+}
+.tut-score-label {
+  font-size: 0.78rem;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tut-score-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #43e97b;
+}
+
+/* Dynamic message */
+.tut-message {
+  font-size: 0.92rem;
+  color: #c9d1d9;
+  text-align: center;
+  padding: 6px 14px;
+  background: rgba(255, 213, 74, 0.08);
+  border-radius: 8px;
+  max-width: 400px;
+}
+.tut-message--free {
+  background: rgba(67, 233, 123, 0.08);
+}
+
+/* Action buttons */
+.tut-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Play vs AI CTA (in tutorial) */
+.tut-play-btn {
+  max-width: 260px;
+}
+
+/* Skip button */
+.btn-skip {
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-skip:hover {
+  color: #c9d1d9;
+  border-color: #4a5568;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Landing page tutorial button */
+.btn-tutorial {
+  margin-top: 14px;
+  background: linear-gradient(135deg, #ffd54a, #ff9800);
+  color: #1a1a2e;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  max-width: 340px;
+  transition: filter 0.15s, transform 0.1s;
+}
+.btn-tutorial:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.btn-tutorial:active {
+  transform: translateY(0);
 }
 
 /* ---- Mobile-friendly board scaling ----
