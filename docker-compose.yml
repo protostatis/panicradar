@@ -159,29 +159,6 @@ services:
       - crypto-net
 
   # ============================================
-  # Belief Auto-Updater - Updates Bayesian beliefs
-  # ============================================
-  belief-auto:
-    build:
-      context: .
-      target: base
-      args:
-        - TORCH_BASE_IMAGE=${TORCH_BASE_IMAGE:-ghcr.io/protostatis/crypto-sentiment-torch-base:latest}
-    container_name: crypto-belief-auto
-    restart: unless-stopped
-    command: ["uv", "run", "python", "-m", "crypto_sentiment_crawler.analysis.belief_auto_updater", "--interval", "30", "--quiet"]
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    environment:
-      - DATABASE_PATH=/app/data/sentiment.db
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    depends_on:
-      - api
-    networks:
-      - crypto-net
-
-  # ============================================
   # Gap Backfill - Fill missing daily data
   # ============================================
   gap-backfill:

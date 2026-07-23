@@ -105,9 +105,36 @@ CREATE TABLE IF NOT EXISTS source_weights (
     alpha FLOAT,
     beta FLOAT,
     sample_size INTEGER,
+    belief_version INTEGER,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_source_weights_source ON source_weights(source);
+
+CREATE TABLE IF NOT EXISTS source_weight_snapshots (
+    belief_version INTEGER NOT NULL,
+    source VARCHAR(50) NOT NULL,
+    weight FLOAT NOT NULL,
+    accuracy FLOAT,
+    is_contrarian BOOLEAN DEFAULT FALSE,
+    alpha FLOAT,
+    beta FLOAT,
+    sample_size INTEGER,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (belief_version, source)
+);
+CREATE INDEX IF NOT EXISTS idx_source_weight_snapshots_version
+ON source_weight_snapshots(belief_version);
+
+CREATE TABLE IF NOT EXISTS belief_publications (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    belief_version INTEGER NOT NULL,
+    published_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE VIEW IF NOT EXISTS active_source_weights AS
+SELECT sw.*
+FROM source_weight_snapshots sw
+JOIN belief_publications bp ON bp.belief_version = sw.belief_version;
 
 -- Confounders (Fear & Greed, VIX, etc.)
 CREATE TABLE IF NOT EXISTS confounders (
@@ -125,6 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_confounders_timestamp ON confounders(timestamp);
 MIGRATIONS = [
     "ALTER TABLE sentiment_raw ADD COLUMN content_hash VARCHAR(64);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_raw_hash ON sentiment_raw(content_hash);",
+    "ALTER TABLE source_weights ADD COLUMN belief_version INTEGER;",
 ]
 
 

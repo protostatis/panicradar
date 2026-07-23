@@ -15,6 +15,15 @@ def get_db_connection(db_path: str = "data/sentiment.db") -> sqlite3.Connection:
     return conn
 
 
+def get_published_weight_table(conn: sqlite3.Connection) -> str:
+    """Use versioned weights when the database has been migrated."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?",
+        ("active_source_weights",),
+    ).fetchone()
+    return "active_source_weights" if row else "source_weights"
+
+
 def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
     """Get the latest aggregated sentiment metrics from user_sentiment_scores, weighted by learned beliefs.
 
@@ -25,6 +34,8 @@ def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
 
     Uses rolling windows with fallback: 4 hours -> 24 hours -> 7 days
     """
+    weight_table = get_published_weight_table(conn)
+
     # Try progressively longer windows until we find data
     for hours in [4, 24, 168]:  # 4h, 24h, 7 days
         cursor = conn.execute(
@@ -65,7 +76,7 @@ def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
                 MAX(sa.latest_timestamp) as latest_timestamp,
                 SUM(sa.sample_count) as sample_count
             FROM source_averages sa
-            LEFT JOIN source_weights sw ON sa.source = sw.source
+            LEFT JOIN {weight_table} sw ON sa.source = sw.source
             """
         )
         row = cursor.fetchone()
@@ -309,9 +320,10 @@ def get_fear_greed_history(conn: sqlite3.Connection, days: int = 30) -> list[dic
 
 
 def get_source_weights(conn: sqlite3.Connection) -> list[dict]:
-    """Get source accuracy rankings from source_weights table."""
+    """Get source accuracy rankings from the published weight snapshot."""
+    weight_table = get_published_weight_table(conn)
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             source,
             weight,
@@ -319,7 +331,7 @@ def get_source_weights(conn: sqlite3.Connection) -> list[dict]:
             is_contrarian,
             sample_size,
             last_updated
-        FROM source_weights
+        FROM {weight_table}
         ORDER BY weight DESC
         """
     )

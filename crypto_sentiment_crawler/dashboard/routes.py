@@ -22,6 +22,7 @@ from .queries import (
     get_latest_sentiment,
     get_price_change,
     get_price_history,
+    get_published_weight_table,
     get_reddit_panic_score,
     get_sentiment_history,
     get_source_sentiment_history,
@@ -250,20 +251,31 @@ async def get_bayesian_beliefs():
     """
     state = load_bayesian_beliefs(STATE_PATH)
 
-    # Load accuracy data from source_weights table and per-source crawl counts from DB
+    # Load accuracy data from the published weight snapshot and per-source crawl counts.
     conn = get_db_connection(DB_PATH)
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT source, accuracy, is_contrarian FROM source_weights"
-        )
-        source_weights = {
-            row["source"]: {
-                "accuracy": row["accuracy"],
-                "is_contrarian": bool(row["is_contrarian"]),
+        weight_table = get_published_weight_table(conn)
+        if weight_table == "active_source_weights":
+            cursor.execute("SELECT belief_version FROM belief_publications WHERE id = 1")
+            publication = cursor.fetchone()
+            published_version = publication["belief_version"] if publication else None
+        else:
+            published_version = state.get("belief_version")
+
+        if published_version == state.get("belief_version"):
+            cursor.execute(
+                f"SELECT source, accuracy, is_contrarian FROM {weight_table}"
+            )
+            source_weights = {
+                row["source"]: {
+                    "accuracy": row["accuracy"],
+                    "is_contrarian": bool(row["is_contrarian"]),
+                }
+                for row in cursor.fetchall()
             }
-            for row in cursor.fetchall()
-        }
+        else:
+            source_weights = {}
 
         # Get per-source crawl counts from sentiment_raw (has source column)
         cursor.execute(

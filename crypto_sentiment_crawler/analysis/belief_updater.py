@@ -9,6 +9,7 @@ Uses user_sentiment_scores.final_score which is filtered sentiment
 """
 
 import asyncio
+import copy
 import json
 import os
 from collections import defaultdict
@@ -19,6 +20,7 @@ import numpy as np
 from scipy import stats
 
 from ..logging_config import logger
+from ..state_lock import StateFileLock
 from ..storage.db import Database
 
 
@@ -246,6 +248,9 @@ async def update_orchestrator_beliefs(
     state_path: str = "data/orchestrator_state.json",
     db_path: str = "data/sentiment.db",
     lookback_days: int = 90,
+    *,
+    base_beliefs: dict | None = None,
+    persist_state: bool = True,
 ) -> dict:
     """
     Main function to update orchestrator beliefs based on observed performance.
@@ -254,25 +259,51 @@ async def update_orchestrator_beliefs(
         state_path: Path to orchestrator state JSON.
         db_path: Path to SQLite database.
         lookback_days: Number of days of history to consider (default 90).
+        base_beliefs: Live snapshot to use in compute-only mode.
+        persist_state: Write JSON state for CLI/legacy use. Scheduler-driven
+            updates set this to False and let CrawlerOrchestrator persist.
     """
     logger.info("=" * 60)
     logger.info("UPDATING BAYESIAN BELIEFS")
     logger.info("=" * 60)
 
-    # Load current state
-    state_file = Path(state_path)
-    if state_file.exists():
-        with open(state_file) as f:
-            state = json.load(f)
-    else:
-        state = {"beliefs": {}, "baseline_informativeness": 0.5, "total_crawls": 0}
+    if base_beliefs is not None and persist_state:
+        raise ValueError("base_beliefs requires persist_state=False")
 
-    current_beliefs = state.get("beliefs", {})
+    # Legacy CLI runs must not overwrite a live orchestrator's state.
+    state_file = Path(state_path)
+    state_lock = StateFileLock(state_file) if persist_state else None
+    if state_lock:
+        state_lock.acquire(blocking=False)
+
+    try:
+        # Load current state only for the legacy CLI/write path.
+        if persist_state and state_file.exists():
+            with open(state_file) as f:
+                state = json.load(f)
+        else:
+            state = {"beliefs": {}, "baseline_informativeness": 0.5, "total_crawls": 0}
+
+        if not persist_state and base_beliefs is None:
+            raise ValueError("base_beliefs is required when persist_state=False")
+
+        current_beliefs = copy.deepcopy(
+            base_beliefs if base_beliefs is not None else state.get("beliefs", {})
+        )
+    except Exception:
+        if state_lock:
+            state_lock.release()
+        raise
     logger.info(f"Loaded {len(current_beliefs)} existing beliefs")
 
     # Connect to database
     db = Database(Path(db_path))
-    await db.connect()
+    try:
+        await db.connect()
+    except Exception:
+        if state_lock:
+            state_lock.release()
+        raise
 
     try:
         # Compute source accuracy with configurable lookback (Change 6)
@@ -282,29 +313,50 @@ async def update_orchestrator_beliefs(
         # Update beliefs
         updated_beliefs = update_belief_priors(current_beliefs, source_accuracy)
 
-        # Change 5: Increment belief version
-        state['belief_version'] = state.get('belief_version', 0) + 1
-        state["beliefs"] = updated_beliefs
-        state["last_belief_update"] = datetime.now(timezone.utc).isoformat()
+        if persist_state:
+            state["belief_version"] = state.get("belief_version", 0) + 1
+            state["belief_revision"] = state.get(
+                "belief_revision",
+                state["belief_version"] - 1,
+            ) + 1
+            state["beliefs"] = updated_beliefs
+            state["last_belief_update"] = datetime.now(timezone.utc).isoformat()
 
-        # Change 5: Atomic write via temp file + os.replace
-        tmp_path = state_file.with_suffix('.tmp')
-        with open(tmp_path, "w") as f:
-            json.dump(state, f, indent=4)
-        os.replace(tmp_path, state_file)
+            from .source_weights import (
+                compute_weights_from_beliefs,
+                print_weights_table,
+                save_weights_to_db,
+            )
 
-        logger.info(f"Saved {len(updated_beliefs)} updated beliefs (version {state['belief_version']})")
+            weights = compute_weights_from_beliefs(updated_beliefs)
+            await save_weights_to_db(
+                db,
+                weights,
+                belief_version=state["belief_version"],
+                publish=False,
+            )
+            await _refit_gp_from_state(state, db, updated_beliefs)
 
-        # Update source weights for inference
-        from .source_weights import (
-            compute_weights_from_beliefs,
-            save_weights_to_db,
-            print_weights_table,
-        )
-
-        weights = compute_weights_from_beliefs(updated_beliefs)
-        await save_weights_to_db(db, weights)
-        logger.info(f"Updated {len(weights)} source weights")
+            tmp_path = state_file.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(state, f, indent=4)
+            os.replace(tmp_path, state_file)
+            logger.info(
+                "Saved %d updated beliefs (version %d)",
+                len(updated_beliefs),
+                state["belief_version"],
+            )
+            await save_weights_to_db(
+                db,
+                weights,
+                belief_version=state["belief_version"],
+                publish=True,
+            )
+            logger.info(
+                "Updated %d source weights from belief version %d",
+                len(weights),
+                state["belief_version"],
+            )
 
         # Print summary
         print("\n" + "=" * 60)
@@ -332,21 +384,19 @@ async def update_orchestrator_beliefs(
 
         print("=" * 60)
 
-        # Print weights table
-        print_weights_table(weights)
-
-        # Refit GP hyperparameters if GP state exists
-        await _refit_gp_from_state(state, state_file, db, updated_beliefs)
+        if persist_state:
+            print_weights_table(weights)
 
         return updated_beliefs
 
     finally:
         await db.close()
+        if state_lock:
+            state_lock.release()
 
 
 async def _refit_gp_from_state(
     state: dict,
-    state_file: Path,
     db: Database,
     beliefs: dict,
 ) -> None:
@@ -399,8 +449,6 @@ async def _refit_gp_from_state(
                 "scaler_params": extractor.scaler_params,
                 "last_gp_fit": datetime.now(timezone.utc).isoformat(),
             }
-            with open(state_file, "w") as f:
-                json.dump(state, f, indent=4)
             logger.info(
                 f"GP hyperparameters reoptimized: "
                 f"l={result['hyperparameters']['length_scale']:.3f}, "

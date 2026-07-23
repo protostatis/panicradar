@@ -5,7 +5,9 @@ This is the main loop that ties the decision layer to the execution layer.
 """
 
 import asyncio
+import copy
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +22,7 @@ from .crawler.pipeline import CrawledContent, RedditPipeline
 from .crawler.sources import DEFAULT_SOURCES, SourceConfig, get_all_sources
 from .logging_config import logger
 from .processing.user_sentiment import MIN_HUMAN_COMMENTS, UserSentimentScorer, count_human_comments
+from .state_lock import StateFileLock
 from .storage.db import Database
 from .storage.models import PriceData, SentimentRaw
 
@@ -44,6 +47,8 @@ class OrchestratorState:
     baseline_informativeness: float = 0.5
     last_causal_update: str | None = None
     last_belief_update: str | None = None
+    belief_version: int = 0
+    belief_revision: int = 0
     total_crawls: int = 0
 
     # GP state
@@ -57,6 +62,8 @@ class OrchestratorState:
             "baseline_informativeness": self.baseline_informativeness,
             "last_causal_update": self.last_causal_update,
             "last_belief_update": self.last_belief_update,
+            "belief_version": self.belief_version,
+            "belief_revision": self.belief_revision,
             "total_crawls": self.total_crawls,
         }
         if self.gp_hyperparameters is not None:
@@ -75,6 +82,8 @@ class OrchestratorState:
             baseline_informativeness=data.get("baseline_informativeness", 0.5),
             last_causal_update=data.get("last_causal_update"),
             last_belief_update=data.get("last_belief_update"),
+            belief_version=data.get("belief_version", 0),
+            belief_revision=data.get("belief_revision", data.get("belief_version", 0)),
             total_crawls=data.get("total_crawls", 0),
             gp_hyperparameters=gp.get("hyperparameters"),
             gp_scaler_params=gp.get("scaler_params"),
@@ -120,6 +129,10 @@ class CrawlerOrchestrator:
         self.feature_extractor = SourceFeatureExtractor(db_path=str(db.db_path))
         self._gp_eval_counter = 0
         self._belief_lock = asyncio.Lock()  # Guards belief_store modifications
+        self._belief_update_lock = asyncio.Lock()
+        self._state_write_lock = asyncio.Lock()
+        self._state_file_lock = StateFileLock(self.state_path)
+        self._initialized = False
 
         # Crawlers
         self.fetcher = Fetcher()
@@ -136,29 +149,47 @@ class CrawlerOrchestrator:
     async def initialize(self) -> None:
         """Initialize all components."""
         logger.info("Initializing orchestrator...")
+        self._state_file_lock.acquire(blocking=False)
 
-        # Load or create state
-        await self._load_state()
+        try:
+            # Load or create state
+            await self._load_state()
+            loaded_beliefs = bool(self.state.beliefs)
 
-        # Initialize beliefs for all sources
-        await self._initialize_beliefs()
+            # Initialize beliefs for all sources
+            await self._initialize_beliefs()
 
-        # Try to set up GP-enhanced bandit
-        bandit = await self._try_init_gp_bandit()
-        self.bandit = bandit or CrawlBandit(self.belief_store)
+            if loaded_beliefs:
+                await self._republish_loaded_weights()
 
-        # Start fetcher
-        await self.fetcher.start()
-        self.pipeline = ContentPipeline(self.fetcher)
-        self.reddit_pipeline = RedditPipeline(self.fetcher)
+            # Try to set up GP-enhanced bandit
+            bandit = await self._try_init_gp_bandit()
+            self.bandit = bandit or CrawlBandit(self.belief_store)
+
+            # Start fetcher
+            await self.fetcher.start()
+            self.pipeline = ContentPipeline(self.fetcher)
+            self.reddit_pipeline = RedditPipeline(self.fetcher)
+            self._initialized = True
+        except Exception:
+            self._state_file_lock.release()
+            raise
 
         logger.info(f"Initialized with {len(self.sources)} sources")
 
     async def shutdown(self) -> None:
         """Clean shutdown."""
-        await self._save_state()
-        if self.fetcher:
-            await self.fetcher.close()
+        if not self._initialized:
+            return
+
+        self._initialized = False
+        try:
+            if self._state_file_lock.is_held:
+                await self._save_state()
+            if self.fetcher:
+                await self.fetcher.close()
+        finally:
+            self._state_file_lock.release()
         logger.info("Orchestrator shutdown complete")
 
     async def _load_state(self) -> None:
@@ -184,18 +215,28 @@ class CrawlerOrchestrator:
                 logger.warning(f"Could not load state: {e}")
 
     async def _save_state(self) -> None:
-        """Save state to disk."""
-        self.state.beliefs = self.belief_store.to_dict()
+        """Atomically persist the complete orchestrator state."""
+        async with self._belief_lock:
+            await self._save_state_locked()
 
-        # Save GP state if available
-        if self.gp_model is not None:
-            gp_dict = self.gp_model.to_dict()
-            self.state.gp_hyperparameters = gp_dict.get("hyperparameters")
-            self.state.gp_scaler_params = self.feature_extractor.scaler_params
+    async def _save_state_locked(self) -> None:
+        """Persist state while the caller holds ``_belief_lock``."""
+        async with self._state_write_lock:
+            self.state.beliefs = self.belief_store.to_dict()
 
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.state_path, "w") as f:
-            json.dump(self.state.to_dict(), f, indent=2)
+            # Save GP state if available
+            if self.gp_model is not None:
+                gp_dict = self.gp_model.to_dict()
+                self.state.gp_hyperparameters = gp_dict.get("hyperparameters")
+                self.state.gp_scaler_params = self.feature_extractor.scaler_params
+
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.state_path.with_name(
+                f".{self.state_path.name}.{os.getpid()}.tmp"
+            )
+            with open(tmp_path, "w") as f:
+                json.dump(self.state.to_dict(), f, indent=2)
+            os.replace(tmp_path, self.state_path)
         logger.debug("State saved")
 
     async def _initialize_beliefs(self) -> None:
@@ -218,44 +259,149 @@ class CrawlerOrchestrator:
                     f"β={belief.beta:.2f}, mean={belief.mean:.3f}"
                 )
 
-    async def apply_belief_snapshot(self, belief_data: dict) -> None:
+    async def _republish_loaded_weights(self) -> None:
+        """Repair the database publication for the state snapshot loaded at startup."""
+        from .analysis.source_weights import compute_weights_from_beliefs
+
+        weights = compute_weights_from_beliefs(self.belief_store.to_dict())
+        await self._stage_source_weights(weights, self.state.belief_version)
+        await self._sync_source_weights(weights, self.state.belief_version)
+
+    async def snapshot_beliefs(self) -> tuple[dict, int]:
+        """Return an isolated belief snapshot and its optimistic-lock revision."""
+        async with self._belief_lock:
+            return copy.deepcopy(self.belief_store.to_dict()), self.state.belief_revision
+
+    async def apply_belief_snapshot(
+        self,
+        belief_data: dict,
+        *,
+        expected_revision: int | None = None,
+    ) -> int | None:
+        """Serialize staged snapshot publication across all callers."""
+        async with self._belief_update_lock:
+            return await self._apply_belief_snapshot(
+                belief_data,
+                expected_revision=expected_revision,
+            )
+
+    async def _apply_belief_snapshot(
+        self,
+        belief_data: dict,
+        *,
+        expected_revision: int | None = None,
+    ) -> int | None:
         """Atomically apply a belief snapshot from the scheduled batch updater.
 
         Args:
             belief_data: Dict of source -> belief-serialized dict, as produced
                          by the scheduled belief updater.
+            expected_revision: Snapshot revision used by the updater. A changed
+                live revision rejects the stale result instead of losing a crawl.
         """
+        from .analysis.source_weights import compute_weights_from_beliefs
+
         async with self._belief_lock:
-            # Preserve source status fields that only the orchestrator manages
-            for source, new_data in belief_data.items():
-                existing = self.belief_store.beliefs.get(source)
-                if existing:
-                    new_data["status"] = existing.status
-                    new_data["last_success_at"] = (
-                        existing.last_success_at.isoformat()
-                        if existing.last_success_at else None
-                    )
-                    new_data["first_empty_at"] = (
-                        existing.first_empty_at.isoformat()
-                        if existing.first_empty_at else None
-                    )
-                    new_data["next_probe_at"] = (
-                        existing.next_probe_at.isoformat()
-                        if existing.next_probe_at else None
-                    )
-                    new_data["consecutive_empty_crawls"] = existing.consecutive_empty_crawls
+            snapshot_revision = self.state.belief_revision
+            if expected_revision is not None and snapshot_revision != expected_revision:
+                logger.info(
+                    "Rejected stale belief snapshot: expected revision %d, live revision %d",
+                    expected_revision,
+                    snapshot_revision,
+                )
+                return None
 
-            new_store = SourceBeliefStore.from_dict(belief_data)
+            snapshot = self._merge_belief_snapshot(belief_data)
+            version = self.state.belief_version + 1
+            weights = compute_weights_from_beliefs(snapshot)
+
+        # Commit a complete weight version before publishing its matching JSON
+        # version. A failed or stale publish leaves these rows unreachable.
+        await self._stage_source_weights(weights, version)
+
+        async with self._belief_lock:
+            if self.state.belief_revision != snapshot_revision:
+                logger.info(
+                    "Rejected stale belief snapshot after weight sync: expected revision %d, "
+                    "live revision %d",
+                    snapshot_revision,
+                    self.state.belief_revision,
+                )
+                return None
+
+            snapshot = self._merge_belief_snapshot(belief_data)
+            new_store = SourceBeliefStore.from_dict(snapshot)
             self.belief_store.beliefs = new_store.beliefs
-            self.state.beliefs = belief_data
+            self.state.beliefs = self.belief_store.to_dict()
+            self.state.belief_version = version
+            self.state.belief_revision += 1
             self.state.last_belief_update = datetime.now(timezone.utc).isoformat()
+            await self._save_state_locked()
 
-            if isinstance(self.bandit, GPBandit):
-                await self._refit_gp()
+        await self._sync_source_weights(weights, version)
 
-            logger.info(
-                f"Applied belief snapshot: {len(belief_data)} sources"
-            )
+        if isinstance(self.bandit, GPBandit):
+            await self._refit_gp()
+            await self._save_state()
+
+        logger.info(
+            "Applied belief snapshot: %d sources (version %d)",
+            len(snapshot),
+            version,
+        )
+        return version
+
+    def _merge_belief_snapshot(self, belief_data: dict) -> dict:
+        """Merge batch-owned analytical fields with live lifecycle fields."""
+        snapshot = copy.deepcopy(belief_data)
+        for source, new_data in snapshot.items():
+            existing = self.belief_store.beliefs.get(source)
+            if existing:
+                new_data["status"] = existing.status
+                new_data["last_success_at"] = (
+                    existing.last_success_at.isoformat()
+                    if existing.last_success_at else None
+                )
+                new_data["first_empty_at"] = (
+                    existing.first_empty_at.isoformat()
+                    if existing.first_empty_at else None
+                )
+                new_data["next_probe_at"] = (
+                    existing.next_probe_at.isoformat()
+                    if existing.next_probe_at else None
+                )
+                new_data["consecutive_empty_crawls"] = existing.consecutive_empty_crawls
+
+        # Retain sources added outside the updater's snapshot.
+        for source, existing in self.belief_store.beliefs.items():
+            snapshot.setdefault(source, existing.to_dict())
+        return snapshot
+
+    async def _sync_source_weights(self, weights: dict, belief_version: int) -> None:
+        """Publish weights derived from an accepted belief snapshot."""
+        from .analysis.source_weights import save_weights_to_db
+
+        await save_weights_to_db(
+            self.db,
+            weights,
+            belief_version=belief_version,
+        )
+        logger.info(
+            "Updated %d source weights from belief version %d",
+            len(weights),
+            belief_version,
+        )
+
+    async def _stage_source_weights(self, weights: dict, belief_version: int) -> None:
+        """Stage a complete weight snapshot before publishing its state version."""
+        from .analysis.source_weights import save_weights_to_db
+
+        await save_weights_to_db(
+            self.db,
+            weights,
+            belief_version=belief_version,
+            publish=False,
+        )
 
     async def _try_init_gp_bandit(self) -> GPBandit | None:
         """Try to initialize a GPBandit. Returns None if not enough data."""
@@ -387,11 +533,15 @@ class CrawlerOrchestrator:
         if not self.bandit:
             raise RuntimeError("Orchestrator not initialized")
 
-        # Select source
-        available = list(self.sources.keys())
-        selection = self.bandit.select_source(available)
-        source_name = selection.source
-        source_config = self.sources[source_name]
+        # Selection can initialize beliefs for newly discovered sources.
+        async with self._belief_lock:
+            known_sources = set(self.belief_store.beliefs)
+            available = list(self.sources.keys())
+            selection = self.bandit.select_source(available)
+            if set(self.belief_store.beliefs) != known_sources:
+                self.state.belief_revision += 1
+            source_name = selection.source
+            source_config = self.sources[source_name]
 
         logger.info(
             f"Selected: {source_name} "
@@ -404,45 +554,48 @@ class CrawlerOrchestrator:
 
         if not contents:
             # Penalize empty crawl so the bandit learns to avoid dry sources
-            belief = self.belief_store.get(source_name)
-            was_probe = (belief.status == "inactive")
-            belief.record_empty_crawl(penalty=0.3)
-            logger.info(
-                f"Empty crawl from {source_name} "
-                f"(consecutive={belief.consecutive_empty_crawls}, "
-                f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
-            )
-            # Mark source inactive after 24h of continuous empty crawls
-            if (belief.status == "active"
-                    and belief.first_empty_at is not None
-                    and belief.consecutive_empty_crawls >= 6):
-                hours_empty = (
-                    datetime.now(timezone.utc) - belief.first_empty_at
-                ).total_seconds() / 3600
-                if hours_empty >= 24:
-                    belief.status = "inactive"
+            async with self._belief_lock:
+                belief = self.belief_store.get(source_name)
+                was_probe = (belief.status == "inactive")
+                belief.record_empty_crawl(penalty=0.3)
+                logger.info(
+                    f"Empty crawl from {source_name} "
+                    f"(consecutive={belief.consecutive_empty_crawls}, "
+                    f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
+                )
+                # Mark source inactive after 24h of continuous empty crawls
+                if (belief.status == "active"
+                        and belief.first_empty_at is not None
+                        and belief.consecutive_empty_crawls >= 6):
+                    hours_empty = (
+                        datetime.now(timezone.utc) - belief.first_empty_at
+                    ).total_seconds() / 3600
+                    if hours_empty >= 24:
+                        belief.status = "inactive"
+                        belief.next_probe_at = (
+                            datetime.now(timezone.utc) + timedelta(hours=24)
+                        )
+                        logger.warning(
+                            f"Source {source_name} marked inactive after "
+                            f"{belief.consecutive_empty_crawls} empty crawls over "
+                            f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
+                        )
+                # Reschedule probe after failed inactive-source probe
+                elif was_probe:
                     belief.next_probe_at = (
                         datetime.now(timezone.utc) + timedelta(hours=24)
                     )
-                    logger.warning(
-                        f"Source {source_name} marked inactive after "
-                        f"{belief.consecutive_empty_crawls} empty crawls over "
-                        f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
+                    logger.info(
+                        f"Probe of inactive source {source_name} was empty. "
+                        f"Next probe at {belief.next_probe_at}."
                     )
-            # Reschedule probe after failed inactive-source probe
-            elif was_probe:
-                belief.next_probe_at = (
-                    datetime.now(timezone.utc) + timedelta(hours=24)
-                )
-                logger.info(
-                    f"Probe of inactive source {source_name} was empty. "
-                    f"Next probe at {belief.next_probe_at}."
-                )
+                self.state.belief_revision += 1
             return []
 
         # Successful crawl — reset empty counter via dedicated method
-        belief = self.belief_store.get(source_name)
-        belief.record_successful_crawl()
+        async with self._belief_lock:
+            belief = self.belief_store.get(source_name)
+            belief.record_successful_crawl()
 
         # Get current price for later evaluation
         price_data = await self._get_current_price("BTC")

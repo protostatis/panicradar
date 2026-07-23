@@ -361,8 +361,8 @@ jobs:
 
             # ========== STOP OLD CONTAINERS ==========
             echo "Stopping old containers..."
-            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server 2>/dev/null || true
-            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server 2>/dev/null || true
+            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server crypto-belief-auto 2>/dev/null || true
+            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server crypto-belief-auto 2>/dev/null || true
 
             # ========== START SERVICES ==========
             echo "Starting API..."

@@ -152,6 +152,7 @@ class SignalService:
     async def check_signals(self) -> Optional[Signal]:
         """Check current conditions for signals."""
         try:
+            self._load_source_weights()
             sentiment_history, price_history, multi_dim = await self._load_data()
 
             if len(sentiment_history) < 10 or len(price_history) < 24:
@@ -189,6 +190,7 @@ class SignalService:
 
     async def get_market_summary(self) -> dict:
         """Get current market summary without requiring a signal."""
+        self._load_source_weights()
         sentiment_history, price_history, multi_dim = await self._load_data()
 
         if len(sentiment_history) < 5 or len(price_history) < 2:

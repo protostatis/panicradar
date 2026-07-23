@@ -15,6 +15,7 @@ import asyncio
 import signal
 import sys
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,6 +29,29 @@ from .crawler.sources import get_all_sources
 from .logging_config import logger
 from .orchestrator import CrawlerOrchestrator
 from .storage.db import Database
+
+
+def _tracked_job(job):
+    """Track a scheduler job so shutdown can drain it without cancellation."""
+
+    @wraps(job)
+    async def wrapped(self, *args, **kwargs):
+        if self._shutting_down:
+            return None
+
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_jobs.add(task)
+            self._jobs_idle.clear()
+        try:
+            return await job(self, *args, **kwargs)
+        finally:
+            if task is not None:
+                self._active_jobs.discard(task)
+                if not self._active_jobs:
+                    self._jobs_idle.set()
+
+    return wrapped
 
 
 class CrawlerScheduler:
@@ -60,6 +84,13 @@ class CrawlerScheduler:
         self.onchain_collector: OnChainFreeCollector | None = None
 
         self._running = False
+        self._shutting_down = False
+        self._crawl_job_lock = asyncio.Lock()
+        self._evaluation_job_lock = asyncio.Lock()
+        self._belief_update_lock = asyncio.Lock()
+        self._active_jobs: set[asyncio.Task] = set()
+        self._jobs_idle = asyncio.Event()
+        self._jobs_idle.set()
         self._stats = {
             "crawls": 0,
             "price_updates": 0,
@@ -97,6 +128,14 @@ class CrawlerScheduler:
         """Clean shutdown."""
         logger.info("Shutting down scheduler...")
         self._running = False
+        self._shutting_down = True
+
+        if self.scheduler.running:
+            self.scheduler.pause()
+
+        # Do not let AsyncIOScheduler cancel jobs while they hold the database
+        # or an orchestrator lock; paused scheduling prevents new work.
+        await self._jobs_idle.wait()
 
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
@@ -121,8 +160,19 @@ class CrawlerScheduler:
 
         logger.info("Scheduler shutdown complete")
 
+    @_tracked_job
     async def _job_crawl(self) -> None:
         """Job: Crawl using Bayesian selection."""
+        if self._shutting_down:
+            return
+
+        async with self._crawl_job_lock:
+            if self._shutting_down:
+                return
+            await self._run_crawl_job()
+
+    async def _run_crawl_job(self) -> None:
+        """Run the serialized crawl job."""
         try:
             content = await self.orchestrator.select_and_crawl()
             if content:
@@ -131,6 +181,7 @@ class CrawlerScheduler:
             logger.error(f"Crawl job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_price(self) -> None:
         """Job: Collect price data."""
         try:
@@ -140,8 +191,19 @@ class CrawlerScheduler:
             logger.error(f"Price job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_evaluate(self) -> None:
         """Job: Evaluate pending outcomes and update beliefs."""
+        if self._shutting_down:
+            return
+
+        async with self._evaluation_job_lock:
+            if self._shutting_down:
+                return
+            await self._run_evaluation_job()
+
+    async def _run_evaluation_job(self) -> None:
+        """Run the serialized outcome evaluation job."""
         try:
             evaluated = await self.orchestrator.evaluate_pending_outcomes()
             if evaluated > 0:
@@ -165,6 +227,7 @@ class CrawlerScheduler:
             logger.error(f"Evaluation job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_fear_greed(self) -> None:
         """Job: Collect Fear & Greed index."""
         try:
@@ -173,6 +236,7 @@ class CrawlerScheduler:
             logger.error(f"Fear & Greed job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_confounders(self) -> None:
         """Job: Collect confounder variables for causal inference."""
         try:
@@ -186,6 +250,7 @@ class CrawlerScheduler:
             logger.error(f"Confounder job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_onchain(self) -> None:
         """Job: Collect on-chain metrics from free APIs."""
         try:
@@ -195,20 +260,54 @@ class CrawlerScheduler:
             logger.error(f"On-chain job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_belief_update(self) -> None:
         """Job: Recompute source accuracy, sync source_weights, and reload live bandit."""
+        if self._shutting_down:
+            return
+
+        async with self._belief_update_lock:
+            if self._shutting_down:
+                return
+            await self._run_belief_update()
+
+    async def _run_belief_update(self) -> None:
+        """Run the serialized belief snapshot update."""
         try:
             from .analysis.belief_updater import update_orchestrator_beliefs
 
-            updated_beliefs = await update_orchestrator_beliefs()
-            if self.orchestrator and updated_beliefs:
-                await self.orchestrator.apply_belief_snapshot(updated_beliefs)
+            if self.orchestrator:
+                for attempt in range(3):
+                    base_beliefs, revision = await self.orchestrator.snapshot_beliefs()
+                    updated_beliefs = await update_orchestrator_beliefs(
+                        db_path=str(self.orchestrator.db.db_path),
+                        base_beliefs=base_beliefs,
+                        persist_state=False,
+                    )
+                    applied_version = await self.orchestrator.apply_belief_snapshot(
+                        updated_beliefs,
+                        expected_revision=revision,
+                    )
+                    if applied_version is not None:
+                        break
+                    logger.info(
+                        "Belief snapshot changed during update; retrying (%d/3)",
+                        attempt + 1,
+                    )
+                else:
+                    logger.warning("Skipped belief update after repeated concurrent changes")
+                    return
+            else:
+                # Preserve standalone scheduler/CLI behavior for tests and
+                # callers that do not own an initialized orchestrator.
+                await update_orchestrator_beliefs()
             self._stats["belief_updates"] += 1
             logger.info("Belief update, source_weights sync, and bandit reload complete")
         except Exception as e:
             logger.error(f"Belief update job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_discovery(self) -> None:
         """Job: Discover new crypto subreddits (weekly)."""
         try:
@@ -250,6 +349,7 @@ class CrawlerScheduler:
             logger.error(f"Discovery job error: {e}")
             self._stats["errors"] += 1
 
+    @_tracked_job
     async def _job_stats(self) -> None:
         """Job: Log statistics periodically."""
         uptime = datetime.now(timezone.utc) - self._stats["started_at"]
@@ -363,6 +463,7 @@ class CrawlerScheduler:
         await self._job_confounders()
         await self._job_onchain()
         await self._job_crawl()
+        await self._job_belief_update()
 
         logger.info(
             f"Starting scheduler with intervals: "
