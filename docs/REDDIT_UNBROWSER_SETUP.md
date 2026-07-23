@@ -128,6 +128,9 @@ launchctl print "gui/$(id -u)/ai.panicradar.reddit-cookie-solver"
 launchctl print "gui/$(id -u)/ai.panicradar.reddit-cookie-tunnel"
 ```
 
+The tunnel entrypoint removes only its fixed stale EC2 socket before each
+supervised reconnect, so a prior unclean SSH exit does not block recovery.
+
 ## Verification
 
 On EC2, verify socket reachability without requesting cookies:
