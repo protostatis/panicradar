@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .analysis.outcomes import (
+    evaluate_outcome,
+    get_pending_outcomes,
+    write_outcome,
+)
 from .bayesian import CrawlBandit, GPBandit, SourceBeliefStore, UtilityScorer
 from .bayesian.cold_start import compute_baseline_informativeness, initialize_source_belief
 from .bayesian.feature_extraction import SourceFeatureExtractor
@@ -26,7 +31,11 @@ from .storage.models import PriceData, SentimentRaw
 
 @dataclass
 class CrawlOutcome:
-    """Tracks a crawl for later utility evaluation."""
+    """Tracks a crawl for later utility evaluation.
+
+    Kept for backward compatibility with saved state files. New outcomes
+    are persisted to the prediction_outcomes ledger table instead.
+    """
 
     content: CrawledContent
     price_at_crawl: float
@@ -37,7 +46,12 @@ class CrawlOutcome:
 
 @dataclass
 class OrchestratorState:
-    """Persistent state for the orchestrator."""
+    """Persistent state for the orchestrator.
+
+    Note: pending_outcomes is no longer used for evaluation — the
+    prediction_outcomes ledger table is the source of truth. The field
+    is retained only for backward compatibility with saved state files.
+    """
 
     beliefs: dict = field(default_factory=dict)
     pending_outcomes: list = field(default_factory=list)
@@ -131,7 +145,6 @@ class CrawlerOrchestrator:
 
         # State
         self.state = OrchestratorState()
-        self.pending_outcomes: list[CrawlOutcome] = []
 
     async def initialize(self) -> None:
         """Initialize all components."""
@@ -446,6 +459,7 @@ class CrawlerOrchestrator:
 
         # Get current price for later evaluation
         price_data = await self._get_current_price("BTC")
+        now = datetime.now(timezone.utc)
         price = price_data.price_usd if price_data else 0.0
         stored_count = 0
 
@@ -457,14 +471,22 @@ class CrawlerOrchestrator:
                 stored_count += 1
                 self.state.total_crawls += 1
 
-                # Queue first stored post for belief evaluation
+                # Write outcome to persistent ledger (first stored post only)
                 if stored_count == 1:
-                    outcome = CrawlOutcome(
-                        content=content,
-                        price_at_crawl=price,
-                        timestamp=datetime.now(timezone.utc),
+                    target_timestamp = now + timedelta(hours=self.eval_lag_hours)
+                    await write_outcome(
+                        db=self.db,
+                        source=source_name,
+                        signal_timestamp=now,
+                        target_timestamp=target_timestamp,
+                        calibrated_score=content.sentiment_score,
+                        price_before=price,
+                        price_before_timestamp=now,
                     )
-                    self.pending_outcomes.append(outcome)
+                    logger.debug(
+                        f"Wrote outcome for {source_name}: "
+                        f"score={content.sentiment_score}, target={target_timestamp.isoformat()}"
+                    )
 
             # Compute immediate novelty (for all crawled content)
             text = content.content or content.title or ""
@@ -628,59 +650,70 @@ class CrawlerOrchestrator:
 
     async def evaluate_pending_outcomes(self) -> int:
         """
-        Evaluate pending outcomes against actual price movements.
-        Returns number of outcomes evaluated.
+        Evaluate pending outcomes from the persistent ledger against actual
+        price movements. Returns number of outcomes evaluated.
         """
-        if not self.pending_outcomes:
-            return 0
-
         now = datetime.now(timezone.utc)
-        evaluated_count = 0
+
+        # Read pending outcomes from the persistent ledger
+        pending = await get_pending_outcomes(self.db, now=now)
+        if not pending:
+            return 0
 
         # Get current price
         price_data = await self._get_current_price("BTC")
         current_price = price_data.price_usd if price_data else 0.0
+        evaluated_count = 0
 
-        for outcome in self.pending_outcomes:
-            if outcome.evaluated:
-                continue
+        for row in pending:
+            outcome_id = row["id"]
+            source = row["source"]
+            score = row["calibrated_score"]
+            price_before = row["price_before"]
 
-            # Check if enough time has passed
-            hours_elapsed = (now - outcome.timestamp).total_seconds() / 3600
-            if hours_elapsed < self.eval_lag_hours:
-                continue
+            # Determine predicted direction from score
+            if score is not None and score > 0.05:
+                direction = "up"
+            elif score is not None and score < -0.05:
+                direction = "down"
+            else:
+                direction = "flat"
 
-            # Skip if sentiment was never scored (e.g. scoring failed)
-            if outcome.content.sentiment_score is None:
-                outcome.evaluated = True
-                continue
+            # Determine correctness from actual price movement
+            if price_before and current_price:
+                price_change = current_price - price_before
+                price_gap_seconds = (
+                    now - datetime.fromisoformat(row["signal_timestamp"])
+                ).total_seconds()
 
-            # Compute utility (for monitoring/diagnostics only — does NOT modify beliefs)
-            content_text = outcome.content.content or outcome.content.title or ""
-            result = self.utility_scorer.compute_utility(
-                content=content_text,
-                sentiment_score=outcome.content.sentiment_score,
-                price_before=outcome.price_at_crawl,
+                if direction == "up" and price_change > 0:
+                    correct = True
+                elif direction == "down" and price_change < 0:
+                    correct = True
+                elif direction == "flat" and abs(price_change) / price_before < 0.005:
+                    correct = True
+                else:
+                    correct = False
+            else:
+                correct = False
+                price_gap_seconds = None
+
+            await evaluate_outcome(
+                db=self.db,
+                outcome_id=outcome_id,
                 price_after=current_price,
-                add_to_recent=False,  # Already added during crawl
-            )
-
-            outcome.utility = result["utility"]
-            outcome.evaluated = True
-
-            logger.info(
-                f"Evaluated {outcome.content.source}: "
-                f"utility={result['utility']:.3f} "
-                f"(acc={result['accuracy']:.1f}, nov={result['novelty']:.3f})"
+                price_after_timestamp=now,
+                correct=correct,
+                direction=direction,
+                price_gap_seconds=price_gap_seconds,
             )
 
             evaluated_count += 1
-
-        # Remove old evaluated outcomes
-        self.pending_outcomes = [
-            o for o in self.pending_outcomes
-            if not o.evaluated or (now - o.timestamp).total_seconds() < 86400
-        ]
+            logger.info(
+                f"Evaluated {source}: "
+                f"direction={direction}, correct={correct}, "
+                f"price_before={price_before}, price_after={current_price}"
+            )
 
         # Refit GP periodically
         if evaluated_count > 0:
@@ -764,11 +797,12 @@ class CrawlerOrchestrator:
                 f"n={belief.total_crawls})"
             )
 
-    def get_statistics(self) -> dict:
+    async def get_statistics(self) -> dict:
         """Get orchestrator statistics."""
+        pending = await get_pending_outcomes(self.db)
         return {
             "total_crawls": self.state.total_crawls,
-            "pending_evaluations": len([o for o in self.pending_outcomes if not o.evaluated]),
+            "pending_evaluations": len(pending),
             "baseline_informativeness": self.state.baseline_informativeness,
             "bandit_stats": self.bandit.get_statistics() if self.bandit else {},
             "source_rankings": self.bandit.get_exploitation_ranking() if self.bandit else [],
