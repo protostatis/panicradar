@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -203,7 +204,7 @@ class Database:
         content_hash = self._compute_content_hash(data.source, data.raw_data)
 
         # Check if already exists
-        cursor = await self.conn.execute(
+        await self.conn.execute(
             "SELECT id FROM sentiment_raw WHERE content_hash = ?",
             (content_hash,),
         )
@@ -346,37 +347,40 @@ class Database:
     ) -> list[dict]:
         """Atomically claim pending outcomes for evaluation.
 
-        Sets evaluated_at = 'claiming' in a transaction to prevent
-        concurrent workers from evaluating the same rows. Only rows
-        with evaluated_at IS NULL are eligible.
+        Marks rows with a unique claim token so concurrent workers cannot
+        evaluate the same outcomes. Only the rows claimed by this call are
+        returned.
 
         Returns the claimed rows.
         """
         now = now or datetime.now(timezone.utc)
-        cursor = await self.conn.execute(
+        claim_token = f"claim:{now.isoformat()}:{uuid.uuid4().hex}"
+        await self.conn.execute(
             """
             UPDATE prediction_outcomes
-            SET evaluated_at = 'claiming'
+            SET evaluated_at = ?
             WHERE target_timestamp < ?
               AND price_after IS NULL
               AND abstained = FALSE
               AND evaluated_at IS NULL
             """,
-            (now.isoformat(),),
+            (claim_token, now.isoformat()),
         )
-        await self.conn.commit()
 
-        # Fetch the rows that were just claimed
+        # Fetch only rows claimed by this worker. A generic "claiming" marker
+        # would allow a concurrent worker to process someone else's outcomes.
         cursor = await self.conn.execute(
             """
             SELECT id, source, signal_timestamp, target_timestamp,
                    calibrated_score, price_before, price_before_timestamp
             FROM prediction_outcomes
-            WHERE evaluated_at = 'claiming'
+            WHERE evaluated_at = ?
             ORDER BY signal_timestamp ASC
-            """
+            """,
+            (claim_token,),
         )
         rows = await cursor.fetchall()
+        await self.conn.commit()
         return [dict(row) for row in rows]
 
     async def mark_outcome_evaluated(
@@ -419,6 +423,10 @@ class Database:
 
         Returns dict with total_evaluated, correct, accuracy, avg_gap_seconds.
         """
+        if days <= 0:
+            raise ValueError("days must be positive")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         cursor = await self.conn.execute(
             """
             SELECT
@@ -429,9 +437,9 @@ class Database:
             WHERE source = ?
               AND evaluated_at IS NOT NULL
               AND correct IS NOT NULL
-              AND signal_timestamp >= datetime('now', '-' || ? || ' days')
+              AND signal_timestamp >= ?
             """,
-            (source.lower(), days),
+            (source.lower(), cutoff),
         )
         row = await cursor.fetchone()
         if row is None or row["total_evaluated"] == 0:

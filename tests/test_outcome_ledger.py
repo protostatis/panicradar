@@ -181,6 +181,10 @@ class TestClaimPendingOutcomes:
         assert len(pending) == 1
         assert pending[0]["source"] == "reddit_elapsed"
 
+        # A second worker cannot reclaim the row owned by the first worker.
+        second_claim = await claim_pending_outcomes(db, now=now)
+        assert second_claim == []
+
     async def test_excludes_already_evaluated_rows(self, db):
         now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)

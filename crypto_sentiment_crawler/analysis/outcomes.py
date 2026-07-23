@@ -42,9 +42,8 @@ async def claim_pending_outcomes(
 ) -> list[dict]:
     """Atomically claim pending outcomes for evaluation.
 
-    Marks eligible rows with evaluated_at = 'claiming' inside a transaction
-    so concurrent workers cannot double-evaluate the same rows. Returns the
-    claimed rows.
+    Marks eligible rows with a unique claim token so concurrent workers cannot
+    double-evaluate the same rows. Returns only rows claimed by this call.
     """
     return await db.claim_pending_outcomes(now=now)
 
