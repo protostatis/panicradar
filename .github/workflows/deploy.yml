@@ -125,6 +125,36 @@ jobs:
               exit 1
             fi
 
+            # Bright Data authenticates this proxy from the EC2 public egress.
+            # Do not tunnel the proxy connection through a Mullvad exit IP.
+            echo "Disabling WireGuard for direct residential-proxy egress."
+            sudo systemctl stop wg-quick@wg0 2>/dev/null || true
+            sudo wg-quick down wg0 2>/dev/null || true
+            sudo systemctl disable wg-quick@wg0 2>/dev/null || true
+
+            # wg-quick can leave the host pointed at VPN DNS after shutdown.
+            # Recover DNS before GitHub/GHCR operations on the direct EC2 path.
+            if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
+              sudo systemctl restart systemd-resolved 2>/dev/null || true
+
+              DEFAULT_IFACE=$(/sbin/ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+              if [ -n "$DEFAULT_IFACE" ] && command -v resolvectl >/dev/null 2>&1; then
+                sudo resolvectl revert wg0 2>/dev/null || true
+                sudo resolvectl dns "$DEFAULT_IFACE" 169.254.169.253 1.1.1.1 8.8.8.8 2>/dev/null || true
+                sudo resolvectl domain "$DEFAULT_IFACE" "~." 2>/dev/null || true
+                sudo resolvectl flush-caches 2>/dev/null || true
+              fi
+
+              if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
+                echo "systemd DNS recovery did not resolve GitHub hosts; trying /etc/resolv.conf fallback."
+                if ! sudo sh -c 'printf "nameserver 169.254.169.253\nnameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:2 attempts:3\n" > /etc/resolv.conf' 2>/dev/null; then
+                  echo "WARNING: Could not write /etc/resolv.conf; continuing to final DNS check."
+                fi
+              fi
+            fi
+            getent hosts github.com >/dev/null
+            getent hosts ghcr.io >/dev/null
+
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
             git fetch --tags origin
@@ -193,15 +223,6 @@ jobs:
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto-sentiment-frontend:latest
             docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest crypto-sentiment-game-server:latest
 
-            # Restore host-level VPN for Reddit before starting the crawler.
-            # Keep this after image pulls so GitHub/GHCR access is unaffected.
-            if [ -f /opt/crypto-sentiment/.env ] && grep -q '^WG_PRIVATE_KEY=' /opt/crypto-sentiment/.env; then
-              echo "Setting up WireGuard VPN for Reddit access."
-              bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
-            else
-              echo "WARNING: WireGuard config not found; Reddit may block EC2 crawler traffic."
-            fi
-
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
@@ -221,8 +242,13 @@ jobs:
             async def main() -> None:
                 async with Fetcher(randomize_delay=False, timeout=15.0) as fetcher:
                     result = await fetcher.fetch("https://old.reddit.com/r/bitcoin/new/", rate_limit=1.0)
-                if not result.success or "data-timestamp" not in result.content:
-                    raise RuntimeError("Reddit proxy canary failed")
+                if not result.success:
+                    raise RuntimeError(
+                        f"Reddit proxy canary failed (status={result.status_code}, "
+                        f"elapsed={result.elapsed_seconds:.1f}s)"
+                    )
+                if "data-timestamp" not in result.content:
+                    raise RuntimeError("Reddit proxy canary returned unexpected listing markup")
 
 
             asyncio.run(main())
