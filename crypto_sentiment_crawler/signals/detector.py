@@ -191,9 +191,9 @@ class ContrarianSignalDetector:
         explicit_euphoria_rate = 0.0
         warning_scam_rate = 0.0
         if multi_dimensional:
-            explicit_fear_rate = multi_dimensional.get('explicit_fear_rate', multi_dimensional.get('fear_index', 0.0))
-            explicit_euphoria_rate = multi_dimensional.get('explicit_euphoria_rate', multi_dimensional.get('euphoria_index', 0.0))
-            warning_scam_rate = multi_dimensional.get('warning_scam_rate', multi_dimensional.get('activity_level', 0.0))
+            explicit_fear_rate = multi_dimensional.get('explicit_fear_phrase_rate', multi_dimensional.get('fear_index', 0.0))
+            explicit_euphoria_rate = multi_dimensional.get('explicit_euphoria_phrase_rate', multi_dimensional.get('euphoria_index', 0.0))
+            warning_scam_rate = multi_dimensional.get('warning_scam_phrase_rate', multi_dimensional.get('activity_level', 0.0))
 
         signal_type = None
         description = ""

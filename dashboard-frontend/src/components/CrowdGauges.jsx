@@ -59,7 +59,6 @@ const CrowdGauges = ({ fearIndex, euphoriaIndex, activityLevel, explicitFearPhra
     { ...GAUGE_DEFS[2], value: warning },
   ];
 
-  const maxVal = Math.max(fear, euphoria, warning);
   const dominant =
     fear === euphoria && euphoria === warning
       ? 'Balanced'
