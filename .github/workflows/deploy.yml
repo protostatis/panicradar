@@ -236,31 +236,79 @@ jobs:
               uv run python -c '
             import asyncio
             import os
+            import socket
+            from urllib.parse import urlsplit
 
             import httpx
 
 
-            async def fetch(client: httpx.AsyncClient, url: str) -> httpx.Response:
+            def proxy_context() -> tuple[str, str]:
+                try:
+                    parsed = urlsplit(os.environ["PROXY_URL"])
+                    host = parsed.hostname
+                    port = parsed.port
+                except ValueError:
+                    raise RuntimeError("Residential proxy configuration failed (invalid_url)") from None
+
+                if not host or parsed.scheme not in {"http", "https", "socks5", "socks5h"}:
+                    raise RuntimeError("Residential proxy configuration failed (unsupported_url)")
+
+                if host.endswith((".superproxy.io", ".brightdata.com")):
+                    provider = "bright_data"
+                else:
+                    provider = "other"
+
+                credentials = "present" if parsed.username and parsed.password else "missing"
+                context = f"scheme={parsed.scheme}; provider={provider}; credentials={credentials}"
+                return host, str(port or (443 if parsed.scheme == "https" else 80)), context
+
+
+            async def verify_tcp(host: str, port: str, context: str) -> str:
+                try:
+                    socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+                except socket.gaierror:
+                    raise RuntimeError(f"Residential proxy DNS failed ({context})") from None
+
+                try:
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port),
+                        timeout=10.0,
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                except (OSError, TimeoutError):
+                    raise RuntimeError(f"Residential proxy TCP failed ({context})") from None
+                return f"{context}; tcp=reachable"
+
+
+            async def fetch(
+                client: httpx.AsyncClient,
+                url: str,
+                context: str,
+            ) -> httpx.Response:
                 try:
                     return await client.get(
                         url,
                         headers={"User-Agent": "Mozilla/5.0"},
                     )
                 except httpx.ProxyError:
-                    raise RuntimeError("Residential proxy transport failed (proxy_error)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (proxy_error; {context})") from None
                 except httpx.ConnectTimeout:
-                    raise RuntimeError("Residential proxy transport failed (connect_timeout)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (connect_timeout; {context})") from None
                 except httpx.ReadTimeout:
-                    raise RuntimeError("Residential proxy transport failed (read_timeout)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (read_timeout; {context})") from None
                 except httpx.ConnectError:
-                    raise RuntimeError("Residential proxy transport failed (connect_error)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (connect_error; {context})") from None
                 except httpx.RemoteProtocolError:
-                    raise RuntimeError("Residential proxy transport failed (remote_protocol_error)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (remote_protocol_error; {context})") from None
                 except httpx.NetworkError:
-                    raise RuntimeError("Residential proxy transport failed (network_error)") from None
+                    raise RuntimeError(f"Residential proxy transport failed (network_error; {context})") from None
 
 
             async def main() -> None:
+                host, port, context = proxy_context()
+                context = await verify_tcp(host, port, context)
+
                 try:
                     client = httpx.AsyncClient(
                         timeout=httpx.Timeout(15.0),
@@ -268,19 +316,19 @@ jobs:
                         proxy=os.environ["PROXY_URL"],
                     )
                 except Exception:
-                    raise RuntimeError("Residential proxy configuration failed") from None
+                    raise RuntimeError(f"Residential proxy configuration failed ({context})") from None
 
                 async with client:
-                    neutral = await fetch(client, "https://example.com/")
+                    neutral = await fetch(client, "https://example.com/", context)
                     if neutral.status_code != 200:
                         raise RuntimeError(
-                            f"Residential proxy neutral canary returned HTTP {neutral.status_code}"
+                            f"Residential proxy neutral canary returned HTTP {neutral.status_code} ({context})"
                         )
 
-                    reddit = await fetch(client, "https://old.reddit.com/r/bitcoin/new/")
+                    reddit = await fetch(client, "https://old.reddit.com/r/bitcoin/new/", context)
                 if reddit.status_code != 200:
                     raise RuntimeError(
-                        f"Reddit proxy canary returned HTTP {reddit.status_code}"
+                        f"Reddit proxy canary returned HTTP {reddit.status_code} ({context})"
                     )
                 if "data-timestamp" not in reddit.text:
                     raise RuntimeError("Reddit proxy canary returned unexpected listing markup")
