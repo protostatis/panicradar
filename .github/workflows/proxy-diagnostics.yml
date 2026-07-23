@@ -1,0 +1,167 @@
+name: Proxy Diagnostics
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Diagnose Bright Data proxy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Test documented Bright Data endpoints from EC2
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          RESIDENTIAL_PROXY: ${{ secrets.RESIDENTIAL_PROXY }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 5m
+          envs: RESIDENTIAL_PROXY
+          script: |
+            set -euo pipefail
+
+            if [ -z "${RESIDENTIAL_PROXY:-}" ]; then
+              echo "ERROR: RESIDENTIAL_PROXY is not configured."
+              exit 1
+            fi
+
+            WG_WAS_ACTIVE=0
+            if sudo wg show wg0 >/dev/null 2>&1; then
+              WG_WAS_ACTIVE=1
+            fi
+
+            restore_wireguard() {
+              if [ "$WG_WAS_ACTIVE" -eq 1 ]; then
+                echo "Restoring WireGuard."
+                bash /home/ec2-user/crypto_sentiment_crawler/deploy/setup-wireguard.sh \
+                  /opt/crypto-sentiment/.env >/dev/null 2>&1 || {
+                  echo "ERROR: WireGuard restoration failed."
+                  return
+                }
+                sudo wg show wg0 | awk '/latest handshake/ {print "WireGuard restored: " $0}'
+              fi
+            }
+            trap restore_wireguard EXIT
+
+            if [ "$WG_WAS_ACTIVE" -eq 1 ]; then
+              echo "Temporarily disabling WireGuard for direct Bright Data egress."
+              sudo wg-quick down wg0
+
+              # wg-quick can leave VPN DNS configured after shutdown.
+              if ! getent hosts brd.superproxy.io >/dev/null; then
+                sudo systemctl restart systemd-resolved 2>/dev/null || true
+                DEFAULT_IFACE=$(/sbin/ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+                if [ -n "$DEFAULT_IFACE" ] && command -v resolvectl >/dev/null 2>&1; then
+                  sudo resolvectl revert wg0 2>/dev/null || true
+                  sudo resolvectl dns "$DEFAULT_IFACE" 169.254.169.253 1.1.1.1 8.8.8.8 2>/dev/null || true
+                  sudo resolvectl domain "$DEFAULT_IFACE" "~." 2>/dev/null || true
+                  sudo resolvectl flush-caches 2>/dev/null || true
+                fi
+              fi
+              getent hosts brd.superproxy.io >/dev/null
+            fi
+
+            python3 - <<'PY'
+            import os
+            import subprocess
+            import sys
+            from urllib.parse import urlsplit
+
+
+            def fail(message: str) -> None:
+                print(f"ERROR: {message}")
+                sys.exit(1)
+
+
+            proxy = os.environ.get("RESIDENTIAL_PROXY", "")
+            try:
+                parsed = urlsplit(proxy)
+                raw_userinfo, separator, _ = parsed.netloc.rpartition("@")
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or parsed.hostname not in {"brd.superproxy.io", "zproxy.lum-superproxy.io"}
+                    or not separator
+                    or not parsed.username
+                    or not parsed.password
+                ):
+                    fail("RESIDENTIAL_PROXY is not a supported Bright Data URL.")
+            except ValueError:
+                fail("RESIDENTIAL_PROXY is malformed.")
+
+            def with_endpoint(host: str, port: int) -> str:
+                return f"{parsed.scheme}://{raw_userinfo}@{host}:{port}"
+
+            candidates = [
+                ("configured", proxy),
+                ("bright_data_33335", with_endpoint("brd.superproxy.io", 33335)),
+                ("bright_data_22225", with_endpoint("brd.superproxy.io", 22225)),
+                ("legacy_22225", with_endpoint("zproxy.lum-superproxy.io", 22225)),
+            ]
+
+            def curl_status(proxy_url: str, target: str) -> tuple[int, str, str]:
+                env = os.environ.copy()
+                env.pop("NO_PROXY", None)
+                env.pop("no_proxy", None)
+                env["HTTPS_PROXY"] = proxy_url
+                env["https_proxy"] = proxy_url
+                result = subprocess.run(
+                    [
+                        "curl",
+                        "--silent",
+                        "--noproxy",
+                        "",
+                        "--connect-timeout",
+                        "10",
+                        "--max-time",
+                        "20",
+                        "--output",
+                        "/dev/null",
+                        "--write-out",
+                        "%{http_connect} %{http_code}",
+                        target,
+                    ],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    env=env,
+                )
+                statuses = result.stdout.strip().split()
+                proxy_connect = statuses[0] if statuses else "000"
+                target_http = statuses[1] if len(statuses) > 1 else "000"
+                return result.returncode, proxy_connect, target_http
+
+            tested = set()
+            usable = []
+            for label, candidate in candidates:
+                if candidate in tested:
+                    continue
+                tested.add(candidate)
+
+                exit_code, proxy_connect, target_http = curl_status(candidate, "https://example.com/")
+                print(
+                    f"{label}: neutral curl_exit={exit_code}; "
+                    f"proxy_connect={proxy_connect}; target_http={target_http}"
+                )
+                if exit_code != 0 or target_http != "200":
+                    continue
+
+                exit_code, proxy_connect, target_http = curl_status(
+                    candidate, "https://old.reddit.com/r/bitcoin/new/"
+                )
+                print(
+                    f"{label}: reddit curl_exit={exit_code}; "
+                    f"proxy_connect={proxy_connect}; target_http={target_http}"
+                )
+                if exit_code == 0 and target_http == "200":
+                    usable.append(label)
+
+            if not usable:
+                fail("No documented Bright Data endpoint returned HTTP 200 for Reddit.")
+
+            print(f"SUCCESS: usable endpoint labels: {', '.join(usable)}")
+            PY
