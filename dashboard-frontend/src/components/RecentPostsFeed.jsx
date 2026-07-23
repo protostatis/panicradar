@@ -140,7 +140,7 @@ const PostCard = ({ post }) => {
               {needsTruncation && (
                 <button
                   onClick={handleExpandClick}
-                  className="text-xs text-emerald-300 hover:text-emerald-200 mt-1"
+                  className="text-xs text-cyan-300 hover:text-cyan-200 mt-1"
                 >
                   {expanded ? 'Show less' : 'Read more'}
                 </button>

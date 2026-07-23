@@ -17,7 +17,7 @@ const COLORS = [
   '#ef4444', // red
   '#3b82f6', // blue
   '#ec4899', // pink
-  '#14b8a6', // teal
+  '#16a34a', // teal
   '#f97316', // orange
 ];
 
@@ -69,14 +69,6 @@ const MultiSourceChart = ({ sourcesData, selectedSources }) => {
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
-  if (!sourcesData || Object.keys(sourcesData).length === 0) {
-    return (
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 h-80 flex items-center justify-center">
-        <p className="text-slate-500">No source data available</p>
-      </div>
-    );
-  }
-
   // Get all unique dates across all sources
   const allDates = new Set();
   Object.values(sourcesData).forEach((sourceData) => {
@@ -125,6 +117,14 @@ const MultiSourceChart = ({ sourcesData, selectedSources }) => {
       Math.min(1, Math.ceil((max + padding) * 10) / 10),
     ];
   }, [mergedData, sourcesToShow]);
+
+  if (!sourcesData || Object.keys(sourcesData).length === 0) {
+    return (
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 h-80 flex items-center justify-center">
+        <p className="text-slate-500">No source data available</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">

@@ -1,19 +1,19 @@
 const BeliefCard = ({ belief, onClick }) => {
-  const getTypeColor = (type) => {
+  const getTypeStyle = (type) => {
     switch (type) {
       case 'Momentum':
-        return 'bg-green-500';
+        return { cls: 'bg-green-400/10 border-green-400/30 text-green-300', glyph: '\u25B2' };
       case 'Contrarian':
-        return 'bg-orange-500';
+        return { cls: 'bg-red-400/10 border-red-400/30 text-red-300', glyph: '\u25BC' };
       default:
-        return 'bg-slate-500';
+        return { cls: 'bg-slate-600/30 border-slate-500/40 text-slate-300', glyph: '\u25AC' };
     }
   };
 
   const getAccuracyColor = (accuracy) => {
     if (accuracy === null) return 'text-slate-400';
-    if (accuracy > 0.55) return 'text-green-400';
-    if (accuracy < 0.45) return 'text-orange-400';
+    if (accuracy > 0.55) return 'text-green-300';
+    if (accuracy < 0.45) return 'text-red-300';
     return 'text-slate-300';
   };
 
@@ -26,11 +26,12 @@ const BeliefCard = ({ belief, onClick }) => {
 
   // Beta distribution visualization (simplified)
   const beliefWidth = Math.min(100, Math.max(0, belief.belief_mean * 100));
+  const typeStyle = getTypeStyle(belief.type_label);
 
   return (
     <div
       onClick={() => onClick?.(belief.source)}
-      className={`bg-slate-800/50 rounded-lg border border-slate-700 p-4 hover:border-slate-500 transition-all ${
+      className={`radar-card p-4 hover:border-slate-500 transition-all ${
         onClick ? 'cursor-pointer hover:scale-[1.02]' : ''
       }`}
     >
@@ -39,16 +40,10 @@ const BeliefCard = ({ belief, onClick }) => {
           <h4 className="text-slate-200 font-medium">
             {formatSourceName(belief.source)}
           </h4>
-          <span
-            className={`inline-block px-2 py-0.5 rounded text-xs font-medium text-white ${getTypeColor(
-              belief.type_label
-            )}`}
-          >
-            {belief.type_label}
-          </span>
+          <span className={`radar-tabular mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium ${typeStyle.cls}`}><span aria-hidden="true" className="text-[0.6rem]">{typeStyle.glyph}</span>{belief.type_label}</span>
         </div>
         <div className="text-right">
-          <div className={`text-lg font-bold ${getAccuracyColor(belief.accuracy)}`}>
+          <div className={`radar-tabular text-lg font-bold ${getAccuracyColor(belief.accuracy)}`}>
             {belief.accuracy !== null
               ? `${(belief.accuracy * 100).toFixed(1)}%`
               : 'N/A'}
@@ -65,7 +60,7 @@ const BeliefCard = ({ belief, onClick }) => {
         </div>
         <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-all duration-500"
+            className="h-full bg-gradient-to-r from-cyan-500 to-cyan-400 transition-all duration-500"
             style={{ width: `${beliefWidth}%` }}
           />
         </div>
@@ -75,21 +70,21 @@ const BeliefCard = ({ belief, onClick }) => {
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <div>
           <span className="text-slate-500">α/β: </span>
-          <span className="text-slate-300">
+          <span className="radar-tabular text-slate-300">
             {belief.alpha.toFixed(0)}/{belief.beta.toFixed(0)}
           </span>
         </div>
         <div>
           <span className="text-slate-500">Samples: </span>
-          <span className="text-slate-300">{belief.total_crawls.toLocaleString()}</span>
+          <span className="radar-tabular text-slate-300">{belief.total_crawls.toLocaleString()}</span>
         </div>
         {belief.correlation !== null && (
           <div className="col-span-2">
             <span className="text-slate-500">Correlation: </span>
             <span
-              className={
-                belief.correlation > 0 ? 'text-green-400' : 'text-red-400'
-              }
+              className={`radar-tabular ${
+                belief.correlation > 0 ? 'text-green-300' : 'text-red-300'
+              }`}
             >
               {belief.correlation > 0 ? '+' : ''}
               {belief.correlation.toFixed(3)}

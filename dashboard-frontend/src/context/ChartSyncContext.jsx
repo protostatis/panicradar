@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback } from 'react';
 
 const ChartSyncContext = createContext(null);
@@ -22,16 +23,13 @@ export const ChartSyncProvider = ({ children }) => {
   );
 };
 
-// Default no-op functions for when used outside provider
-const defaultValue = {
-  activeDate: null,
-  handleMouseMove: () => {},
-  handleMouseLeave: () => {},
-};
-
 export const useChartSync = () => {
   const context = useContext(ChartSyncContext);
-  return context || defaultValue;
+  return context || {
+    activeDate: null,
+    handleMouseMove: () => {},
+    handleMouseLeave: () => {},
+  };
 };
 
 export default ChartSyncContext;

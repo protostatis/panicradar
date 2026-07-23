@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import SourceTable from '../components/SourceTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
+import SectionHeader from '../components/ui/SectionHeader';
 import { fetchSourceRankings } from '../api/client';
 
 const Sources = () => {
@@ -37,18 +38,8 @@ const Sources = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="radar-panel p-6">
-        <div className="radar-kicker mb-2">Source Intelligence</div>
-        <h1 className="text-3xl font-bold text-slate-100 mb-2">
-          Source Intelligence
-        </h1>
-        <p className="text-slate-400">
-          Our Bayesian learning system ranks sources by their predictive accuracy.
-          Sources are classified as momentum (sentiment aligns with future price)
-          or contrarian (inverted signal).
-        </p>
-      </div>
+    <div className="space-y-8">
+      <SectionHeader kicker="Source intelligence" kickerTick title="Source Intelligence" description="Our Bayesian learning system ranks sources by their predictive accuracy. Sources are classified as momentum (sentiment aligns with future price) or contrarian (inverted signal)." />
 
       <SourceTable
         sources={sources?.sources || []}
@@ -79,15 +70,15 @@ const Sources = () => {
             <h4 className="text-slate-200 font-medium mb-1">Type</h4>
             <ul className="list-disc list-inside space-y-1">
               <li>
-                <span className="text-green-400">Momentum</span>: Sentiment
+                <span className="text-green-300">{'\u25B2'} Momentum</span>: Sentiment
                 aligns with future price moves
               </li>
               <li>
-                <span className="text-orange-400">Contrarian</span>: Inverted
+                <span className="text-red-300">{'\u25BC'} Contrarian</span>: Inverted
                 signal (crowd is often wrong)
               </li>
               <li>
-                <span className="text-slate-400">Neutral</span>: Insufficient
+                <span className="text-slate-400">{'\u25AC'} Neutral</span>: Insufficient
                 data or near 50% accuracy
               </li>
             </ul>

@@ -5,6 +5,7 @@ import MultiSourceChart from '../components/MultiSourceChart';
 import SourceSimilarityMap from '../components/SourceSimilarityMap';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
+import SectionHeader from '../components/ui/SectionHeader';
 import {
   fetchBayesianBeliefs,
   fetchSourceHistory,
@@ -80,16 +81,7 @@ const Beliefs = () => {
 
   return (
     <div className="space-y-6">
-      <div className="radar-panel p-6 sm:p-8">
-        <div className="radar-kicker mb-3">Bayesian Source Model</div>
-        <h1 className="text-3xl font-bold text-slate-100 mb-2">
-          Bayesian Model Beliefs
-        </h1>
-        <p className="text-slate-400">
-          Our model learns which sources are predictive using Bayesian inference.
-          Click on a source to see its sentiment history.
-        </p>
-      </div>
+      <SectionHeader kicker="Bayesian source model" kickerTick title="Bayesian Model Beliefs" description="Our model learns which sources are predictive using Bayesian inference. Click on a source to see its sentiment history." />
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -100,13 +92,13 @@ const Beliefs = () => {
           <div className="text-sm text-slate-400">Total Sources</div>
         </div>
         <div className="radar-card p-4">
-          <div className="text-2xl font-bold text-green-400">
+          <div className="radar-tabular text-2xl font-semibold text-green-300">
             {beliefs?.beliefs?.filter((b) => b.type_label === 'Momentum').length || 0}
           </div>
           <div className="text-sm text-slate-400">Momentum</div>
         </div>
         <div className="radar-card p-4">
-          <div className="text-2xl font-bold text-orange-400">
+          <div className="radar-tabular text-2xl font-semibold text-red-300">
             {beliefs?.beliefs?.filter((b) => b.type_label === 'Contrarian').length || 0}
           </div>
           <div className="text-sm text-slate-400">Contrarian</div>
@@ -158,7 +150,7 @@ const Beliefs = () => {
           id="showInactive"
           checked={showInactive}
           onChange={(e) => setShowInactive(e.target.checked)}
-          className="rounded border-slate-600 bg-slate-700 text-purple-500 focus:ring-purple-500"
+          className="radar-focus rounded border-slate-600 bg-slate-700 text-cyan-500"
         />
         <label htmlFor="showInactive" className="text-sm text-slate-400">
           Show inactive sources (no data)

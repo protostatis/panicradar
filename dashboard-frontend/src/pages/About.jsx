@@ -1,6 +1,6 @@
 const About = () => {
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-8">
       <div className="radar-panel p-6 sm:p-8">
         <div className="radar-kicker mb-3">Methodology</div>
         <h1 className="max-w-3xl text-3xl font-bold text-slate-100 mb-2 sm:text-4xl">
@@ -73,19 +73,19 @@ const About = () => {
           </div>
           <div className="grid grid-cols-4 gap-2 text-center text-sm">
             <div className="radar-card p-2 border-green-400/30">
-              <div className="text-green-400 font-semibold">0-20</div>
+              <div className="text-green-300 font-semibold">{'\u25B2'} 0-20</div>
               <div className="text-slate-500 text-xs">Calm</div>
             </div>
-            <div className="radar-card p-2 border-yellow-400/30">
-              <div className="text-yellow-400 font-semibold">20-40</div>
+            <div className="radar-card p-2 border-slate-400/30">
+              <div className="text-slate-300 font-semibold">{'\u25AC'} 20-40</div>
               <div className="text-slate-500 text-xs">Moderate</div>
             </div>
-            <div className="radar-card p-2 border-orange-400/30">
-              <div className="text-orange-400 font-semibold">40-60</div>
+            <div className="radar-card p-2 border-amber-400/30">
+              <div className="text-amber-300 font-semibold">{'\u25C6'} 40-60</div>
               <div className="text-slate-500 text-xs">Elevated</div>
             </div>
-            <div className="radar-card p-2 border-red-400/30">
-              <div className="text-red-400 font-semibold">60-100</div>
+            <div className="radar-card p-2 border-orange-400/30">
+              <div className="text-orange-300 font-semibold">{'\u25CF'} 60-100</div>
               <div className="text-slate-500 text-xs">High Panic</div>
             </div>
           </div>

@@ -34,7 +34,7 @@ const BriefingHero = ({ data, updatedLabel }) => (
 
     <div className="relative grid gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
       <div>
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300">
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_14px_rgba(110,231,183,0.9)]" />
           Daily Intelligence Briefing
         </div>
@@ -79,7 +79,7 @@ const BriefingHero = ({ data, updatedLabel }) => (
           <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
             Scan Telemetry
           </span>
-          <span className="text-xs text-emerald-300">Updated {updatedLabel}</span>
+          <span className="text-xs text-cyan-300">Updated {updatedLabel}</span>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
@@ -151,7 +151,7 @@ const News = () => {
 
       {/* Daily Summary */}
       <div className="radar-panel p-6">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
           Daily Summary
         </h2>
         <p className="text-slate-300 text-sm leading-relaxed">

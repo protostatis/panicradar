@@ -4,21 +4,21 @@ import { Link, useLocation } from 'react-router-dom';
 const RadarIcon = ({ className = "w-10 h-10" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     {/* Outer ring */}
-    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" className="text-green-400" />
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" className="text-cyan-400/60" />
     {/* Middle ring */}
-    <circle cx="12" cy="12" r="6.5" stroke="currentColor" strokeWidth="1" className="text-green-400/70" />
+    <circle cx="12" cy="12" r="6.5" stroke="currentColor" strokeWidth="1" className="text-cyan-400/45" />
     {/* Inner ring */}
-    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1" className="text-green-400/50" />
+    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1" className="text-cyan-400/30" />
     {/* Center dot */}
-    <circle cx="12" cy="12" r="1.5" fill="currentColor" className="text-green-300" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" className="text-cyan-300" />
     {/* Sweep line */}
     <line x1="12" y1="12" x2="12" y2="2" stroke="url(#sweepGradient)" strokeWidth="2" strokeLinecap="round" />
     {/* Blip */}
-    <circle cx="15" cy="7" r="1.5" fill="currentColor" className="text-red-500 animate-pulse" />
+    <circle cx="15" cy="7" r="1.5" fill="currentColor" className="text-rose-400 animate-pulse" />
     <defs>
       <linearGradient id="sweepGradient" x1="12" y1="12" x2="12" y2="2" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stopColor="#4ade80" stopOpacity="0.2" />
-        <stop offset="100%" stopColor="#4ade80" stopOpacity="1" />
+        <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.2" />
+        <stop offset="100%" stopColor="#22d3ee" stopOpacity="1" />
       </linearGradient>
     </defs>
   </svg>
@@ -44,8 +44,8 @@ const Header = () => {
         <div className="flex justify-between items-center h-16">
           <Link to="/" className="flex items-center gap-2">
             <RadarIcon className="w-10 h-10" />
-            <span className="text-xl font-bold text-slate-100">
-              PanicRadar.ai
+            <span className="font-display text-xl font-semibold tracking-tight text-slate-100">
+              PanicRadar<span className="text-cyan-400">.ai</span>
             </span>
           </Link>
 
@@ -54,7 +54,7 @@ const Header = () => {
             {navItems.map((item) => {
               const className = `px-2.5 lg:px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 location.pathname === item.path
-                  ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
+                  ? 'bg-cyan-400/10 text-cyan-100 ring-1 ring-cyan-300/25'
                   : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/70'
               }`;
 
@@ -97,7 +97,7 @@ const Header = () => {
             {navItems.map((item) => {
               const className = `block px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
                 location.pathname === item.path
-                  ? 'bg-emerald-400/15 text-emerald-100 ring-1 ring-emerald-300/25'
+                  ? 'bg-cyan-400/10 text-cyan-100 ring-1 ring-cyan-300/25'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
               }`;
 

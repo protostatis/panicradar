@@ -42,7 +42,7 @@ const HeroSignals = ({ hooks }) => {
       <div className="relative">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-300">
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
               Today's 3 Crypto Risk Signals
             </div>
             <p className="mt-1.5 max-w-2xl text-sm text-slate-400">
@@ -69,7 +69,7 @@ const HeroSignals = ({ hooks }) => {
                     <span className="font-mono text-2xl font-semibold leading-none text-slate-700">
                       0{i + 1}
                     </span>
-                    <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-300">
+                    <span className="rounded-full border border-cyan-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-300">
                       Signal
                     </span>
                   </div>

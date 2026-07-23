@@ -57,10 +57,10 @@ const Blog = () => {
             <Link
               to={`/blog/${post.slug}`}
               onClick={() => trackEvent(GA_EVENTS.BLOG_ARTICLE_CLICK, { label: post.slug, title: post.title })}
-                className="radar-panel block h-full p-6 transition-all hover:-translate-y-0.5 hover:border-emerald-400/40"
+                className="radar-panel block h-full p-6 transition-all hover:-translate-y-0.5 hover:border-cyan-400/40"
             >
               <div className="flex items-center gap-3 mb-3">
-                  <span className="radar-chip px-2 py-1 text-xs font-medium text-emerald-300">
+                  <span className="radar-chip px-2 py-1 text-xs font-medium text-cyan-300">
                   {post.category}
                 </span>
                 <time dateTime={post.date} className="text-sm text-slate-500">
@@ -74,7 +74,7 @@ const Blog = () => {
                 {post.title}
               </h2>
               <p className="text-slate-400 leading-relaxed">{post.excerpt}</p>
-              <span className="inline-block mt-4 text-emerald-300 text-sm font-medium">
+              <span className="inline-block mt-4 text-cyan-300 text-sm font-medium">
                 Read more &rarr;
               </span>
             </Link>

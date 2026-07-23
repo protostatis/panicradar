@@ -39,7 +39,7 @@ const AffiliateBox = ({ context, recommendations }) => {
             href={affiliate.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="radar-card flex items-start gap-3 p-3 transition-colors hover:border-emerald-400/40"
+            className="radar-card flex items-start gap-3 p-3 transition-colors hover:border-cyan-400/40"
           >
             <span className="text-xl">{getCategoryIcon(affiliate.category)}</span>
             <div>

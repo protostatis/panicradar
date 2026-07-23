@@ -46,5 +46,5 @@ export default function useSEO({ title, description, url, type = 'website', imag
         canonical.setAttribute('href', url);
       }
     }
-  }, [title, description, url, type]);
+  }, [title, description, url, type, image]);
 }
