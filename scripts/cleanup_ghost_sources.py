@@ -52,10 +52,10 @@ def find_ghost_sources(conn: sqlite3.Connection) -> list[dict]:
                COALESCE(sr.cnt, 0) AS raw_count
         FROM source_weights sw
         LEFT JOIN (
-            SELECT source, COUNT(*) AS cnt
+            SELECT LOWER(source) AS normalized_source, COUNT(*) AS cnt
             FROM sentiment_raw
-            GROUP BY source
-        ) sr ON sw.source = sr.source
+            GROUP BY LOWER(source)
+        ) sr ON LOWER(sw.source) = sr.normalized_source
         WHERE sr.cnt IS NULL OR sr.cnt = 0
         ORDER BY sw.source
     """)
@@ -86,8 +86,8 @@ def remove_from_source_weights(conn: sqlite3.Connection, sources: list[str]) -> 
 
     placeholders = ",".join("?" * len(sources))
     cursor = conn.execute(
-        f"DELETE FROM source_weights WHERE source IN ({placeholders})",
-        sources,
+        f"DELETE FROM source_weights WHERE LOWER(source) IN ({placeholders})",
+        [source.lower() for source in sources],
     )
     conn.commit()
     return cursor.rowcount
@@ -107,13 +107,13 @@ def remove_from_state(state_path: Path, sources: list[str]) -> int:
         state = json.load(f)
 
     beliefs = state.get("beliefs", {})
+    normalized_sources = {source.lower() for source in sources}
     removed = 0
-    for source in sources:
-        source_lower = source.lower()
-        if source_lower in beliefs:
-            del beliefs[source_lower]
+    for source in list(beliefs):
+        if source.lower() in normalized_sources:
+            del beliefs[source]
             removed += 1
-            logger.info("Removed belief for ghost source: %s", source_lower)
+            logger.info("Removed belief for ghost source: %s", source)
 
     if removed > 0:
         state["beliefs"] = beliefs

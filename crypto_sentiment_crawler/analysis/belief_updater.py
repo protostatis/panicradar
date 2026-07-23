@@ -37,25 +37,32 @@ async def _find_ghost_sources(db: "Database", beliefs: dict) -> list[str]:
     - It does NOT start with "reddit_" (Reddit sources are always valid)
     - It has zero rows in the sentiment_raw table
 
-    Returns a list of ghost source names (lowercased).
+    Source names are normalized to lowercase for database comparisons. The
+    original belief keys are returned so callers can remove them safely even
+    if a legacy state file used mixed casing.
     """
     if not beliefs:
         return []
 
-    ghost_sources = []
-    for source in beliefs:
-        src_lower = source.lower()
-        if src_lower.startswith("reddit_"):
-            continue
-        cursor = await db.conn.execute(
-            "SELECT COUNT(*) FROM sentiment_raw WHERE source = ?",
-            (src_lower,),
-        )
-        (count,) = await cursor.fetchone() or (0,)
-        if count == 0:
-            ghost_sources.append(src_lower)
+    candidates = [
+        source for source in beliefs
+        if not source.lower().startswith("reddit_")
+    ]
+    if not candidates:
+        return []
 
-    return ghost_sources
+    normalized_sources = {source.lower() for source in candidates}
+    placeholders = ", ".join("?" for _ in normalized_sources)
+    cursor = await db.conn.execute(
+        f"""
+        SELECT DISTINCT LOWER(source)
+        FROM sentiment_raw
+        WHERE LOWER(source) IN ({placeholders})
+        """,
+        tuple(normalized_sources),
+    )
+    existing_sources = {row[0] for row in await cursor.fetchall()}
+    return [source for source in candidates if source.lower() not in existing_sources]
 
 
 async def compute_source_accuracy(
@@ -314,7 +321,6 @@ async def update_orchestrator_beliefs(
             )
             for src in ghost_sources:
                 current_beliefs.pop(src, None)
-                current_beliefs.pop(src.lower(), None)
 
         # Compute source accuracy
         source_accuracy = await compute_source_accuracy(db, lookback_days=lookback_days)

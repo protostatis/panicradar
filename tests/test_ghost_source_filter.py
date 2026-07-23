@@ -122,6 +122,19 @@ class TestFindGhostSources:
         ghosts = await _find_ghost_sources(tmp_db, beliefs)
         assert ghosts == []
 
+    async def test_source_comparison_is_case_insensitive(self, tmp_db):
+        """Legacy mixed-case belief keys match their raw-content source."""
+        beliefs = {
+            "Twitter": {"alpha": 3.0, "beta": 2.0, "total_crawls": 5},
+        }
+        await _insert_sentiment_raw(
+            tmp_db, 1, "twitter", self.BASE.isoformat()
+        )
+        await tmp_db.conn.commit()
+
+        ghosts = await _find_ghost_sources(tmp_db, beliefs)
+        assert ghosts == []
+
     async def test_empty_beliefs_returns_empty(self, tmp_db):
         """Empty beliefs dict returns empty ghost list."""
         ghosts = await _find_ghost_sources(tmp_db, {})
