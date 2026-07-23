@@ -669,8 +669,12 @@ async def get_ops_health():
         else:
             checks["price_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 600}
             overall_status = "unhealthy"
-    except Exception as e:
-        checks["price_freshness"] = {"status": "error", "message": str(e)}
+    except Exception:
+        ops_logger.exception("Price freshness health check failed")
+        checks["price_freshness"] = {
+            "status": "error",
+            "message": "Unable to check price freshness",
+        }
         overall_status = "unhealthy"
 
     # --- Sentiment freshness ---
@@ -696,8 +700,12 @@ async def get_ops_health():
         else:
             checks["sentiment_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 3600}
             overall_status = "unhealthy"
-    except Exception as e:
-        checks["sentiment_freshness"] = {"status": "error", "message": str(e)}
+    except Exception:
+        ops_logger.exception("Sentiment freshness health check failed")
+        checks["sentiment_freshness"] = {
+            "status": "error",
+            "message": "Unable to check sentiment freshness",
+        }
         overall_status = "unhealthy"
 
     # --- Belief update freshness ---
@@ -728,14 +736,21 @@ async def get_ops_health():
             checks["belief_update"] = {"status": "unknown", "age_seconds": None, "max_age": 2700}
             if overall_status != "unhealthy":
                 overall_status = "degraded"
-    except Exception as e:
-        checks["belief_update"] = {"status": "error", "message": str(e)}
+    except Exception:
+        ops_logger.exception("Belief update health check failed")
+        checks["belief_update"] = {
+            "status": "error",
+            "message": "Unable to check belief updates",
+        }
         overall_status = "unhealthy"
 
     # --- Active sources ---
     try:
+        cutoff = (now - timedelta(hours=24)).isoformat()
         cursor = conn.execute(
-            "SELECT COUNT(DISTINCT source) as count FROM sentiment_raw WHERE timestamp >= datetime('now', '-24 hours')"
+            "SELECT COUNT(DISTINCT source) as count "
+            "FROM sentiment_raw WHERE timestamp >= ?",
+            (cutoff,),
         )
         row = cursor.fetchone()
         count = row["count"] if row else 0
@@ -745,8 +760,12 @@ async def get_ops_health():
                 overall_status = "degraded"
         else:
             checks["active_sources"] = {"status": "ok", "count": count, "min": 1}
-    except Exception as e:
-        checks["active_sources"] = {"status": "error", "message": str(e)}
+    except Exception:
+        ops_logger.exception("Active sources health check failed")
+        checks["active_sources"] = {
+            "status": "error",
+            "message": "Unable to check active sources",
+        }
         overall_status = "unhealthy"
 
     conn.close()
@@ -768,8 +787,7 @@ async def get_ops_health():
     }
 
     if overall_status == "unhealthy":
-        from fastapi import HTTPException as FastAPIHTTPException
-        raise FastAPIHTTPException(status_code=503, detail=result)
+        raise HTTPException(status_code=503, detail=result)
 
     return result
 

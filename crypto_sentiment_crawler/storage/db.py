@@ -121,6 +121,19 @@ CREATE TABLE IF NOT EXISTS confounders (
 );
 CREATE INDEX IF NOT EXISTS idx_confounders_timestamp ON confounders(timestamp);
 
+-- Pipeline job status used by the operational health endpoint.
+CREATE TABLE IF NOT EXISTS pipeline_heartbeats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component TEXT NOT NULL,
+    last_success_at TIMESTAMP,
+    last_error_at TIMESTAMP,
+    last_error_message TEXT,
+    freshness_seconds REAL,
+    metadata TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_heartbeats_component_id
+ON pipeline_heartbeats(component, id DESC);
+
 -- Persistent prediction outcome ledger for auditable evaluation
 CREATE TABLE IF NOT EXISTS prediction_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +158,21 @@ CREATE TABLE IF NOT EXISTS prediction_outcomes (
 MIGRATIONS = [
     "ALTER TABLE sentiment_raw ADD COLUMN content_hash VARCHAR(64);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_raw_hash ON sentiment_raw(content_hash);",
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_heartbeats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        component TEXT NOT NULL,
+        last_success_at TIMESTAMP,
+        last_error_at TIMESTAMP,
+        last_error_message TEXT,
+        freshness_seconds REAL,
+        metadata TEXT
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pipeline_heartbeats_component_id
+    ON pipeline_heartbeats(component, id DESC);
+    """,
 ]
 
 
@@ -182,6 +210,96 @@ class Database:
             await self._connection.close()
             self._connection = None
             logger.info("Database connection closed")
+
+    async def record_heartbeat(
+        self,
+        component: str,
+        success: bool = True,
+        error_message: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Append a status event for a scheduler component."""
+        now = datetime.now(timezone.utc)
+        previous_success = await self.conn.execute(
+            """
+            SELECT last_success_at
+            FROM pipeline_heartbeats
+            WHERE component = ? AND last_success_at IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (component,),
+        )
+        previous_row = await previous_success.fetchone()
+
+        if success:
+            last_success_at = now
+            freshness_seconds = 0.0
+            last_error_at = None
+            last_error_message = None
+        else:
+            last_success_at = (
+                datetime.fromisoformat(previous_row["last_success_at"])
+                if previous_row and previous_row["last_success_at"]
+                else None
+            )
+            if last_success_at is not None and last_success_at.tzinfo is None:
+                last_success_at = last_success_at.replace(tzinfo=timezone.utc)
+            freshness_seconds = (
+                (now - last_success_at).total_seconds()
+                if last_success_at is not None
+                else None
+            )
+            last_error_at = now
+            last_error_message = error_message
+
+        await self.conn.execute(
+            """
+            INSERT INTO pipeline_heartbeats (
+                component, last_success_at, last_error_at, last_error_message,
+                freshness_seconds, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                component,
+                last_success_at.isoformat() if last_success_at else None,
+                last_error_at.isoformat() if last_error_at else None,
+                last_error_message,
+                freshness_seconds,
+                json.dumps(metadata) if metadata is not None else None,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_latest_heartbeat(self, component: str) -> dict | None:
+        """Return the most recent heartbeat for one component."""
+        cursor = await self.conn.execute(
+            """
+            SELECT * FROM pipeline_heartbeats
+            WHERE component = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (component,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_heartbeats(self) -> dict[str, dict]:
+        """Return each component's most recent heartbeat."""
+        cursor = await self.conn.execute(
+            """
+            SELECT heartbeat.*
+            FROM pipeline_heartbeats heartbeat
+            INNER JOIN (
+                SELECT component, MAX(id) AS latest_id
+                FROM pipeline_heartbeats
+                GROUP BY component
+            ) latest ON heartbeat.id = latest.latest_id
+            """
+        )
+        rows = await cursor.fetchall()
+        return {row["component"]: dict(row) for row in rows}
 
     @property
     def conn(self) -> aiosqlite.Connection:
@@ -348,7 +466,7 @@ class Database:
 
         Returns rows where target_timestamp < now AND price_after IS NULL.
         """
-        now = now or datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
         cursor = await self.conn.execute(
             """
             SELECT id, source, signal_timestamp, target_timestamp,
@@ -391,7 +509,7 @@ class Database:
                 1 if correct else 0,
                 direction,
                 price_gap_seconds,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 outcome_id,
             ),
         )
