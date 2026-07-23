@@ -160,6 +160,23 @@ class CrawlerScheduler:
 
         logger.info("Scheduler shutdown complete")
 
+    async def _record_heartbeat(
+        self,
+        component: str,
+        success: bool = True,
+        error_message: str | None = None,
+    ) -> None:
+        """Record a pipeline heartbeat in the database."""
+        try:
+            if self.db:
+                await self.db.record_heartbeat(
+                    component=component,
+                    success=success,
+                    error_message=error_message,
+                )
+        except Exception as e:
+            logger.debug(f"Failed to record heartbeat for {component}: {e}")
+
     @_tracked_job
     async def _job_crawl(self) -> None:
         """Job: Crawl using Bayesian selection."""
@@ -177,9 +194,11 @@ class CrawlerScheduler:
             content = await self.orchestrator.select_and_crawl()
             if content:
                 self._stats["crawls"] += 1
+            await self._record_heartbeat("crawl", success=True)
         except Exception as e:
             logger.error(f"Crawl job error: {e}")
             self._stats["errors"] += 1
+            await self._record_heartbeat("crawl", success=False, error_message=str(e))
 
     @_tracked_job
     async def _job_price(self) -> None:
@@ -187,9 +206,11 @@ class CrawlerScheduler:
         try:
             await self.price_collector.run()
             self._stats["price_updates"] += 1
+            await self._record_heartbeat("price", success=True)
         except Exception as e:
             logger.error(f"Price job error: {e}")
             self._stats["errors"] += 1
+            await self._record_heartbeat("price", success=False, error_message=str(e))
 
     @_tracked_job
     async def _job_evaluate(self) -> None:
@@ -223,9 +244,11 @@ class CrawlerScheduler:
                     belief = self.orchestrator.belief_store.get(source)
                     logger.info(f"  {source}: {mean:.3f} (n={belief.total_crawls})")
 
+            await self._record_heartbeat("eval", success=True)
         except Exception as e:
             logger.error(f"Evaluation job error: {e}")
             self._stats["errors"] += 1
+            await self._record_heartbeat("eval", success=False, error_message=str(e))
 
     @_tracked_job
     async def _job_fear_greed(self) -> None:
@@ -303,9 +326,11 @@ class CrawlerScheduler:
                 await update_orchestrator_beliefs()
             self._stats["belief_updates"] += 1
             logger.info("Belief update, source_weights sync, and bandit reload complete")
+            await self._record_heartbeat("belief_update", success=True)
         except Exception as e:
             logger.error(f"Belief update job error: {e}")
             self._stats["errors"] += 1
+            await self._record_heartbeat("belief_update", success=False, error_message=str(e))
 
     @_tracked_job
     async def _job_discovery(self) -> None:
