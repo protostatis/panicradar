@@ -235,19 +235,54 @@ jobs:
               crypto-sentiment-crawler:latest \
               uv run python -c '
             import asyncio
+            import os
 
-            from crypto_sentiment_crawler.crawler.fetcher import Fetcher
+            import httpx
+
+
+            async def fetch(client: httpx.AsyncClient, url: str) -> httpx.Response:
+                try:
+                    return await client.get(
+                        url,
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                except httpx.ProxyError:
+                    raise RuntimeError("Residential proxy transport failed (proxy_error)") from None
+                except httpx.ConnectTimeout:
+                    raise RuntimeError("Residential proxy transport failed (connect_timeout)") from None
+                except httpx.ReadTimeout:
+                    raise RuntimeError("Residential proxy transport failed (read_timeout)") from None
+                except httpx.ConnectError:
+                    raise RuntimeError("Residential proxy transport failed (connect_error)") from None
+                except httpx.RemoteProtocolError:
+                    raise RuntimeError("Residential proxy transport failed (remote_protocol_error)") from None
+                except httpx.NetworkError:
+                    raise RuntimeError("Residential proxy transport failed (network_error)") from None
 
 
             async def main() -> None:
-                async with Fetcher(randomize_delay=False, timeout=15.0) as fetcher:
-                    result = await fetcher.fetch("https://old.reddit.com/r/bitcoin/new/", rate_limit=1.0)
-                if not result.success:
-                    raise RuntimeError(
-                        f"Reddit proxy canary failed (status={result.status_code}, "
-                        f"elapsed={result.elapsed_seconds:.1f}s)"
+                try:
+                    client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(15.0),
+                        follow_redirects=True,
+                        proxy=os.environ["PROXY_URL"],
                     )
-                if "data-timestamp" not in result.content:
+                except Exception:
+                    raise RuntimeError("Residential proxy configuration failed") from None
+
+                async with client:
+                    neutral = await fetch(client, "https://example.com/")
+                    if neutral.status_code != 200:
+                        raise RuntimeError(
+                            f"Residential proxy neutral canary returned HTTP {neutral.status_code}"
+                        )
+
+                    reddit = await fetch(client, "https://old.reddit.com/r/bitcoin/new/")
+                if reddit.status_code != 200:
+                    raise RuntimeError(
+                        f"Reddit proxy canary returned HTTP {reddit.status_code}"
+                    )
+                if "data-timestamp" not in reddit.text:
                     raise RuntimeError("Reddit proxy canary returned unexpected listing markup")
 
 
