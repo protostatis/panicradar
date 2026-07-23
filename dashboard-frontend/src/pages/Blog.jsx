@@ -4,6 +4,14 @@ import { trackEvent, GA_EVENTS } from '../utils/analytics';
 
 const blogPosts = [
   {
+    slug: 'measuring-ourselves',
+    title: 'The Day We Realized Our Sentiment Engine Was Measuring Itself',
+    date: '2026-07-23',
+    excerpt: 'After 29,000 crawls and 7 months of data, we audited our own AI pipeline. Most sources converged to coin-flip accuracy. Our "fear index" was mostly regex. And our Thompson Sampling was optimizing something we didn\'t intend. Here\'s what we got wrong — and why it matters.',
+    category: 'Research',
+    readingTime: '14 min',
+  },
+  {
     slug: 'gp-beta-correlated-sampling',
     title: 'Teaching Our Crawler That r/Bitcoin and r/CryptoCurrency Are Related',
     date: '2026-02-07',
@@ -39,15 +47,15 @@ const Blog = () => {
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-      <header className="radar-panel p-6 sm:p-8">
-        <div className="radar-kicker mb-3">Research Log</div>
-        <h1 className="max-w-3xl text-3xl font-bold text-slate-100 sm:text-4xl">
-          Crypto Sentiment Research & Insights
+      <header className="radar-panel radar-panel--accent p-6 sm:p-8">
+        <div className="radar-kicker radar-kicker--tick mb-3">Research Log</div>
+        <h1 className="font-display max-w-3xl text-3xl font-semibold tracking-tight text-slate-100 sm:text-4xl">
+          Crypto Sentiment Research &amp; Insights
         </h1>
         <p className="mt-3 max-w-3xl text-slate-400 leading-relaxed">
           Data-driven research on crypto market sentiment, Bayesian source
           analysis, and contrarian signal detection. We publish what we learn
-          building PanicRadar — including what doesn't work.
+          building PanicRadar — including what doesn&apos;t work.
         </p>
       </header>
 
@@ -57,10 +65,10 @@ const Blog = () => {
             <Link
               to={`/blog/${post.slug}`}
               onClick={() => trackEvent(GA_EVENTS.BLOG_ARTICLE_CLICK, { label: post.slug, title: post.title })}
-                className="radar-panel block h-full p-6 transition-all hover:-translate-y-0.5 hover:border-emerald-400/40"
+                className="radar-panel block h-full p-6 transition-all hover:-translate-y-0.5 hover:border-cyan-400/40"
             >
               <div className="flex items-center gap-3 mb-3">
-                  <span className="radar-chip px-2 py-1 text-xs font-medium text-emerald-300">
+                  <span className="radar-chip px-2 py-1 text-xs font-medium text-cyan-300">
                   {post.category}
                 </span>
                 <time dateTime={post.date} className="text-sm text-slate-500">
@@ -74,7 +82,7 @@ const Blog = () => {
                 {post.title}
               </h2>
               <p className="text-slate-400 leading-relaxed">{post.excerpt}</p>
-              <span className="inline-block mt-4 text-emerald-300 text-sm font-medium">
+              <span className="inline-block mt-4 text-cyan-300 text-sm font-medium">
                 Read more &rarr;
               </span>
             </Link>

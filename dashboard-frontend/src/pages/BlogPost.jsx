@@ -8,6 +8,132 @@ const customPosts = {
 };
 
 const posts = {
+  'measuring-ourselves': {
+    title: 'The Day We Realized Our Sentiment Engine Was Measuring Itself',
+    date: '2026-07-23',
+    category: 'Research',
+    description:
+      'After 29,000 crawls and 7 months of live data, we audited our AI sentiment pipeline. Most sources converged to coin-flip accuracy. Our fear index was mostly regex. Our Thompson Sampling was optimizing something we never intended. Here\'s what we found.',
+    keywords: 'crypto sentiment AI audit, Thompson Sampling, Reddit sentiment accuracy, Bayesian source weighting critique, contrarian signal false positives, sentiment model calibration',
+    content: `
+*This analysis draws from our live production database — Reddit-only, 29 subreddits, 29,128 stored-content events. Non-Reddit sources like 4chan and Stocktwits are tracked in our beliefs but have not been actively crawled in the current pipeline.*
+
+## The Excitement Phase
+
+Seven months ago we launched PanicRadar with a compelling thesis: crawl crypto communities, score their sentiment with embedding models, and use Bayesian Thompson Sampling to learn which sources actually predict price moves. Invert the ones that are reliably wrong. Alert traders when crowd psychology diverges from price action.
+
+We built a Gaussian Process model to share knowledge between correlated sources. We ran lead-lag analysis on sentiment vs. price. We shipped real-time signal detection. Gaussian Process posteriors! Probit moment matching! L-BFGS-B hyperparameter optimization! The codebase was clean and the dashboard looked great.
+
+Then we audited the data — and it told a different story than the one we'd been telling ourselves.
+
+---
+
+## What Didn't Work
+
+### 1. Source accuracy converged to coin-flip territory
+
+After 29,128 stored-content events across 29 communities, here's what source accuracy looks like ("accuracy" = fraction of posts where sentiment direction matched BTC's 4-hour price direction):
+
+| Source | Accuracy | Samples | Weight |
+|--------|----------|---------|--------|
+| r/altcoin | 68.6% | 172 | 0.1025 |
+| r/dogecoin | 54.8% | 1,364 | 0.0376 |
+| r/ethtrader | 53.0% | 1,532 | 0.0273 |
+| r/btc | 51.6% | 2,490 | 0.0190 |
+| r/coinbase | 51.8% | 1,784 | 0.0203 |
+| r/bitcoin | 51.0% | 6,429 | 0.0157 |
+| r/cryptocurrency | 51.0% | 4,943 | 0.0155 |
+| r/defi | 49.4% | 1,789 | 0.0133 |
+| r/ethereum | 50.0% | 1,056 | 0.0100 |
+
+**The most-crawled sources cluster at 50%.** r/bitcoin (6,429 samples) and r/cryptocurrency (4,943 samples) — 39% of all stored content — are barely distinguishable from random. This isn't Bayesian shrinkage. It's regression to the mean.
+
+r/bitcoinbeginners told the starker story: 58.5% accuracy in February with 142 samples, **50.2%** today with 1,085. The early signal was noise.
+
+The exception is r/altcoin at 68.6%, but with only 172 temporally-clustered samples, a naive 95% binomial interval is 61%–75%. Is that a real edge, or did we get lucky checking 41 sources and celebrating the hottest streak? We haven't run out-of-time validation to know.
+
+### 2. The 31-day bearish streak is probably our model, not the crowd
+
+Every day from June 23 through July 23 shows negative average sentiment. BTC sits at \\$64K–\\$66K. Persistent, grinding fear — or a measurement artifact?
+
+Our scorer uses \`all-MiniLM-L6-v2\` embeddings with handcrafted anchors. Bullish scoring uses a single centroid. Bearish scoring blends a centroid with the five nearest bearish anchors — structurally amplifying negative signals. Title gets 20% weight, body/comments 80%. Only threads with 4+ comments are scored, selecting for contentious discussions.
+
+A human-label audit of 154 posts confirmed the tilt: **Pearson r = 0.44**, categorical agreement **51.3%**, mean bias **-0.029** (systematically bearish). Real signal, but far from precise.
+
+Then there's source composition. The most negative communities are r/coinbase (-0.303), r/cryptoscams (-0.294), r/binance (-0.261). These are support channels — people complaining about frozen accounts and scam tokens. Their "sentiment" reflects customer experience, not market outlook.
+
+**We can't distinguish "the market is fearful" from "people hate their exchange's customer support"** without source-level decomposition and a calibrated baseline.
+
+### 3. Our "fear index" is a literal-phrase detector
+
+We advertise multi-dimensional sentiment — fear_index, euphoria_index, activity_level — as sophisticated AI outputs. Here's what they actually are: the pipeline matches each post segment against literal phrases like "panic sell," "to the moon," or "scam alert." First-match classification, first 20 segments only. No match? Both indices are zero.
+
+The result: **4.15% of posts trigger any fear, 4.27% trigger any euphoria.** 91.8% register as having neither. Not because crypto Reddit is emotionless — because our detector misses sarcasm, implicit anxiety, irony, and any slang we didn't add to the list.
+
+These indices are useful high-precision event detectors. When they fire, something real is happening. But they're not psychological measurements — they're "literal-panic-phrase detector" and "literal-moon-phrase detector."
+
+### 4. Thompson Sampling was optimizing novelty, not accuracy
+
+We built a principled Bayesian bandit: Beta(α, β) posteriors, Thompson Sampling, mathematically well-understood tradeoffs. Except the live outcome evaluator caches the BTC price once and never refreshes it. \`price_before ≈ price_after\` — every move looks like ~0%.
+
+A 0% move scores 0.5 accuracy. With our utility formula \`0.7 × accuracy + 0.3 × novelty\` and a 0.5 utility threshold, novelty alone determines success. **The bandit learned to value interesting content over predictive content.** This plausibly explains why high-volume communities like r/bitcoin dominate despite being coin-flips.
+
+A separate 30-minute job computes accurate source scores from database prices — but the running bandit never reloads them. The dashboard accuracy table and the live bandit's internal beliefs can diverge. Dead sources remain eligible after cooldown expires. The gap between documented behavior and production behavior is larger than we want to admit.
+
+### 5. Our contrarian labels are overconfident
+
+We label sources below 45% accuracy as "contrarian" and invert their signals:
+
+| Source | Accuracy | Samples | Naive 95% CI |
+|--------|----------|---------|--------------|
+| r/crypto_general | 38.6% | 104 | 30%–48% |
+| r/cryptocurrencymemes | 40.7% | 76 | 30%–52% |
+| r/cryptomoonshots | 43.2% | 151 | 36%–51% |
+| r/cryptobanter | 44.0% | 107 | 35%–53% |
+
+Every naive confidence interval includes 50%. Real intervals should be wider (temporal clustering, multiple-comparison across 41 sources). **We can't reject the hypothesis that these sources are random.** And the 4chan /biz/ belief (1,669 crawls, 44.5% accuracy) is a ghost — migrated from an earlier system, with zero raw posts in our current database.
+
+---
+
+## What Did Work
+
+Not everything broke. Three things survived the audit:
+
+- **Data collection infrastructure.** 26,000+ posts across 29 communities with per-segment scoring, price data, and confounders. The pipeline runs reliably. That alone is nontrivial.
+
+- **Source-level interpretability.** Knowing r/coinbase sentiment (-0.303) reflects customer complaints while r/dogecoin (-0.026) reflects meme-culture optimism is genuinely useful. Anchor-phrase scoring means we can inspect *why* any post scored the way it did — which made this audit possible.
+
+- **Falsifiability as a feature.** We formed explicit hypotheses ("large communities contain predictive signal"), tested them against data, and published the results when they contradicted our expectations. That's the scientific method — and it's rare in crypto tools.
+
+---
+
+## What We'd Do Differently
+
+If we were starting over:
+
+**1. Baselines before models.** Every source should be compared against naive baselines — always-bullish, always-bearish, timestamp-matched majority. If a sophisticated bandit can't beat "assume the last 4 hours continue," the math doesn't matter.
+
+**2. End-to-end production audits.** We found the price cache bug by reading code, not monitoring outputs. A weekly trace from crawl → score → evaluate → update → sample would have caught the novelty-vs-accuracy disconnect in days, not months.
+
+**3. Confidence intervals, not point estimates.** Sources should earn "contrarian" status only when the posterior probability that accuracy < 50% is high, effective sample size is sufficient, and out-of-time validation confirms persistence. A fixed 45% threshold with 76 samples doesn't cut it.
+
+---
+
+## The Bottom Line
+
+We set out to build an AI that learns which crypto communities predict the market. After seven months and 29,000 stored-content events, we learned something unexpected: **most of the signal we thought we were measuring was our own measurement apparatus reflecting back at us.**
+
+Our bandit was optimizing novelty. Our fear index was a regex. Our bearish streak was model calibration. Our exciting early accuracies were small-sample noise. Our "30+ sources" was 29 Reddit communities plus ghost entries.
+
+This isn't failure — it's the normal, necessary process of building real ML systems on messy social data. It's also a process most projects don't talk about publicly. We think they should.
+
+The next version of PanicRadar will have baselines before models, confidence intervals before labels, and end-to-end audits before blog posts. When we find the next thing we got wrong, we'll publish that too.
+
+---
+
+*All data from our live production database as of July 23, 2026. System continues to run. We welcome scrutiny of methodology, code, and conclusions.*
+    `,
+  },
   'gp-beta-correlated-sampling': {
     title: 'Teaching Our Crawler That r/Bitcoin and r/CryptoCurrency Are Related',
     date: '2026-02-07',
