@@ -57,9 +57,9 @@ Verify the crawler has a proxy without printing its credential:
 docker exec crypto-crawler sh -c 'test -n "$PROXY_URL"'
 ```
 
-The command should exit successfully. The release canary first verifies proxy
-transport against a neutral HTTPS page, then verifies Reddit HTML contains
-`data-timestamp`.
+The command should exit successfully. The release canary first verifies the
+credential with `curl`, then tests the crawler's HTTP client against a neutral
+HTTPS page and Reddit HTML containing `data-timestamp`.
 
 ## Troubleshooting
 

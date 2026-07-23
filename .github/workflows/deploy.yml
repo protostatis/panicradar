@@ -226,6 +226,21 @@ jobs:
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
+            # Verify the credential with curl before testing the crawler's
+            # HTTPX client. Only emit a safe transport category or status.
+            echo "Checking residential proxy credential with curl..."
+            if ! PROXY_CURL_STATUS=$(curl --silent --connect-timeout 10 --max-time 20 \
+              --proxy "$RESIDENTIAL_PROXY" \
+              --output /dev/null --write-out '%{http_code}' \
+              https://example.com/ 2>/dev/null); then
+              echo "ERROR: Residential proxy curl transport failed."
+              exit 1
+            fi
+            if [ "$PROXY_CURL_STATUS" != "200" ]; then
+              echo "ERROR: Residential proxy curl returned HTTP $PROXY_CURL_STATUS."
+              exit 1
+            fi
+
             # Verify the release image can reach crawlable Reddit HTML through
             # the residential proxy before replacing the running services.
             echo "Checking Reddit proxy access before replacing containers..."
