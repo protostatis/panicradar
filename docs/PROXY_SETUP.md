@@ -1,14 +1,21 @@
-# WireGuard and Residential Proxy Setup for Reddit Access
+# Residential Proxy Setup for Reddit Access
 
-Reddit blocks AWS/cloud IP addresses and can also block a WireGuard exit IP.
-Production keeps WireGuard for host networking and routes Reddit requests through
-a residential proxy injected into the crawler at release time.
+Reddit blocks AWS/cloud and Mullvad exit IPs. Production routes Reddit requests
+through the Bright Data residential proxy injected into the crawler at release
+time.
 
 ## Configuration
 
-Add the WireGuard values to `/opt/crypto-sentiment/.env` on EC2:
+Store the residential proxy URL in the GitHub Actions `RESIDENTIAL_PROXY` secret.
+Do not add it to `/opt/crypto-sentiment/.env`: the release workflow passes it to
+the crawler as `PROXY_URL` only.
+
+WireGuard values may remain in `/opt/crypto-sentiment/.env` for emergency/manual
+recovery, but the production release disables `wg0`. The proxy must connect from
+the EC2 public egress rather than through a Mullvad exit IP.
 
 ```bash
+# Optional emergency WireGuard configuration
 WG_PRIVATE_KEY=your_wireguard_private_key
 WG_ADDRESS=10.x.x.x/32
 WG_DNS=10.64.0.1
@@ -16,38 +23,33 @@ WG_PEER_PUBKEY=server_public_key
 WG_ENDPOINT=server_ip:51820
 ```
 
-Store the residential proxy URL in the GitHub Actions `RESIDENTIAL_PROXY` secret.
-Do not add it to `/opt/crypto-sentiment/.env`: the release workflow passes it to
-the crawler as `PROXY_URL` only.
-
 ## Setup
 
-Run the setup script on EC2:
+Use WireGuard only for emergency diagnostics:
 
 ```bash
 cd /home/ec2-user/crypto_sentiment_crawler
 bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
 ```
 
-The script writes `/etc/wireguard/wg0.conf`, starts `wg0`, and enables
-`wg-quick@wg0` on boot.
+The release workflow stops `wg0` before GitHub/Docker network operations and
+recovers the EC2 DNS resolver before starting the crawler.
 
 ## Deployment
 
-Release deploys set up WireGuard from `/opt/crypto-sentiment/.env` after Docker
-images are pulled and before the crawler starts. Before replacing any running
-containers, the release image must fetch crawlable `old.reddit.com` HTML through
-the residential proxy. The crawler receives that proxy as `PROXY_URL`; no other
-service receives it.
+Before replacing any running containers, the release image must fetch crawlable
+`old.reddit.com` HTML through the residential proxy. The crawler receives that
+proxy as `PROXY_URL`; no other service receives it.
 
 ## Verification
 
-Verify the host egress IP:
+Verify WireGuard is stopped after a proxy deployment:
 
 ```bash
-curl https://httpbin.org/ip
-sudo wg show
+sudo systemctl is-active wg-quick@wg0
 ```
+
+The expected result is `inactive`.
 
 Verify the crawler has a proxy without printing its credential:
 
@@ -62,7 +64,7 @@ the proxy returns Reddit HTML containing `data-timestamp`.
 
 If Reddit returns `403` or the crawler logs no fresh posts, first verify that
 the `RESIDENTIAL_PROXY` GitHub secret is present and that the release canary
-succeeds. Restarting WireGuard will not help when its current exit IP is blocked.
+succeeds. Do not re-enable WireGuard while the crawler is using that proxy.
 
 To check WireGuard independently:
 
