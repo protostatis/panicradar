@@ -89,14 +89,14 @@ const Landing = () => {
         <section className="radar-reveal"><Panel accent pad="lg"><div className="max-w-3xl"><span className="radar-kicker radar-kicker--tick">Key research finding</span><h2 className="font-display mt-3 text-2xl font-semibold text-slate-100 sm:text-3xl">Price leads sentiment by ~15 hours.</h2><p className="mt-4 leading-relaxed text-slate-400">Our Granger analysis showed crypto crowds <strong className="text-slate-200">react to price moves</strong> — they don't predict them. That means extreme fear after a drop is usually overdone. PanicRadar detects these contrarian moments: when the crowd panics but the underlying volatility picture says otherwise.</p></div></Panel></section>
 
         <section className="radar-reveal space-y-8"><SectionHeader kicker="How it works" kickerTick title="Three layers of intelligence" description="Separating signal from noise — every source earns its weight." /><div className="grid gap-6 md:grid-cols-3">{[
-          ['1', 'Crawl 30+ sources', 'Reddit, 4chan /biz/, StockTwits, Twitter, news sites, and on-chain data. A FinBERT transformer analyzes sentiment at the segment level — separating real fear from noise.'],
-          ['2', 'Bayesian learning', 'Thompson Sampling learns which sources actually predict what happens next. Contrarian sources (like 4chan) get their signals inverted. Every source earns its weight.'],
+          ['1', 'Crawl 30+ sources', 'Reddit, StockTwits, Twitter, news sites, and on-chain data. A FinBERT transformer analyzes sentiment at the segment level — separating real fear from noise.'],
+          ['2', 'Bayesian learning', 'Thompson Sampling learns which sources actually predict what happens next. Every source earns its weight through observed performance — not assumptions.'],
           ['3', 'Contrarian signals', 'When extreme fear meets stable prices, that\'s a bullish divergence. When euphoria meets weakness, that\'s bearish. You get alerted before the move, not after.']
         ].map(([i, t, d]) => (<FeatureCard key={i} index={i} title={t} description={d} />))}</div></section>
 
         <section className="radar-reveal space-y-8"><SectionHeader kicker="Differentiators" kickerTick title="Not another Fear & Greed index" description="Most sentiment tools give you one number and call it a day. We go deeper." /><div className="grid gap-6 md:grid-cols-2">{[
           ['◆', 'Multi-dimensional scoring', 'Fear, euphoria, and activity tracked separately. A high fear index with low activity means something very different than high fear with high activity.'],
-          ['◆', 'Source intelligence', 'Every source gets a Bayesian accuracy score. 4chan /biz/ runs at 38% accuracy — making it one of our best contrarian indicators when inverted.'],
+          ['◆', 'Source intelligence', 'Every source gets a Bayesian accuracy score based on its track record. Some communities earn their role as reliable contrarian indicators — the model learns which ones to trust and which to invert.'],
           ['◆', 'Volatility, not direction', 'We don\'t pretend to predict if BTC goes up or down. We predict when big moves are coming — so you can size positions and set stops accordingly.'],
           ['◆', 'Research-backed', 'Every claim is validated. Granger tests, backtested signal accuracy, and transparent methodology. No black boxes.']
         ].map(([i, t, d]) => (<FeatureCard key={t} index={i} title={t} description={d} />))}</div></section>

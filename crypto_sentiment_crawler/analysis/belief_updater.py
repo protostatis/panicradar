@@ -31,6 +31,42 @@ MIN_SAMPLES = 20
 PREDICTION_LAG = 4
 
 
+async def _find_ghost_sources(db: "Database", beliefs: dict) -> list[str]:
+    """
+    Find ghost sources in beliefs that have zero rows in sentiment_raw.
+
+    A source is a ghost if:
+    - It does NOT start with "reddit_" (Reddit sources are always valid)
+    - It has zero rows in the sentiment_raw table
+
+    Source names are normalized to lowercase for database comparisons. The
+    original belief keys are returned so callers can remove them safely even
+    if a legacy state file used mixed casing.
+    """
+    if not beliefs:
+        return []
+
+    candidates = [
+        source for source in beliefs
+        if not source.lower().startswith("reddit_")
+    ]
+    if not candidates:
+        return []
+
+    normalized_sources = {source.lower() for source in candidates}
+    placeholders = ", ".join("?" for _ in normalized_sources)
+    cursor = await db.conn.execute(
+        f"""
+        SELECT DISTINCT LOWER(source)
+        FROM sentiment_raw
+        WHERE LOWER(source) IN ({placeholders})
+        """,
+        tuple(normalized_sources),
+    )
+    existing_sources = {row[0] for row in await cursor.fetchall()}
+    return [source for source in candidates if source.lower() not in existing_sources]
+
+
 async def compute_source_accuracy(
     db: Database,
     lag_hours: int = PREDICTION_LAG,
@@ -306,7 +342,18 @@ async def update_orchestrator_beliefs(
         raise
 
     try:
-        # Compute source accuracy with configurable lookback (Change 6)
+        # ── Filter out ghost sources (non-Reddit with zero sentiment_raw rows) ──
+        ghost_sources = await _find_ghost_sources(db, current_beliefs)
+        if ghost_sources:
+            logger.warning(
+                "Removing %d ghost source(s) with zero raw posts: %s",
+                len(ghost_sources),
+                ", ".join(ghost_sources),
+            )
+            for src in ghost_sources:
+                current_beliefs.pop(src, None)
+
+        # Compute source accuracy
         source_accuracy = await compute_source_accuracy(db, lookback_days=lookback_days)
         logger.info(f"Computed accuracy for {len(source_accuracy)} sources")
 
