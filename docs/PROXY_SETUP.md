@@ -1,7 +1,8 @@
-# WireGuard Setup for Reddit Access
+# WireGuard and Residential Proxy Setup for Reddit Access
 
-Reddit blocks AWS/cloud IP addresses. Production uses a WireGuard VPN on the EC2
-host so Docker containers inherit the VPN egress path through host NAT.
+Reddit blocks AWS/cloud IP addresses and can also block a WireGuard exit IP.
+Production keeps WireGuard for host networking and routes Reddit requests through
+a residential proxy injected into the crawler at release time.
 
 ## Configuration
 
@@ -15,8 +16,9 @@ WG_PEER_PUBKEY=server_public_key
 WG_ENDPOINT=server_ip:51820
 ```
 
-`PROXY_URL` is still supported as an optional crawler override, but it is not
-needed when WireGuard is active.
+Store the residential proxy URL in the GitHub Actions `RESIDENTIAL_PROXY` secret.
+Do not add it to `/opt/crypto-sentiment/.env`: the release workflow passes it to
+the crawler as `PROXY_URL` only.
 
 ## Setup
 
@@ -33,8 +35,10 @@ The script writes `/etc/wireguard/wg0.conf`, starts `wg0`, and enables
 ## Deployment
 
 Release deploys set up WireGuard from `/opt/crypto-sentiment/.env` after Docker
-images are pulled and before the crawler starts. The crawler is started with
-`PROXY_URL` and `RESIDENTIAL_PROXY` blank so Reddit traffic uses the host VPN.
+images are pulled and before the crawler starts. Before replacing any running
+containers, the release image must fetch crawlable `old.reddit.com` HTML through
+the residential proxy. The crawler receives that proxy as `PROXY_URL`; no other
+service receives it.
 
 ## Verification
 
@@ -45,27 +49,22 @@ curl https://httpbin.org/ip
 sudo wg show
 ```
 
-Verify Reddit returns crawlable HTML from EC2:
+Verify the crawler has a proxy without printing its credential:
 
 ```bash
-curl -sL -A "Mozilla/5.0" \
-  "https://old.reddit.com/r/bitcoin/new/" | grep -c "data-timestamp"
+docker exec crypto-crawler sh -c 'test -n "$PROXY_URL"'
 ```
 
-The result should be greater than `0`.
-
-Verify the crawler is not using an app-level proxy:
-
-```bash
-docker exec crypto-crawler printenv PROXY_URL
-docker exec crypto-crawler printenv RESIDENTIAL_PROXY
-```
-
-Both commands should print nothing.
+The command should exit successfully. The release canary already verifies that
+the proxy returns Reddit HTML containing `data-timestamp`.
 
 ## Troubleshooting
 
-If Reddit returns `403` or the crawler logs no fresh posts:
+If Reddit returns `403` or the crawler logs no fresh posts, first verify that
+the `RESIDENTIAL_PROXY` GitHub secret is present and that the release canary
+succeeds. Restarting WireGuard will not help when its current exit IP is blocked.
+
+To check WireGuard independently:
 
 ```bash
 sudo wg show

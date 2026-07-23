@@ -10,10 +10,10 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Domains that require proxy (blocked from datacenter IPs).
-# Reddit access is handled by the EC2 host WireGuard VPN, so no app-level proxy
-# is required by default. Set PROXY_URL and add domains here only for overrides.
-PROXY_REQUIRED_DOMAINS: set[str] = set()
+# Reddit blocks cloud and some VPN exit IPs. When a proxy is configured, route
+# Reddit and all of its subdomains through it; WireGuard remains the fallback
+# for local deployments without PROXY_URL.
+PROXY_REQUIRED_DOMAINS: set[str] = {"reddit.com"}
 
 # Pool of realistic user agents
 USER_AGENTS = [
