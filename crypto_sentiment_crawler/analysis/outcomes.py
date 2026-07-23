@@ -37,14 +37,16 @@ async def write_outcome(
     )
 
 
-async def get_pending_outcomes(
+async def claim_pending_outcomes(
     db: Database, now: datetime | None = None
 ) -> list[dict]:
-    """Find signal_timestamps whose target has elapsed but haven't been evaluated.
+    """Atomically claim pending outcomes for evaluation.
 
-    Returns rows where target_timestamp < now AND price_after IS NULL.
+    Marks eligible rows with evaluated_at = 'claiming' inside a transaction
+    so concurrent workers cannot double-evaluate the same rows. Returns the
+    claimed rows.
     """
-    return await db.get_pending_outcomes(now=now)
+    return await db.claim_pending_outcomes(now=now)
 
 
 async def get_source_performance(

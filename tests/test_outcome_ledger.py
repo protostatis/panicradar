@@ -1,15 +1,16 @@
-"""Tests for the persistent prediction outcome ledger.
+"""
+Tests for the persistent prediction outcome ledger.
 
 Covers:
 - Outcome write creates row with correct timestamps
 - Idempotent writes (UNIQUE constraint enforcement)
-- get_pending_outcomes filters correctly
+- claim_pending_outcomes atomically claims and filters correctly
 - Evaluation updates price_after, correct, evaluated_at
 - Restart safety (outcomes survive DB disconnect/reconnect)
 - get_source_performance accuracy calculation
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 
@@ -17,8 +18,8 @@ import pytest
 
 from crypto_sentiment_crawler.analysis.outcomes import (
     EVALUATOR_VERSION,
+    claim_pending_outcomes,
     evaluate_outcome,
-    get_pending_outcomes,
     get_source_performance,
     write_outcome,
 )
@@ -49,7 +50,7 @@ async def db():
 
 class TestWriteOutcome:
     async def test_creates_row_with_correct_timestamps(self, db):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target = now + timedelta(hours=4)
 
         row_id = await write_outcome(
@@ -77,7 +78,7 @@ class TestWriteOutcome:
 
     async def test_idempotent_same_source_timestamp_version(self, db):
         """Writing the same (source, signal_ts, version) twice updates, no dup."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target = now + timedelta(hours=4)
 
         row_id_1 = await write_outcome(
@@ -113,7 +114,7 @@ class TestWriteOutcome:
 
     async def test_different_sources_independent(self, db):
         """Different sources can share the same timestamp."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target = now + timedelta(hours=4)
 
         id_a = await write_outcome(
@@ -134,7 +135,7 @@ class TestWriteOutcome:
 
     async def test_different_versions_independent(self, db):
         """Different evaluator versions can share same source+timestamp."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target = now + timedelta(hours=4)
 
         id_v1 = await write_outcome(
@@ -159,9 +160,9 @@ class TestWriteOutcome:
 # ── Pending outcomes ───────────────────────────────────────────────────────
 
 
-class TestGetPendingOutcomes:
+class TestClaimPendingOutcomes:
     async def test_returns_rows_with_elapsed_target_and_no_evaluation(self, db):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=1)  # Target already elapsed
         future_target = now + timedelta(hours=4)  # Not yet elapsed
 
@@ -176,12 +177,12 @@ class TestGetPendingOutcomes:
             target_timestamp=future_target, calibrated_score=-0.3, price_before=100.0,
         )
 
-        pending = await get_pending_outcomes(db, now=now)
+        pending = await claim_pending_outcomes(db, now=now)
         assert len(pending) == 1
         assert pending[0]["source"] == "reddit_elapsed"
 
     async def test_excludes_already_evaluated_rows(self, db):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         row_id = await write_outcome(
@@ -195,16 +196,16 @@ class TestGetPendingOutcomes:
             price_after_timestamp=now, correct=True, direction="up",
         )
 
-        pending = await get_pending_outcomes(db, now=now)
+        pending = await claim_pending_outcomes(db, now=now)
         assert len(pending) == 0  # Evaluated, not pending
 
     async def test_empty_when_no_matching_rows(self, db):
-        pending = await get_pending_outcomes(db)
+        pending = await claim_pending_outcomes(db)
         assert pending == []
 
     async def test_respects_abstained_flag(self, db):
         """Rows marked as abstained should not appear as pending."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         row_id = await write_outcome(
@@ -219,7 +220,7 @@ class TestGetPendingOutcomes:
         )
         await db.conn.commit()
 
-        pending = await get_pending_outcomes(db, now=now)
+        pending = await claim_pending_outcomes(db, now=now)
         assert len(pending) == 0
 
 
@@ -228,7 +229,7 @@ class TestGetPendingOutcomes:
 
 class TestEvaluateOutcome:
     async def test_updates_price_after_and_correct_fields(self, db):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         row_id = await write_outcome(
@@ -236,7 +237,7 @@ class TestEvaluateOutcome:
             target_timestamp=past_target, calibrated_score=0.8, price_before=100.0,
         )
 
-        eval_time = datetime.utcnow()
+        eval_time = datetime.now(timezone.utc)
         await evaluate_outcome(
             db=db, outcome_id=row_id, price_after=110.0,
             price_after_timestamp=eval_time, correct=True, direction="up",
@@ -254,7 +255,7 @@ class TestEvaluateOutcome:
         assert row["evaluated_at"] is not None
 
     async def test_incorrect_prediction(self, db):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         row_id = await write_outcome(
@@ -264,7 +265,7 @@ class TestEvaluateOutcome:
 
         await evaluate_outcome(
             db=db, outcome_id=row_id, price_after=110.0,
-            price_after_timestamp=datetime.utcnow(), correct=False, direction="down",
+            price_after_timestamp=datetime.now(timezone.utc), correct=False, direction="down",
         )
 
         cursor = await db.conn.execute(
@@ -275,7 +276,7 @@ class TestEvaluateOutcome:
 
     async def test_multiple_outcomes_independent(self, db):
         """Evaluating one outcome doesn't affect others."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         id_a = await write_outcome(
@@ -289,7 +290,7 @@ class TestEvaluateOutcome:
 
         await evaluate_outcome(
             db=db, outcome_id=id_a, price_after=105.0,
-            price_after_timestamp=datetime.utcnow(), correct=True, direction="up",
+            price_after_timestamp=datetime.now(timezone.utc), correct=True, direction="up",
         )
 
         # Row B should still be unevaluated
@@ -306,7 +307,7 @@ class TestEvaluateOutcome:
 class TestRestartSafety:
     async def test_outcomes_survive_db_reconnect(self, db):
         """Outcomes written before a "restart" are still there after reconnect."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target = now + timedelta(hours=4)
 
         await write_outcome(
@@ -321,7 +322,7 @@ class TestRestartSafety:
         db2 = Database(db_path=db_path)
         await db2.connect()
 
-        pending = await get_pending_outcomes(db2, now=now + timedelta(hours=5))
+        pending = await claim_pending_outcomes(db2, now=now + timedelta(hours=5))
         assert len(pending) == 1
         assert pending[0]["source"] == "reddit_survive"
         assert pending[0]["calibrated_score"] == 0.6
@@ -330,7 +331,7 @@ class TestRestartSafety:
 
     async def test_evaluated_outcomes_survive_restart(self, db):
         """Evaluated outcomes remain in the ledger after restart."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past_target = now - timedelta(hours=2)
 
         row_id = await write_outcome(
@@ -340,7 +341,7 @@ class TestRestartSafety:
 
         await evaluate_outcome(
             db=db, outcome_id=row_id, price_after=105.0,
-            price_after_timestamp=datetime.utcnow(), correct=True, direction="up",
+            price_after_timestamp=datetime.now(timezone.utc), correct=True, direction="up",
         )
 
         # Restart
@@ -369,7 +370,7 @@ class TestRestartSafety:
 class TestSourcePerformance:
     async def test_accuracy_calculation(self, db):
         """get_source_performance computes correct accuracy."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past = now - timedelta(hours=4)
 
         # 3 correct, 1 incorrect
@@ -404,7 +405,7 @@ class TestSourcePerformance:
 
     async def test_respects_days_filter(self, db):
         """Only outcomes within the requested days window are counted."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         old_signal = now - timedelta(days=60)
         old_target = old_signal + timedelta(hours=4)
 
@@ -429,7 +430,7 @@ class TestSourcePerformance:
 
     async def test_source_case_insensitive(self, db):
         """Source matching should be case-insensitive (stored lowercase)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         past = now - timedelta(hours=4)
 
         row_id = await write_outcome(

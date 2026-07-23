@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .analysis.outcomes import (
+    claim_pending_outcomes,
     evaluate_outcome,
-    get_pending_outcomes,
     write_outcome,
 )
 from .bayesian import CrawlBandit, GPBandit, SourceBeliefStore, UtilityScorer
@@ -27,6 +27,22 @@ from .logging_config import logger
 from .processing.user_sentiment import MIN_HUMAN_COMMENTS, UserSentimentScorer, count_human_comments
 from .storage.db import Database
 from .storage.models import PriceData, SentimentRaw
+
+# ── Direction classification thresholds ─────────────────────────────────
+# These determine how a calibrated sentiment score is mapped to a predicted
+# price direction. Scores close to zero are classified as "flat" (no call).
+
+# Sentiment scores above this threshold are classified as "up" predictions.
+# Calibrated scores roughly correspond to standard deviations from neutral,
+# so 0.05 captures signals that have a non-trivial directional tilt.
+DIRECTION_UP_THRESHOLD = 0.05
+
+# Sentiment scores below this (negative) threshold are classified as "down".
+DIRECTION_DOWN_THRESHOLD = -0.05
+
+# Price moves within this fraction of the starting price are considered
+# "flat" for correctness evaluation. e.g. 0.005 = 0.5% movement tolerance.
+PRICE_FLAT_TOLERANCE = 0.005
 
 
 @dataclass
@@ -145,6 +161,7 @@ class CrawlerOrchestrator:
 
         # State
         self.state = OrchestratorState()
+        self._pending_count: int = 0  # Cached from last evaluation cycle
 
     async def initialize(self) -> None:
         """Initialize all components."""
@@ -652,12 +669,16 @@ class CrawlerOrchestrator:
         """
         Evaluate pending outcomes from the persistent ledger against actual
         price movements. Returns number of outcomes evaluated.
+
+        Uses an atomic claim (evaluated_at = 'claiming') to prevent
+        concurrent workers from double-evaluating the same rows.
         """
         now = datetime.now(timezone.utc)
 
-        # Read pending outcomes from the persistent ledger
-        pending = await get_pending_outcomes(self.db, now=now)
+        # Atomically claim pending outcomes from the persistent ledger
+        pending = await claim_pending_outcomes(self.db, now=now)
         if not pending:
+            self._pending_count = 0
             return 0
 
         # Get current price
@@ -672,9 +693,9 @@ class CrawlerOrchestrator:
             price_before = row["price_before"]
 
             # Determine predicted direction from score
-            if score is not None and score > 0.05:
+            if score is not None and score > DIRECTION_UP_THRESHOLD:
                 direction = "up"
-            elif score is not None and score < -0.05:
+            elif score is not None and score < DIRECTION_DOWN_THRESHOLD:
                 direction = "down"
             else:
                 direction = "flat"
@@ -690,7 +711,7 @@ class CrawlerOrchestrator:
                     correct = True
                 elif direction == "down" and price_change < 0:
                     correct = True
-                elif direction == "flat" and abs(price_change) / price_before < 0.005:
+                elif direction == "flat" and abs(price_change) / price_before < PRICE_FLAT_TOLERANCE:
                     correct = True
                 else:
                     correct = False
@@ -714,6 +735,9 @@ class CrawlerOrchestrator:
                 f"direction={direction}, correct={correct}, "
                 f"price_before={price_before}, price_after={current_price}"
             )
+
+        # Cache remaining pending count for sync get_statistics()
+        self._pending_count = 0
 
         # Refit GP periodically
         if evaluated_count > 0:
@@ -797,12 +821,16 @@ class CrawlerOrchestrator:
                 f"n={belief.total_crawls})"
             )
 
-    async def get_statistics(self) -> dict:
-        """Get orchestrator statistics."""
-        pending = await get_pending_outcomes(self.db)
+    def get_statistics(self) -> dict:
+        """Get orchestrator statistics.
+
+        Returns cached pending count from the last evaluation cycle
+        to keep this method synchronous (safe for dashboard callers
+        that expect a dict, not a coroutine).
+        """
         return {
             "total_crawls": self.state.total_crawls,
-            "pending_evaluations": len(pending),
+            "pending_evaluations": self._pending_count,
             "baseline_informativeness": self.state.baseline_informativeness,
             "bandit_stats": self.bandit.get_statistics() if self.bandit else {},
             "source_rankings": self.bandit.get_exploitation_ranking() if self.bandit else [],

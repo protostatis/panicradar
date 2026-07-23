@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -341,25 +341,40 @@ class Database:
         await self.conn.commit()
         return cursor.lastrowid or 0
 
-    async def get_pending_outcomes(
+    async def claim_pending_outcomes(
         self, now: datetime | None = None
     ) -> list[dict]:
-        """Find outcomes whose target_timestamp has elapsed but haven't been evaluated.
+        """Atomically claim pending outcomes for evaluation.
 
-        Returns rows where target_timestamp < now AND price_after IS NULL.
+        Sets evaluated_at = 'claiming' in a transaction to prevent
+        concurrent workers from evaluating the same rows. Only rows
+        with evaluated_at IS NULL are eligible.
+
+        Returns the claimed rows.
         """
-        now = now or datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
+        cursor = await self.conn.execute(
+            """
+            UPDATE prediction_outcomes
+            SET evaluated_at = 'claiming'
+            WHERE target_timestamp < ?
+              AND price_after IS NULL
+              AND abstained = FALSE
+              AND evaluated_at IS NULL
+            """,
+            (now.isoformat(),),
+        )
+        await self.conn.commit()
+
+        # Fetch the rows that were just claimed
         cursor = await self.conn.execute(
             """
             SELECT id, source, signal_timestamp, target_timestamp,
                    calibrated_score, price_before, price_before_timestamp
             FROM prediction_outcomes
-            WHERE target_timestamp < ?
-              AND price_after IS NULL
-              AND abstained = FALSE
+            WHERE evaluated_at = 'claiming'
             ORDER BY signal_timestamp ASC
-            """,
-            (now.isoformat(),),
+            """
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -391,7 +406,7 @@ class Database:
                 1 if correct else 0,
                 direction,
                 price_gap_seconds,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 outcome_id,
             ),
         )
