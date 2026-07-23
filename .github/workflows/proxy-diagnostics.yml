@@ -102,7 +102,7 @@ jobs:
                 ("legacy_22225", with_endpoint("zproxy.lum-superproxy.io", 22225)),
             ]
 
-            def curl_status(proxy_url: str, target: str) -> tuple[int, str, str]:
+            def curl_status(proxy_url: str, target: str):
                 env = os.environ.copy()
                 env.pop("NO_PROXY", None)
                 env.pop("no_proxy", None)
