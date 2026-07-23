@@ -153,6 +153,39 @@ to anchor phrases. The all-MiniLM-L6-v2 embedding space does not distinguish
 **Recommendation:** Expand labeled dataset beyond 154 posts, then evaluate
 fine-tuned classifier vs. hybrid LLM approach.
 
+## Post-Audit: Renaming of Multi-Dimensional Indices (Jul 2026)
+
+Following the audit findings, the multi-dimensional indices were renamed to
+honestly reflect what they measure — narrow literal-phrase detection, not
+sophisticated psychological inference.
+
+### Old vs new names
+
+| Old name | New API field | What it actually measures |
+|----------|--------------|--------------------------|
+| `fear_index` | `explicit_fear_phrase_rate` | % of posts containing literal panic/capitulation phrases (e.g. "panic sell") |
+| `euphoria_index` | `explicit_euphoria_phrase_rate` | % of posts containing literal moon/FOMO phrases (e.g. "to the moon") |
+| `activity_level` | `warning_scam_phrase_rate` | % of posts containing scam alerts and exchange complaints (e.g. "scam", "withdrawal") |
+
+### What changed
+
+- **API responses** now include both old and new field names. The old names are
+  deprecated aliases and will be removed in the next release.
+- **Internal variable names** in the signal detector were updated from
+  `fear_index` → `explicit_fear_rate`, `euphoria_index` → `explicit_euphoria_rate`,
+  `activity_level` → `warning_scam_rate` to reflect the reduced scope.
+- **Frontend labels** were updated from "Fear", "Euphoria", "Activity" to
+  "Explicit fear phrases", "Explicit euphoria phrases", "Warning/scam phrases"
+  with tooltips explaining exactly what triggers each gauge.
+
+### Why this matters
+
+The audit showed that only **4.15% of posts trigger any fear signal** and
+**4.27% trigger euphoria** — 91.8% register neither. The original names
+(fear_index, euphoria_index) implied a broad psychological measurement that
+the implementation could not deliver. The new names set correct expectations:
+these are high-precision, low-recall literal phrase detectors.
+
 ## Files Modified
 
 | File | Change |
@@ -160,3 +193,11 @@ fine-tuned classifier vs. hybrid LLM approach.
 | `crypto_sentiment_crawler/backfill.py` | Store only selftext in content |
 | `crypto_sentiment_crawler/processing/user_sentiment.py` | Paragraph dedup + title weight 0.4→0.2 |
 | `crypto_sentiment_crawler/processing/semantic_sentiment.py` | tanh 5→3 + 33 neutral anchors |
+| `crypto_sentiment_crawler/dashboard/schemas.py` | Added `explicit_fear_phrase_rate`, `explicit_euphoria_phrase_rate`, `warning_scam_phrase_rate` alongside deprecated aliases |
+| `crypto_sentiment_crawler/dashboard/routes.py` | Populate new field names in all API responses |
+| `crypto_sentiment_crawler/signals/detector.py` | Renamed internal vars from `fear_index`→`explicit_fear_rate` etc. |
+| `crypto_sentiment_crawler/signals/api.py` | Added new fields to `MarketSummary` model |
+| `crypto_sentiment_crawler/signals/service.py` | Populate new keys alongside deprecated ones |
+| `dashboard-frontend/src/components/CrowdGauges.jsx` | Updated labels, tooltips, prop names |
+| `dashboard-frontend/src/pages/Dashboard.jsx` | Pass new prop names to CrowdGauges |
+| `dashboard-frontend/src/pages/BlogPost.jsx` | Added note about the renaming |

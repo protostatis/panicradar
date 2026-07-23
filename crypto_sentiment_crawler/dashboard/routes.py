@@ -139,9 +139,14 @@ async def get_dashboard_summary():
             btc_price=price["price"],
             btc_change_24h=round(change_24h, 2) if change_24h else None,
             btc_change_7d=round(change_7d, 2) if change_7d else None,
+            # Deprecated — remove in next release
             fear_index=round(sentiment["fear_index"], 3),
             euphoria_index=round(sentiment["euphoria_index"], 3),
             activity_level=round(sentiment["activity_level"], 3),
+            # New honest names
+            explicit_fear_phrase_rate=round(sentiment["fear_index"], 3),
+            explicit_euphoria_phrase_rate=round(sentiment["euphoria_index"], 3),
+            warning_scam_phrase_rate=round(sentiment["activity_level"], 3),
         )
     finally:
         conn.close()
@@ -172,9 +177,14 @@ async def get_dashboard_history(
                 sentiment_score=round(point["sentiment_score"], 3),
                 btc_price=point["btc_price"],
                 fear_greed_index=point["fear_greed_index"],
+                # Deprecated — remove in next release
                 fear_index=round(point.get("fear_index", 0), 4),
                 euphoria_index=round(point.get("euphoria_index", 0), 4),
                 activity_level=round(point.get("activity_level", 0), 4),
+                # New honest names
+                explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
             )
             for point in merged
         ]
@@ -367,9 +377,14 @@ async def get_source_history(
                     timestamp=point["timestamp"],
                     date=point["date"],
                     sentiment_score=round(point["sentiment_score"], 3),
+                    # Deprecated — remove in next release
                     fear_index=round(point.get("fear_index", 0), 4),
                     euphoria_index=round(point.get("euphoria_index", 0), 4),
                     activity_level=round(point.get("activity_level", 0), 4),
+                    # New honest names
+                    explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                    explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                    warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
                     sample_size=point["sample_size"],
                 )
                 for point in history
@@ -400,9 +415,14 @@ async def get_all_sources_history(
                     timestamp=point["timestamp"],
                     date=point["date"],
                     sentiment_score=round(point["sentiment_score"], 3),
+                    # Deprecated — remove in next release
                     fear_index=round(point.get("fear_index", 0), 4),
                     euphoria_index=round(point.get("euphoria_index", 0), 4),
                     activity_level=round(point.get("activity_level", 0), 4),
+                    # New honest names
+                    explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                    explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                    warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
                     sample_size=point["sample_size"],
                 )
                 for point in history
