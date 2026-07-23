@@ -105,17 +105,25 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          RESIDENTIAL_PROXY: ${{ secrets.RESIDENTIAL_PROXY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 20m
+          envs: RESIDENTIAL_PROXY
           script: |
             set -e
 
             echo "========== DEPLOYMENT START: ${{ github.ref_name }} =========="
 
             cd /home/ec2-user/crypto_sentiment_crawler
+
+            if [ -z "${RESIDENTIAL_PROXY:-}" ]; then
+              echo "ERROR: RESIDENTIAL_PROXY must be configured before a production deployment."
+              exit 1
+            fi
 
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
@@ -197,6 +205,32 @@ jobs:
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
+            # Verify the release image can reach crawlable Reddit HTML through
+            # the residential proxy before replacing the running services.
+            echo "Checking Reddit proxy access before replacing containers..."
+            if ! PROXY_URL="$RESIDENTIAL_PROXY" docker run --rm \
+              --network crypto-sentiment_crypto-net \
+              -e PROXY_URL \
+              crypto-sentiment-crawler:latest \
+              uv run python -c '
+            import asyncio
+
+            from crypto_sentiment_crawler.crawler.fetcher import Fetcher
+
+
+            async def main() -> None:
+                async with Fetcher(randomize_delay=False, timeout=15.0) as fetcher:
+                    result = await fetcher.fetch("https://old.reddit.com/r/bitcoin/new/", rate_limit=1.0)
+                if not result.success or "data-timestamp" not in result.content:
+                    raise RuntimeError("Reddit proxy canary failed")
+
+
+            asyncio.run(main())
+            '; then
+              echo "ERROR: Reddit proxy canary failed; keeping existing services running."
+              exit 1
+            fi
+
             # ========== SYNC CONFIG FILES ==========
             mkdir -p /opt/crypto-sentiment/dashboard-frontend
             cp dashboard-frontend/blocklist.conf /opt/crypto-sentiment/dashboard-frontend/blocklist.conf
@@ -272,16 +306,17 @@ jobs:
               crypto-sentiment-frontend:latest
 
             echo "Starting crawler..."
-            docker run -d --name crypto-crawler --restart unless-stopped \
+            PROXY_URL="$RESIDENTIAL_PROXY" docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
               $CRAWLER_ENV_ARGS \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
-              -e PROXY_URL= \
+              -e PROXY_URL \
               -e RESIDENTIAL_PROXY= \
               crypto-sentiment-crawler:latest \
               uv run crawler background --crawl-interval 60
+            unset RESIDENTIAL_PROXY
 
             echo "Starting signals bot..."
             docker run -d --name crypto-signals --restart unless-stopped \
