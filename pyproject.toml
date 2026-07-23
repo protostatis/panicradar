@@ -10,6 +10,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
+    "pyunbrowser==0.0.14",
     # Reddit API (backup)
     "asyncpraw>=7.7.0",
     # Sentiment Analysis

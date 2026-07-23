@@ -79,9 +79,10 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
    sudo chown ec2-user:ec2-user /opt/crypto-sentiment
    ```
 6. **Create `.env` file** at `/opt/crypto-sentiment/.env` with API keys (see `.env.docker.example` for template)
-7. **Set up WireGuard VPN for Reddit** (see below)
-8. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
-9. **Set up daily S3 backup cron:**
+7. **Set up WireGuard VPN for normal crawler egress** (see below)
+8. **Set up the Reddit Unbrowser solver** (see `REDDIT_UNBROWSER_SETUP.md`)
+9. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
+10. **Set up daily S3 backup cron:**
    ```bash
    crontab -e
    # Add: 0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh
@@ -112,26 +113,24 @@ through host NAT.
    bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
    ```
 
-3. **Deploy the application.** Release deploys also run the setup script after
-   Docker images are pulled and before the crawler starts.
+3. **Deploy the application.** Configure WireGuard once and when its settings
+   change; release deploys preserve the existing `wg0` service.
 
 4. **Verify:**
    ```bash
    # Should show the VPN egress IP, not the EC2 IP
    curl https://ipinfo.io/ip
 
-   # Should return a count greater than 0
-   curl -sL -A "Mozilla/5.0" \
-     https://old.reddit.com/r/cryptocurrency/new/ | grep -c "data-timestamp"
-
    sudo wg show
    ```
 
 ### Behavior
 
-`Fetcher` does not proxy Reddit by default. Reddit traffic leaves the crawler
-container through the EC2 host VPN. `PROXY_URL` remains available only as an
-explicit override for future non-VPN proxy use.
+WireGuard carries ordinary crawler traffic through the host VPN. When the
+release's cookie-backed Unbrowser canary succeeds, the crawler uses that
+transport for Reddit HTML; otherwise only Reddit collection falls back to the
+standard fetcher. See `REDDIT_UNBROWSER_SETUP.md` for the solver verification.
+`PROXY_URL` remains available as an optional generic fallback transport.
 
 ---
 
@@ -158,7 +157,7 @@ df -h
 swapon --show
 ```
 
-### Reddit VPN Issues
+### Reddit Collection Issues
 ```bash
 # Check VPN status
 sudo wg show
@@ -167,10 +166,13 @@ sudo systemctl status wg-quick@wg0
 # Check VPN egress IP
 curl https://ipinfo.io/ip
 
-# Check Reddit through VPN
-curl -sL -A "Mozilla/5.0" \
-  https://old.reddit.com/r/bitcoin/new/ | grep -c "data-timestamp"
+# Check the solver socket without requesting cookie values
+curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+  http://localhost/healthz
 ```
+
+Anonymous Reddit HTML can return `403` even when WireGuard is healthy. Follow
+`REDDIT_UNBROWSER_SETUP.md` to restore the supervised solver and socket forward.
 
 ### S3 Backup Failing ("Unable to locate credentials")
 Verify the instance can reach EC2 metadata:
