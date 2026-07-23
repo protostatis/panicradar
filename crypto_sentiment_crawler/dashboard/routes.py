@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -627,6 +627,151 @@ async def get_panic_score():
         return get_reddit_panic_score(conn)
     finally:
         conn.close()
+
+
+@router.get("/ops/health")
+async def get_ops_health():
+    """
+    Pipeline health monitoring endpoint.
+
+    Checks freshness of price data, sentiment scores, belief updates,
+    and active data sources. Returns a composite health status.
+    """
+    from ..logging_config import logger as ops_logger
+
+    conn = get_db_connection(DB_PATH)
+    now = datetime.now(timezone.utc)
+
+    checks = {}
+    overall_status = "healthy"
+
+    # --- Price freshness ---
+    try:
+        cursor = conn.execute(
+            "SELECT MAX(timestamp) as ts FROM price_data WHERE coin = 'BTC'"
+        )
+        row = cursor.fetchone()
+        if row and row["ts"]:
+            ts = datetime.fromisoformat(row["ts"])
+            # Handle both tz-aware and naive
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+            if age > 1800:  # 30 min → critical
+                checks["price_freshness"] = {"status": "critical", "age_seconds": round(age), "max_age": 1800}
+                overall_status = "unhealthy"
+            elif age > 600:  # 10 min → warn
+                checks["price_freshness"] = {"status": "degraded", "age_seconds": round(age), "max_age": 600}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+            else:
+                checks["price_freshness"] = {"status": "ok", "age_seconds": round(age), "max_age": 600}
+        else:
+            checks["price_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 600}
+            overall_status = "unhealthy"
+    except Exception as e:
+        checks["price_freshness"] = {"status": "error", "message": str(e)}
+        overall_status = "unhealthy"
+
+    # --- Sentiment freshness ---
+    try:
+        cursor = conn.execute(
+            "SELECT MAX(timestamp) as ts FROM user_sentiment_scores"
+        )
+        row = cursor.fetchone()
+        if row and row["ts"]:
+            ts = datetime.fromisoformat(row["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+            if age > 21600:  # 6 hr → critical
+                checks["sentiment_freshness"] = {"status": "critical", "age_seconds": round(age), "max_age": 21600}
+                overall_status = "unhealthy"
+            elif age > 3600:  # 1 hr → warn
+                checks["sentiment_freshness"] = {"status": "degraded", "age_seconds": round(age), "max_age": 3600}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+            else:
+                checks["sentiment_freshness"] = {"status": "ok", "age_seconds": round(age), "max_age": 3600}
+        else:
+            checks["sentiment_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 3600}
+            overall_status = "unhealthy"
+    except Exception as e:
+        checks["sentiment_freshness"] = {"status": "error", "message": str(e)}
+        overall_status = "unhealthy"
+
+    # --- Belief update freshness ---
+    try:
+        state_path = Path(STATE_PATH)
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            last_update = state.get("last_belief_update")
+            if last_update:
+                ts = datetime.fromisoformat(last_update)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age = (now - ts).total_seconds()
+                if age > 7200:  # 2 hr → critical
+                    checks["belief_update"] = {"status": "critical", "age_seconds": round(age), "max_age": 7200}
+                    overall_status = "unhealthy"
+                elif age > 2700:  # 45 min → warn
+                    checks["belief_update"] = {"status": "degraded", "age_seconds": round(age), "max_age": 2700}
+                    if overall_status != "unhealthy":
+                        overall_status = "degraded"
+                else:
+                    checks["belief_update"] = {"status": "ok", "age_seconds": round(age), "max_age": 2700}
+            else:
+                checks["belief_update"] = {"status": "unknown", "age_seconds": None, "max_age": 2700}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+        else:
+            checks["belief_update"] = {"status": "unknown", "age_seconds": None, "max_age": 2700}
+            if overall_status != "unhealthy":
+                overall_status = "degraded"
+    except Exception as e:
+        checks["belief_update"] = {"status": "error", "message": str(e)}
+        overall_status = "unhealthy"
+
+    # --- Active sources ---
+    try:
+        cursor = conn.execute(
+            "SELECT COUNT(DISTINCT source) as count FROM sentiment_raw WHERE timestamp >= datetime('now', '-24 hours')"
+        )
+        row = cursor.fetchone()
+        count = row["count"] if row else 0
+        if count == 0:
+            checks["active_sources"] = {"status": "degraded", "count": 0, "min": 1}
+            if overall_status != "unhealthy":
+                overall_status = "degraded"
+        else:
+            checks["active_sources"] = {"status": "ok", "count": count, "min": 1}
+    except Exception as e:
+        checks["active_sources"] = {"status": "error", "message": str(e)}
+        overall_status = "unhealthy"
+
+    conn.close()
+
+    # Log degraded/unhealthy
+    if overall_status != "healthy":
+        ops_logger.warning(
+            "Health check: %s — %s",
+            overall_status,
+            {
+                k: v.get("status") for k, v in checks.items()
+            },
+        )
+
+    result = {
+        "status": overall_status,
+        "timestamp": now.isoformat(),
+        "checks": checks,
+    }
+
+    if overall_status == "unhealthy":
+        from fastapi import HTTPException as FastAPIHTTPException
+        raise FastAPIHTTPException(status_code=503, detail=result)
+
+    return result
 
 
 @router.get("/news/trending", response_model=TrendingResponse)

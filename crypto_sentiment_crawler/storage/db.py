@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -120,6 +120,26 @@ CREATE TABLE IF NOT EXISTS confounders (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_confounders_timestamp ON confounders(timestamp);
+
+-- Persistent prediction outcome ledger for auditable evaluation
+CREATE TABLE IF NOT EXISTS prediction_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    signal_timestamp TIMESTAMP NOT NULL,
+    target_timestamp TIMESTAMP NOT NULL,
+    calibrated_score REAL,
+    price_before REAL,
+    price_after REAL,
+    price_before_timestamp TIMESTAMP,
+    price_after_timestamp TIMESTAMP,
+    direction TEXT,
+    correct BOOLEAN,
+    abstained BOOLEAN DEFAULT FALSE,
+    price_gap_seconds REAL,
+    evaluated_at TIMESTAMP,
+    evaluator_version TEXT,
+    UNIQUE(source, signal_timestamp, evaluator_version)
+);
 """
 
 MIGRATIONS = [
@@ -279,3 +299,135 @@ class Database:
             )
             for row in rows
         ]
+
+    # ── Prediction outcome ledger ──────────────────────────────────────────
+
+    async def upsert_outcome(
+        self,
+        source: str,
+        signal_timestamp: datetime,
+        target_timestamp: datetime,
+        calibrated_score: float | None = None,
+        price_before: float | None = None,
+        price_before_timestamp: datetime | None = None,
+        evaluator_version: str = "1.0",
+    ) -> int:
+        """Insert or update an outcome row (idempotent via UNIQUE constraint).
+
+        Returns the row id.
+        """
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO prediction_outcomes
+                (source, signal_timestamp, target_timestamp, calibrated_score,
+                 price_before, price_before_timestamp, evaluator_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, signal_timestamp, evaluator_version) DO UPDATE SET
+                target_timestamp = excluded.target_timestamp,
+                calibrated_score = excluded.calibrated_score,
+                price_before = excluded.price_before,
+                price_before_timestamp = excluded.price_before_timestamp
+            """,
+            (
+                source.lower(),
+                signal_timestamp.isoformat(),
+                target_timestamp.isoformat(),
+                calibrated_score,
+                price_before,
+                price_before_timestamp.isoformat() if price_before_timestamp else None,
+                evaluator_version,
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid or 0
+
+    async def get_pending_outcomes(
+        self, now: datetime | None = None
+    ) -> list[dict]:
+        """Find outcomes whose target_timestamp has elapsed but haven't been evaluated.
+
+        Returns rows where target_timestamp < now AND price_after IS NULL.
+        """
+        now = now or datetime.utcnow()
+        cursor = await self.conn.execute(
+            """
+            SELECT id, source, signal_timestamp, target_timestamp,
+                   calibrated_score, price_before, price_before_timestamp
+            FROM prediction_outcomes
+            WHERE target_timestamp < ?
+              AND price_after IS NULL
+              AND abstained = FALSE
+            ORDER BY signal_timestamp ASC
+            """,
+            (now.isoformat(),),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def mark_outcome_evaluated(
+        self,
+        outcome_id: int,
+        price_after: float,
+        price_after_timestamp: datetime,
+        correct: bool,
+        direction: str,
+        price_gap_seconds: float | None = None,
+    ) -> None:
+        """Update an outcome row with evaluation results."""
+        await self.conn.execute(
+            """
+            UPDATE prediction_outcomes
+            SET price_after = ?,
+                price_after_timestamp = ?,
+                correct = ?,
+                direction = ?,
+                price_gap_seconds = ?,
+                evaluated_at = ?
+            WHERE id = ?
+            """,
+            (
+                price_after,
+                price_after_timestamp.isoformat(),
+                1 if correct else 0,
+                direction,
+                price_gap_seconds,
+                datetime.utcnow().isoformat(),
+                outcome_id,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_source_performance(
+        self, source: str, days: int = 30
+    ) -> dict:
+        """Compute accuracy and stats for a source from the outcome ledger.
+
+        Returns dict with total_evaluated, correct, accuracy, avg_gap_seconds.
+        """
+        cursor = await self.conn.execute(
+            """
+            SELECT
+                COUNT(*) as total_evaluated,
+                SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END) as correct,
+                AVG(price_gap_seconds) as avg_gap_seconds
+            FROM prediction_outcomes
+            WHERE source = ?
+              AND evaluated_at IS NOT NULL
+              AND correct IS NOT NULL
+              AND evaluated_at >= datetime('now', '-' || ? || ' days')
+            """,
+            (source.lower(), days),
+        )
+        row = await cursor.fetchone()
+        if row is None or row["total_evaluated"] == 0:
+            return {"source": source, "total_evaluated": 0, "correct": 0,
+                    "accuracy": None, "avg_gap_seconds": None}
+        total = row["total_evaluated"]
+        correct = row["correct"]
+        return {
+            "source": source,
+            "total_evaluated": total,
+            "correct": correct,
+            "accuracy": correct / total if total > 0 else None,
+            "avg_gap_seconds": row["avg_gap_seconds"],
+        }
