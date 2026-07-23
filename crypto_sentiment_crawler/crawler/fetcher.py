@@ -10,9 +10,10 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Reddit blocks cloud and some VPN exit IPs. When a proxy is configured, route
-# Reddit and all of its subdomains through it; WireGuard remains the fallback
-# for local deployments without PROXY_URL.
+from .unbrowser_reddit import UnbrowserRedditTransport
+
+# Reddit blocks cloud and some VPN exit IPs. Unbrowser is used when explicitly
+# configured; a conventional proxy remains an optional fallback transport.
 PROXY_REQUIRED_DOMAINS: set[str] = {"reddit.com"}
 
 # Pool of realistic user agents
@@ -104,6 +105,7 @@ class Fetcher:
         randomize_delay: bool = True,
         delay_range: tuple[float, float] = (0.5, 2.0),
         proxy_url: str | None = None,
+        reddit_transport: UnbrowserRedditTransport | None = None,
     ):
         self.default_rate_limit = default_rate_limit
         self.timeout = timeout
@@ -118,6 +120,11 @@ class Fetcher:
         proxy_env = proxy_url or os.environ.get("PROXY_URL", "")
         self.proxies = [p.strip() for p in proxy_env.split(",") if p.strip()]
         self.proxy_index = 0
+        self.reddit_transport = reddit_transport
+        self.reddit_fetch_mode = os.environ.get("REDDIT_FETCH_MODE", "").lower()
+        if self.reddit_transport is not None and not self.reddit_fetch_mode:
+            self.reddit_fetch_mode = "unbrowser"
+        self._reddit_transport_lock = asyncio.Lock()
 
         # HTTP clients (with and without proxy)
         self.client: httpx.AsyncClient | None = None
@@ -146,6 +153,13 @@ class Fetcher:
                 proxy=proxy,
             )
 
+        if self.reddit_fetch_mode == "unbrowser" and self.reddit_transport is None:
+            self.reddit_transport = UnbrowserRedditTransport(
+                os.environ.get("UNBROWSER_COOKIE_SERVICE_URL", ""),
+                cookie_service_socket=os.environ.get("UNBROWSER_COOKIE_SERVICE_SOCKET", ""),
+                cookie_service_token=os.environ.get("UNBROWSER_COOKIE_SERVICE_TOKEN", ""),
+            )
+
     async def close(self) -> None:
         """Close HTTP clients."""
         if self.client:
@@ -154,6 +168,8 @@ class Fetcher:
         if self.proxy_client:
             await self.proxy_client.aclose()
             self.proxy_client = None
+        if self.reddit_transport:
+            await asyncio.to_thread(self.reddit_transport.close)
 
     def _get_next_proxy(self) -> str | None:
         """Get next proxy URL (rotating through list)."""
@@ -260,6 +276,23 @@ class Fetcher:
 
         headers = self._get_headers(extra_headers)
         start_time = time.monotonic()
+
+        if (
+            self.reddit_fetch_mode == "unbrowser"
+            and self._needs_proxy(url)
+            and self.reddit_transport
+        ):
+            async with self._reddit_transport_lock:
+                response = await asyncio.to_thread(self.reddit_transport.fetch, url)
+            return FetchResult(
+                url=url,
+                status_code=response.status_code,
+                content=response.content,
+                headers=response.headers,
+                elapsed_seconds=response.elapsed_seconds,
+                success=response.status_code == 200,
+                error=response.error,
+            )
 
         # Determine if proxy should be used
         use_proxy = force_proxy or (self._needs_proxy(url) and self.proxy_client is not None)

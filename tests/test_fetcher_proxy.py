@@ -1,9 +1,10 @@
-"""Tests for Reddit proxy routing."""
+"""Tests for Reddit transport routing."""
 
 import httpx
 import pytest
 
 from crypto_sentiment_crawler.crawler.fetcher import Fetcher
+from crypto_sentiment_crawler.crawler.unbrowser_reddit import RedditTransportResponse
 
 
 def test_reddit_domains_require_proxy() -> None:
@@ -51,3 +52,45 @@ async def test_reddit_fetch_uses_configured_proxy(monkeypatch) -> None:
 
     assert result.success
     assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_reddit_fetch_uses_unbrowser_transport_when_enabled(monkeypatch) -> None:
+    class FakeTransport:
+        def __init__(self):
+            self.urls: list[str] = []
+
+        def fetch(self, url: str) -> RedditTransportResponse:
+            self.urls.append(url)
+            return RedditTransportResponse(
+                status_code=200,
+                content="<html></html>",
+                headers={},
+                elapsed_seconds=0.01,
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.delenv("REDDIT_FETCH_MODE", raising=False)
+    transport = FakeTransport()
+    async with Fetcher(
+        randomize_delay=False,
+        reddit_transport=transport,  # type: ignore[arg-type]
+    ) as fetcher:
+        result = await fetcher.fetch("https://old.reddit.com/r/bitcoin/new/")
+
+    assert result.success
+    assert transport.urls == ["https://old.reddit.com/r/bitcoin/new/"]
+
+
+@pytest.mark.asyncio
+async def test_unbrowser_transport_receives_the_solver_token(monkeypatch) -> None:
+    monkeypatch.setenv("REDDIT_FETCH_MODE", "unbrowser")
+    monkeypatch.setenv("UNBROWSER_COOKIE_SERVICE_SOCKET", "/run/reddit-solver.sock")
+    monkeypatch.setenv("UNBROWSER_COOKIE_SERVICE_TOKEN", "solver-token")
+
+    async with Fetcher(randomize_delay=False) as fetcher:
+        assert fetcher.reddit_transport is not None
+        assert fetcher.reddit_transport.cookie_service_socket == "/run/reddit-solver.sock"
+        assert fetcher.reddit_transport.cookie_service_token == "solver-token"

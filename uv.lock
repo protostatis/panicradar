@@ -443,6 +443,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyunbrowser" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -480,6 +481,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyunbrowser", specifier = "==0.0.14" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
@@ -1766,6 +1768,17 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
+]
+
+[[package]]
+name = "pyunbrowser"
+version = "0.0.14"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/44/9308f2390f790874cb80308da5aaa389f68ce6774c20d27c764e40a9d365/pyunbrowser-0.0.14-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:8b2fb4a381e78a390f28f5193576a6cf8bf72dadce6c11d3903fb83247907a99", size = 4375375, upload-time = "2026-05-25T20:47:18.181Z" },
+    { url = "https://files.pythonhosted.org/packages/13/16/75ec98a16c99a6898e67feecc2c9693c402cdf2a97bee9afc521b56b4418/pyunbrowser-0.0.14-py3-none-macosx_11_0_arm64.whl", hash = "sha256:2cba7c8b1f08e13964491f04e90dafa07500f232e839ab3f89432dafcf07f0c1", size = 4111869, upload-time = "2026-05-25T20:47:20.223Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/08/01f3e312262a68fac4eacede256dab6229104f03485edeeaff6e2c543e54/pyunbrowser-0.0.14-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:068be8f8c6319b3a1c2ee3a71833935eb8419c10e969360bd70d1ac6b8399e49", size = 4555957, upload-time = "2026-05-25T20:47:22.156Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/bc/e13223da68aca733d229e35b67e9fe40fc2e375c175ca7e151fc4012ef52/pyunbrowser-0.0.14-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:f5ca6bc4f299bd114b68f5a016b49e106a3c412b4f2aad74ebdd5ee94710dbd0", size = 4365339, upload-time = "2026-05-25T20:47:23.918Z" },
 ]
 
 [[package]]

@@ -105,14 +105,11 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          RESIDENTIAL_PROXY: ${{ secrets.RESIDENTIAL_PROXY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 20m
-          envs: RESIDENTIAL_PROXY
           script: |
             set -e
 
@@ -120,40 +117,8 @@ jobs:
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
-            if [ -z "${RESIDENTIAL_PROXY:-}" ]; then
-              echo "ERROR: RESIDENTIAL_PROXY must be configured before a production deployment."
-              exit 1
-            fi
-
-            # Bright Data authenticates this proxy from the EC2 public egress.
-            # Do not tunnel the proxy connection through a Mullvad exit IP.
-            echo "Disabling WireGuard for direct residential-proxy egress."
-            sudo systemctl stop wg-quick@wg0 2>/dev/null || true
-            sudo wg-quick down wg0 2>/dev/null || true
-            sudo systemctl disable wg-quick@wg0 2>/dev/null || true
-
-            # wg-quick can leave the host pointed at VPN DNS after shutdown.
-            # Recover DNS before GitHub/GHCR operations on the direct EC2 path.
-            if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
-              sudo systemctl restart systemd-resolved 2>/dev/null || true
-
-              DEFAULT_IFACE=$(/sbin/ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
-              if [ -n "$DEFAULT_IFACE" ] && command -v resolvectl >/dev/null 2>&1; then
-                sudo resolvectl revert wg0 2>/dev/null || true
-                sudo resolvectl dns "$DEFAULT_IFACE" 169.254.169.253 1.1.1.1 8.8.8.8 2>/dev/null || true
-                sudo resolvectl domain "$DEFAULT_IFACE" "~." 2>/dev/null || true
-                sudo resolvectl flush-caches 2>/dev/null || true
-              fi
-
-              if ! getent hosts github.com >/dev/null || ! getent hosts ghcr.io >/dev/null; then
-                echo "systemd DNS recovery did not resolve GitHub hosts; trying /etc/resolv.conf fallback."
-                if ! sudo sh -c 'printf "nameserver 169.254.169.253\nnameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:2 attempts:3\n" > /etc/resolv.conf' 2>/dev/null; then
-                  echo "WARNING: Could not write /etc/resolv.conf; continuing to final DNS check."
-                fi
-              fi
-            fi
-            getent hosts github.com >/dev/null
-            getent hosts ghcr.io >/dev/null
+            # Keep WireGuard active for non-Reddit crawler dependencies. Reddit
+            # HTML is fetched by Unbrowser with a local cookie refresh socket.
 
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.
@@ -166,7 +131,7 @@ jobs:
             git checkout ${{ github.ref_name }}
 
             # Ensure directories exist
-            sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups /opt/crypto-sentiment/logs
+            sudo mkdir -p /opt/crypto-sentiment/data /opt/crypto-sentiment/backups /opt/crypto-sentiment/logs /opt/crypto-sentiment/run
             sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
             CRAWLER_ENV_ARGS=""
@@ -211,148 +176,80 @@ jobs:
             # ========== DOCKER LOGIN & PULL ==========
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            echo "Pulling images..."
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest
+            RELEASE_IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
+            REMOTE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}"
+            if [ -z "$RELEASE_IMAGE_TAG" ]; then
+              echo "ERROR: Release image tag was not produced."
+              exit 1
+            fi
 
-            # Tag images for local use
-            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest crypto-sentiment-crawler:latest
-            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest crypto-sentiment-api:latest
-            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest crypto-sentiment-frontend:latest
-            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest crypto-sentiment-game-server:latest
+            echo "Pulling immutable release images ($RELEASE_IMAGE_TAG)..."
+            for component in crawler api frontend game-server; do
+              local_image="crypto-sentiment-$component"
+              remote_image="$REMOTE_IMAGE-$component:$RELEASE_IMAGE_TAG"
+              # `latest` advances only after a verified deployment, so it is
+              # the known-good image even if a prior candidate pull failed.
+              if docker image inspect "$local_image:latest" >/dev/null 2>&1; then
+                docker tag "$local_image:latest" "$local_image:previous"
+              fi
+              docker pull "$remote_image"
+              docker tag "$remote_image" "$local_image:current"
+              docker image rm "$remote_image" >/dev/null || true
+            done
 
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
 
-            # Verify the credential with curl before testing the crawler's
-            # HTTPX client. Only emit a safe transport category or status.
-            echo "Checking residential proxy credential with curl..."
-            if ! PROXY_CURL_STATUS=$(curl --silent --connect-timeout 10 --max-time 20 \
-              --proxy "$RESIDENTIAL_PROXY" \
-              --output /dev/null --write-out '%{http_code}' \
-              https://example.com/ 2>/dev/null); then
-              echo "ERROR: Residential proxy curl transport failed."
-              exit 1
-            fi
-            if [ "$PROXY_CURL_STATUS" != "200" ]; then
-              echo "ERROR: Residential proxy curl returned HTTP $PROXY_CURL_STATUS."
-              exit 1
-            fi
+            # The local Mac's solver is forwarded as a mode-0600 Unix socket.
+            # A solver outage degrades only Reddit collection; it must not block
+            # unrelated API, frontend, or security releases.
+            REDDIT_SOCKET=/opt/crypto-sentiment/run/reddit-cookie-solver.sock
+            REDDIT_CRAWLER_ARGS="-e REDDIT_FETCH_MODE=standard -e UNBROWSER_COOKIE_SERVICE_SOCKET= -e UNBROWSER_COOKIE_SERVICE_TOKEN="
+            EXPECTED_SOCKET_METADATA="600:$(id -u):$(id -g)"
+            SOCKET_METADATA=$(stat -c '%a:%u:%g' "$REDDIT_SOCKET" 2>/dev/null || true)
 
-            # Verify the release image can reach crawlable Reddit HTML through
-            # the residential proxy before replacing the running services.
-            echo "Checking Reddit proxy access before replacing containers..."
-            if ! PROXY_URL="$RESIDENTIAL_PROXY" docker run --rm \
-              --network crypto-sentiment_crypto-net \
-              -e PROXY_URL \
-              crypto-sentiment-crawler:latest \
+            if [ -S "$REDDIT_SOCKET" ] && [ "$SOCKET_METADATA" = "$EXPECTED_SOCKET_METADATA" ]; then
+              echo "Checking cookie-backed Unbrowser Reddit access before replacing containers..."
+              if docker run --rm \
+                --network crypto-sentiment_crypto-net \
+                $CRAWLER_ENV_ARGS \
+                -v "$REDDIT_SOCKET":/run/reddit-cookie-solver.sock:ro \
+                -e REDDIT_FETCH_MODE=unbrowser \
+                -e UNBROWSER_COOKIE_SERVICE_SOCKET=/run/reddit-cookie-solver.sock \
+                crypto-sentiment-crawler:current \
               uv run python -c '
             import asyncio
-            import os
-            import socket
-            from urllib.parse import urlsplit
 
-            import httpx
-
-
-            def proxy_context() -> tuple[str, str]:
-                try:
-                    parsed = urlsplit(os.environ["PROXY_URL"])
-                    host = parsed.hostname
-                    port = parsed.port
-                except ValueError:
-                    raise RuntimeError("Residential proxy configuration failed (invalid_url)") from None
-
-                if not host or parsed.scheme not in {"http", "https", "socks5", "socks5h"}:
-                    raise RuntimeError("Residential proxy configuration failed (unsupported_url)")
-
-                if host.endswith((".superproxy.io", ".brightdata.com")):
-                    provider = "bright_data"
-                else:
-                    provider = "other"
-
-                credentials = "present" if parsed.username and parsed.password else "missing"
-                context = f"scheme={parsed.scheme}; provider={provider}; credentials={credentials}"
-                return host, str(port or (443 if parsed.scheme == "https" else 80)), context
-
-
-            async def verify_tcp(host: str, port: str, context: str) -> str:
-                try:
-                    socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-                except socket.gaierror:
-                    raise RuntimeError(f"Residential proxy DNS failed ({context})") from None
-
-                try:
-                    _, writer = await asyncio.wait_for(
-                        asyncio.open_connection(host, port),
-                        timeout=10.0,
-                    )
-                    writer.close()
-                    await writer.wait_closed()
-                except (OSError, TimeoutError):
-                    raise RuntimeError(f"Residential proxy TCP failed ({context})") from None
-                return f"{context}; tcp=reachable"
-
-
-            async def fetch(
-                client: httpx.AsyncClient,
-                url: str,
-                context: str,
-            ) -> httpx.Response:
-                try:
-                    return await client.get(
-                        url,
-                        headers={"User-Agent": "Mozilla/5.0"},
-                    )
-                except httpx.ProxyError:
-                    raise RuntimeError(f"Residential proxy transport failed (proxy_error; {context})") from None
-                except httpx.ConnectTimeout:
-                    raise RuntimeError(f"Residential proxy transport failed (connect_timeout; {context})") from None
-                except httpx.ReadTimeout:
-                    raise RuntimeError(f"Residential proxy transport failed (read_timeout; {context})") from None
-                except httpx.ConnectError:
-                    raise RuntimeError(f"Residential proxy transport failed (connect_error; {context})") from None
-                except httpx.RemoteProtocolError:
-                    raise RuntimeError(f"Residential proxy transport failed (remote_protocol_error; {context})") from None
-                except httpx.NetworkError:
-                    raise RuntimeError(f"Residential proxy transport failed (network_error; {context})") from None
+            from crypto_sentiment_crawler.crawler.fetcher import Fetcher
 
 
             async def main() -> None:
-                host, port, context = proxy_context()
-                context = await verify_tcp(host, port, context)
-
-                try:
-                    client = httpx.AsyncClient(
-                        timeout=httpx.Timeout(15.0),
-                        follow_redirects=True,
-                        proxy=os.environ["PROXY_URL"],
+                async with Fetcher(randomize_delay=False) as fetcher:
+                    if fetcher.reddit_transport is None:
+                        raise RuntimeError("Reddit Unbrowser transport was not configured")
+                    cookies = await asyncio.to_thread(
+                        fetcher.reddit_transport._request_cookies,
+                        "https://old.reddit.com/r/Bitcoin/new/",
                     )
-                except Exception:
-                    raise RuntimeError(f"Residential proxy configuration failed ({context})") from None
-
-                async with client:
-                    neutral = await fetch(client, "https://example.com/", context)
-                    if neutral.status_code != 200:
-                        raise RuntimeError(
-                            f"Residential proxy neutral canary returned HTTP {neutral.status_code} ({context})"
-                        )
-
-                    reddit = await fetch(client, "https://old.reddit.com/r/bitcoin/new/", context)
-                if reddit.status_code != 200:
-                    raise RuntimeError(
-                        f"Reddit proxy canary returned HTTP {reddit.status_code} ({context})"
+                    if not cookies:
+                        raise RuntimeError("Reddit cookie solver returned no cookies")
+                    result = await fetcher.fetch(
+                        "https://old.reddit.com/r/Bitcoin/new/",
+                        rate_limit=1.0,
                     )
-                if "data-timestamp" not in reddit.text:
-                    raise RuntimeError("Reddit proxy canary returned unexpected listing markup")
+                if result.status_code != 200 or "data-timestamp" not in result.content:
+                    raise RuntimeError(f"Reddit Unbrowser canary failed (status={result.status_code})")
 
 
             asyncio.run(main())
             '; then
-              echo "ERROR: Reddit proxy canary failed; keeping existing services running."
-              exit 1
+                REDDIT_CRAWLER_ARGS="-v $REDDIT_SOCKET:/run/reddit-cookie-solver.sock:ro -e REDDIT_FETCH_MODE=unbrowser -e UNBROWSER_COOKIE_SERVICE_SOCKET=/run/reddit-cookie-solver.sock"
+                echo "Reddit Unbrowser canary passed."
+              else
+                echo "WARNING: Reddit Unbrowser canary failed; deploying with standard Reddit fetching."
+              fi
+            else
+              echo "WARNING: Reddit cookie solver socket is unavailable or has unsafe permissions ($SOCKET_METADATA; expected $EXPECTED_SOCKET_METADATA); deploying with standard Reddit fetching."
             fi
 
             # ========== SYNC CONFIG FILES ==========
@@ -360,9 +257,57 @@ jobs:
             cp dashboard-frontend/blocklist.conf /opt/crypto-sentiment/dashboard-frontend/blocklist.conf
 
             # ========== STOP OLD CONTAINERS ==========
+            # Keep stopped containers until the replacement set passes health
+            # checks so a failed rollout can restore the known-good set.
+            SERVICES="crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server"
+            PREVIOUS_SERVICES=""
+            for service in $SERVICES; do
+              if docker inspect "$service-previous" >/dev/null 2>&1; then
+                echo "ERROR: Stale rollback container exists: $service-previous"
+                exit 1
+              fi
+              if docker inspect "$service" >/dev/null 2>&1; then
+                PREVIOUS_SERVICES="$PREVIOUS_SERVICES $service"
+              fi
+            done
+
+            ROLLBACK_ACTIVE=1
+            NEW_CONTAINERS_STARTED=0
+            rollback_on_exit() {
+              exit_code=$?
+              if [ "$exit_code" -eq 0 ] || [ "$ROLLBACK_ACTIVE" -ne 1 ]; then
+                return "$exit_code"
+              fi
+
+              echo "Deployment failed; restoring previous containers..."
+              ROLLBACK_ACTIVE=0
+              if [ "$NEW_CONTAINERS_STARTED" -eq 1 ]; then
+                for service in $SERVICES; do
+                  docker rm -f "$service" >/dev/null 2>&1 || true
+                done
+              fi
+              for service in $PREVIOUS_SERVICES; do
+                if docker inspect "$service-previous" >/dev/null 2>&1; then
+                  docker rename "$service-previous" "$service" || true
+                  docker start "$service" >/dev/null 2>&1 || true
+                elif docker inspect "$service" >/dev/null 2>&1; then
+                  docker start "$service" >/dev/null 2>&1 || true
+                fi
+              done
+              return "$exit_code"
+            }
+            trap 'rollback_on_exit' 0
+
+            # The current service set no longer includes belief-auto.
+            docker stop crypto-belief-auto 2>/dev/null || true
+            docker rm crypto-belief-auto 2>/dev/null || true
+
             echo "Stopping old containers..."
-            docker stop crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server crypto-belief-auto 2>/dev/null || true
-            docker rm crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server crypto-belief-auto 2>/dev/null || true
+            for service in $PREVIOUS_SERVICES; do
+              docker stop "$service"
+              docker rename "$service" "$service-previous"
+            done
+            NEW_CONTAINERS_STARTED=1
 
             # ========== START SERVICES ==========
             echo "Starting API..."
@@ -373,7 +318,7 @@ jobs:
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
-              crypto-sentiment-api:latest
+              crypto-sentiment-api:current
 
             # Wait for API to be healthy with actual health check
             echo "Waiting for API to be healthy..."
@@ -400,7 +345,7 @@ jobs:
               --pids-limit 50 \
               -e NODE_ENV=production \
               -e ALLOWED_ORIGINS=https://panicradar.ai,https://www.panicradar.ai \
-              crypto-sentiment-game-server:latest
+              crypto-sentiment-game-server:current
 
             # Wait for game server health
             echo "Waiting for game server to be healthy..."
@@ -427,20 +372,19 @@ jobs:
               -v /etc/letsencrypt:/etc/letsencrypt:ro \
               -v /opt/crypto-sentiment/logs:/var/log/nginx \
               -v /opt/crypto-sentiment/dashboard-frontend/blocklist.conf:/etc/nginx/conf.d/blocklist.conf:ro \
-              crypto-sentiment-frontend:latest
+              crypto-sentiment-frontend:current
 
             echo "Starting crawler..."
-            PROXY_URL="$RESIDENTIAL_PROXY" docker run -d --name crypto-crawler --restart unless-stopped \
+            docker run -d --name crypto-crawler --restart unless-stopped \
               --network crypto-sentiment_crypto-net \
               $CRAWLER_ENV_ARGS \
               -v /opt/crypto-sentiment/data:/app/data \
               -v /opt/crypto-sentiment/logs:/app/logs \
               -e DATABASE_PATH=/app/data/sentiment.db \
-              -e PROXY_URL \
-              -e RESIDENTIAL_PROXY= \
-              crypto-sentiment-crawler:latest \
+              -e PROXY_URL= \
+              $REDDIT_CRAWLER_ARGS \
+              crypto-sentiment-crawler:current \
               uv run crawler background --crawl-interval 60
-            unset RESIDENTIAL_PROXY
 
             echo "Starting signals bot..."
             docker run -d --name crypto-signals --restart unless-stopped \
@@ -451,7 +395,7 @@ jobs:
               -e DB_PATH=/app/data/sentiment.db \
               -e SIGNAL_CHECK_INTERVAL=30 \
               -e TELEGRAM_CHANNEL_ID=@PanicRadarAlerts \
-              crypto-sentiment-crawler:latest \
+              crypto-sentiment-crawler:current \
               uv run signals bot
 
             # ========== POST-DEPLOY CLEANUP ==========
@@ -471,6 +415,16 @@ jobs:
               docker ps -a
               exit 1
             fi
+
+            ROLLBACK_ACTIVE=0
+            for service in $PREVIOUS_SERVICES; do
+              docker rm "$service-previous" >/dev/null 2>&1 || true
+            done
+            trap - 0
+
+            for component in crawler api frontend game-server; do
+              docker tag "crypto-sentiment-$component:current" "crypto-sentiment-$component:latest"
+            done
 
             echo "All 5 containers running. Checking frontend..."
             if ! curl -sf -o /dev/null https://localhost --insecure 2>/dev/null; then
