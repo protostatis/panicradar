@@ -249,7 +249,7 @@ jobs:
                 echo "WARNING: Reddit Unbrowser canary failed; deploying with standard Reddit fetching."
               fi
             else
-              echo "WARNING: Reddit cookie solver socket is unavailable or has unsafe permissions ($SOCKET_METADATA); deploying with standard Reddit fetching."
+              echo "WARNING: Reddit cookie solver socket is unavailable or has unsafe permissions ($SOCKET_METADATA; expected $EXPECTED_SOCKET_METADATA); deploying with standard Reddit fetching."
             fi
 
             # ========== SYNC CONFIG FILES ==========
@@ -272,6 +272,7 @@ jobs:
             done
 
             ROLLBACK_ACTIVE=1
+            NEW_CONTAINERS_STARTED=0
             rollback_on_exit() {
               exit_code=$?
               if [ "$exit_code" -eq 0 ] || [ "$ROLLBACK_ACTIVE" -ne 1 ]; then
@@ -280,9 +281,11 @@ jobs:
 
               echo "Deployment failed; restoring previous containers..."
               ROLLBACK_ACTIVE=0
-              for service in $SERVICES; do
-                docker rm -f "$service" >/dev/null 2>&1 || true
-              done
+              if [ "$NEW_CONTAINERS_STARTED" -eq 1 ]; then
+                for service in $SERVICES; do
+                  docker rm -f "$service" >/dev/null 2>&1 || true
+                done
+              fi
               for service in $PREVIOUS_SERVICES; do
                 if docker inspect "$service-previous" >/dev/null 2>&1; then
                   docker rename "$service-previous" "$service" || true
@@ -304,6 +307,7 @@ jobs:
               docker stop "$service"
               docker rename "$service" "$service-previous"
             done
+            NEW_CONTAINERS_STARTED=1
 
             # ========== START SERVICES ==========
             echo "Starting API..."

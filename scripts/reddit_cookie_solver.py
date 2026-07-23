@@ -7,7 +7,6 @@ import json
 import os
 import subprocess
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -57,7 +56,7 @@ class RedditCookieSolver:
                 launch_args.append("--headless")
             launch_args.extend(["--stealth", "https://old.reddit.com/r/Bitcoin/new/"])
             self._run(*launch_args)
-            time.sleep(2)
+            self._run("wait", "--timeout", "15", timeout=20)
             raw = self._run(
                 "cookies", "get", "--urls", "https://www.reddit.com", "https://old.reddit.com"
             ).stdout
@@ -136,7 +135,10 @@ def make_handler(solver: RedditCookieSolver, token: str):
                 length = int(self.headers.get("content-length", "0"))
                 if not 0 < length <= MAX_BODY_BYTES:
                     raise ValueError("invalid request length")
-                payload = json.loads(self.rfile.read(length))
+                body = self.rfile.read(length)
+                if len(body) != length:
+                    raise ValueError("truncated request body")
+                payload = json.loads(body)
                 with solve_lock:
                     cookies = solver.solve(str(payload.get("url", "")))
                 # Cookie values are returned only to the local socket peer and are never logged.

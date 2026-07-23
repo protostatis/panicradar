@@ -122,6 +122,8 @@ class Fetcher:
         self.proxy_index = 0
         self.reddit_transport = reddit_transport
         self.reddit_fetch_mode = os.environ.get("REDDIT_FETCH_MODE", "").lower()
+        if self.reddit_transport is not None and not self.reddit_fetch_mode:
+            self.reddit_fetch_mode = "unbrowser"
         self._reddit_transport_lock = asyncio.Lock()
 
         # HTTP clients (with and without proxy)

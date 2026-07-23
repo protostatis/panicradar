@@ -72,7 +72,7 @@ async def test_reddit_fetch_uses_unbrowser_transport_when_enabled(monkeypatch) -
         def close(self) -> None:
             pass
 
-    monkeypatch.setenv("REDDIT_FETCH_MODE", "unbrowser")
+    monkeypatch.delenv("REDDIT_FETCH_MODE", raising=False)
     transport = FakeTransport()
     async with Fetcher(
         randomize_delay=False,

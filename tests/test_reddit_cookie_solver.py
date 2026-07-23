@@ -80,7 +80,6 @@ def test_solver_launches_headlessly_by_default(monkeypatch) -> None:
         "scripts.reddit_cookie_solver.subprocess.run",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr("scripts.reddit_cookie_solver.time.sleep", lambda _seconds: None)
 
     cookies = solver.solve("https://old.reddit.com/r/Bitcoin/new/")
 
@@ -93,3 +92,4 @@ def test_solver_launches_headlessly_by_default(monkeypatch) -> None:
         "--stealth",
         "https://old.reddit.com/r/Bitcoin/new/",
     )
+    assert launch_calls[1] == ("wait", "--timeout", "15")

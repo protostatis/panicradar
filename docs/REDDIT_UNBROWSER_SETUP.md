@@ -5,10 +5,10 @@ WireGuard exit. The crawler can use Unbrowser for existing `old.reddit.com`
 listing, thread, and comment parsing. It asks a Mac-only solver for fresh
 cookies only after Reddit returns a `403` or an HTTP-200 blocked/welcome page.
 
-The application never logs cookie values or writes them to its database. The
-Unbrowser client clears its cookies on orderly shutdown, but its behavior after
-a crash must be treated as runtime-dependent; use an ephemeral crawler image
-filesystem and do not rely on that cleanup as a security boundary.
+The integration does not intentionally log cookie values or write them to its
+database. The Unbrowser client clears its cookies on orderly shutdown, but its
+behavior after a crash must be treated as runtime-dependent; use an ephemeral
+crawler image filesystem and do not rely on that cleanup as a security boundary.
 
 ## Prerequisites
 
@@ -25,10 +25,14 @@ filesystem and do not rely on that cleanup as a security boundary.
 ## Configure the shared solver token
 
 Generate one random token on the Mac. Do not pass it on a command line or add
-it to the repository.
+it to the repository. This export is for a manual foreground diagnostic only.
 
 ```bash
 export REDDIT_COOKIE_SOLVER_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+/usr/bin/security add-generic-password -U \
+  -a reddit-crawler \
+  -s panicradar-reddit-solver-token \
+  -w "$REDDIT_COOKIE_SOLVER_TOKEN"
 ```
 
 Put the same value in EC2's protected crawler environment file:
@@ -55,8 +59,10 @@ python3 scripts/reddit_cookie_solver.py \
   --cookie-name reddit_session
 ```
 
-The token is read from `REDDIT_COOKIE_SOLVER_TOKEN`. The solver does not return
-cookies from arbitrary domains or cookie names outside this allowlist.
+The manual solver reads the token from `REDDIT_COOKIE_SOLVER_TOKEN`. The
+launchd-managed solver reads the same token from macOS Keychain service
+`panicradar-reddit-solver-token`, account `reddit-crawler`. The solver does not
+return cookies from arbitrary domains or cookie names outside this allowlist.
 It launches Chrome headlessly by default; use `--headed` only for local
 diagnostics.
 
