@@ -29,6 +29,35 @@ MIN_SAMPLES = 20
 PREDICTION_LAG = 4
 
 
+async def _find_ghost_sources(db: "Database", beliefs: dict) -> list[str]:
+    """
+    Find ghost sources in beliefs that have zero rows in sentiment_raw.
+
+    A source is a ghost if:
+    - It does NOT start with "reddit_" (Reddit sources are always valid)
+    - It has zero rows in the sentiment_raw table
+
+    Returns a list of ghost source names (lowercased).
+    """
+    if not beliefs:
+        return []
+
+    ghost_sources = []
+    for source in beliefs:
+        src_lower = source.lower()
+        if src_lower.startswith("reddit_"):
+            continue
+        cursor = await db.conn.execute(
+            "SELECT COUNT(*) FROM sentiment_raw WHERE source = ?",
+            (src_lower,),
+        )
+        (count,) = await cursor.fetchone() or (0,)
+        if count == 0:
+            ghost_sources.append(src_lower)
+
+    return ghost_sources
+
+
 async def compute_source_accuracy(
     db: Database,
     lag_hours: int = PREDICTION_LAG,
@@ -275,14 +304,26 @@ async def update_orchestrator_beliefs(
     await db.connect()
 
     try:
-        # Compute source accuracy with configurable lookback (Change 6)
+        # ── Filter out ghost sources (non-Reddit with zero sentiment_raw rows) ──
+        ghost_sources = await _find_ghost_sources(db, current_beliefs)
+        if ghost_sources:
+            logger.warning(
+                "Removing %d ghost source(s) with zero raw posts: %s",
+                len(ghost_sources),
+                ", ".join(ghost_sources),
+            )
+            for src in ghost_sources:
+                current_beliefs.pop(src, None)
+                current_beliefs.pop(src.lower(), None)
+
+        # Compute source accuracy
         source_accuracy = await compute_source_accuracy(db, lookback_days=lookback_days)
         logger.info(f"Computed accuracy for {len(source_accuracy)} sources")
 
         # Update beliefs
         updated_beliefs = update_belief_priors(current_beliefs, source_accuracy)
 
-        # Change 5: Increment belief version
+        # Increment belief version
         state['belief_version'] = state.get('belief_version', 0) + 1
         state["beliefs"] = updated_beliefs
         state["last_belief_update"] = datetime.now(timezone.utc).isoformat()
