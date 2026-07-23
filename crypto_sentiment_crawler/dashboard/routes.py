@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -22,6 +22,7 @@ from .queries import (
     get_latest_sentiment,
     get_price_change,
     get_price_history,
+    get_published_weight_table,
     get_reddit_panic_score,
     get_sentiment_history,
     get_source_sentiment_history,
@@ -138,9 +139,14 @@ async def get_dashboard_summary():
             btc_price=price["price"],
             btc_change_24h=round(change_24h, 2) if change_24h else None,
             btc_change_7d=round(change_7d, 2) if change_7d else None,
+            # Deprecated — remove in next release
             fear_index=round(sentiment["fear_index"], 3),
             euphoria_index=round(sentiment["euphoria_index"], 3),
             activity_level=round(sentiment["activity_level"], 3),
+            # New honest names
+            explicit_fear_phrase_rate=round(sentiment["fear_index"], 3),
+            explicit_euphoria_phrase_rate=round(sentiment["euphoria_index"], 3),
+            warning_scam_phrase_rate=round(sentiment["activity_level"], 3),
         )
     finally:
         conn.close()
@@ -171,9 +177,14 @@ async def get_dashboard_history(
                 sentiment_score=round(point["sentiment_score"], 3),
                 btc_price=point["btc_price"],
                 fear_greed_index=point["fear_greed_index"],
+                # Deprecated — remove in next release
                 fear_index=round(point.get("fear_index", 0), 4),
                 euphoria_index=round(point.get("euphoria_index", 0), 4),
                 activity_level=round(point.get("activity_level", 0), 4),
+                # New honest names
+                explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
             )
             for point in merged
         ]
@@ -250,20 +261,31 @@ async def get_bayesian_beliefs():
     """
     state = load_bayesian_beliefs(STATE_PATH)
 
-    # Load accuracy data from source_weights table and per-source crawl counts from DB
+    # Load accuracy data from the published weight snapshot and per-source crawl counts.
     conn = get_db_connection(DB_PATH)
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT source, accuracy, is_contrarian FROM source_weights"
-        )
-        source_weights = {
-            row["source"]: {
-                "accuracy": row["accuracy"],
-                "is_contrarian": bool(row["is_contrarian"]),
+        weight_table = get_published_weight_table(conn)
+        if weight_table == "active_source_weights":
+            cursor.execute("SELECT belief_version FROM belief_publications WHERE id = 1")
+            publication = cursor.fetchone()
+            published_version = publication["belief_version"] if publication else None
+        else:
+            published_version = state.get("belief_version")
+
+        if published_version == state.get("belief_version"):
+            cursor.execute(
+                f"SELECT source, accuracy, is_contrarian FROM {weight_table}"
+            )
+            source_weights = {
+                row["source"]: {
+                    "accuracy": row["accuracy"],
+                    "is_contrarian": bool(row["is_contrarian"]),
+                }
+                for row in cursor.fetchall()
             }
-            for row in cursor.fetchall()
-        }
+        else:
+            source_weights = {}
 
         # Get per-source crawl counts from sentiment_raw (has source column)
         cursor.execute(
@@ -355,9 +377,14 @@ async def get_source_history(
                     timestamp=point["timestamp"],
                     date=point["date"],
                     sentiment_score=round(point["sentiment_score"], 3),
+                    # Deprecated — remove in next release
                     fear_index=round(point.get("fear_index", 0), 4),
                     euphoria_index=round(point.get("euphoria_index", 0), 4),
                     activity_level=round(point.get("activity_level", 0), 4),
+                    # New honest names
+                    explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                    explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                    warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
                     sample_size=point["sample_size"],
                 )
                 for point in history
@@ -388,9 +415,14 @@ async def get_all_sources_history(
                     timestamp=point["timestamp"],
                     date=point["date"],
                     sentiment_score=round(point["sentiment_score"], 3),
+                    # Deprecated — remove in next release
                     fear_index=round(point.get("fear_index", 0), 4),
                     euphoria_index=round(point.get("euphoria_index", 0), 4),
                     activity_level=round(point.get("activity_level", 0), 4),
+                    # New honest names
+                    explicit_fear_phrase_rate=round(point.get("fear_index", 0), 4),
+                    explicit_euphoria_phrase_rate=round(point.get("euphoria_index", 0), 4),
+                    warning_scam_phrase_rate=round(point.get("activity_level", 0), 4),
                     sample_size=point["sample_size"],
                 )
                 for point in history
@@ -627,6 +659,169 @@ async def get_panic_score():
         return get_reddit_panic_score(conn)
     finally:
         conn.close()
+
+
+@router.get("/ops/health")
+async def get_ops_health():
+    """
+    Pipeline health monitoring endpoint.
+
+    Checks freshness of price data, sentiment scores, belief updates,
+    and active data sources. Returns a composite health status.
+    """
+    from ..logging_config import logger as ops_logger
+
+    conn = get_db_connection(DB_PATH)
+    now = datetime.now(timezone.utc)
+
+    checks = {}
+    overall_status = "healthy"
+
+    # --- Price freshness ---
+    try:
+        cursor = conn.execute(
+            "SELECT MAX(timestamp) as ts FROM price_data WHERE coin = 'BTC'"
+        )
+        row = cursor.fetchone()
+        if row and row["ts"]:
+            ts = datetime.fromisoformat(row["ts"])
+            # Handle both tz-aware and naive
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+            if age > 1800:  # 30 min → critical
+                checks["price_freshness"] = {"status": "critical", "age_seconds": round(age), "max_age": 1800}
+                overall_status = "unhealthy"
+            elif age > 600:  # 10 min → warn
+                checks["price_freshness"] = {"status": "degraded", "age_seconds": round(age), "max_age": 600}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+            else:
+                checks["price_freshness"] = {"status": "ok", "age_seconds": round(age), "max_age": 600}
+        else:
+            checks["price_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 600}
+            overall_status = "unhealthy"
+    except Exception:
+        ops_logger.exception("Price freshness health check failed")
+        checks["price_freshness"] = {
+            "status": "error",
+            "message": "Unable to check price freshness",
+        }
+        overall_status = "unhealthy"
+
+    # --- Sentiment freshness ---
+    try:
+        cursor = conn.execute(
+            "SELECT MAX(timestamp) as ts FROM user_sentiment_scores"
+        )
+        row = cursor.fetchone()
+        if row and row["ts"]:
+            ts = datetime.fromisoformat(row["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+            if age > 21600:  # 6 hr → critical
+                checks["sentiment_freshness"] = {"status": "critical", "age_seconds": round(age), "max_age": 21600}
+                overall_status = "unhealthy"
+            elif age > 3600:  # 1 hr → warn
+                checks["sentiment_freshness"] = {"status": "degraded", "age_seconds": round(age), "max_age": 3600}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+            else:
+                checks["sentiment_freshness"] = {"status": "ok", "age_seconds": round(age), "max_age": 3600}
+        else:
+            checks["sentiment_freshness"] = {"status": "critical", "age_seconds": None, "max_age": 3600}
+            overall_status = "unhealthy"
+    except Exception:
+        ops_logger.exception("Sentiment freshness health check failed")
+        checks["sentiment_freshness"] = {
+            "status": "error",
+            "message": "Unable to check sentiment freshness",
+        }
+        overall_status = "unhealthy"
+
+    # --- Belief update freshness ---
+    try:
+        state_path = Path(STATE_PATH)
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            last_update = state.get("last_belief_update")
+            if last_update:
+                ts = datetime.fromisoformat(last_update)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age = (now - ts).total_seconds()
+                if age > 7200:  # 2 hr → critical
+                    checks["belief_update"] = {"status": "critical", "age_seconds": round(age), "max_age": 7200}
+                    overall_status = "unhealthy"
+                elif age > 2700:  # 45 min → warn
+                    checks["belief_update"] = {"status": "degraded", "age_seconds": round(age), "max_age": 2700}
+                    if overall_status != "unhealthy":
+                        overall_status = "degraded"
+                else:
+                    checks["belief_update"] = {"status": "ok", "age_seconds": round(age), "max_age": 2700}
+            else:
+                checks["belief_update"] = {"status": "unknown", "age_seconds": None, "max_age": 2700}
+                if overall_status != "unhealthy":
+                    overall_status = "degraded"
+        else:
+            checks["belief_update"] = {"status": "unknown", "age_seconds": None, "max_age": 2700}
+            if overall_status != "unhealthy":
+                overall_status = "degraded"
+    except Exception:
+        ops_logger.exception("Belief update health check failed")
+        checks["belief_update"] = {
+            "status": "error",
+            "message": "Unable to check belief updates",
+        }
+        overall_status = "unhealthy"
+
+    # --- Active sources ---
+    try:
+        cutoff = (now - timedelta(hours=24)).isoformat()
+        cursor = conn.execute(
+            "SELECT COUNT(DISTINCT source) as count "
+            "FROM sentiment_raw WHERE timestamp >= ?",
+            (cutoff,),
+        )
+        row = cursor.fetchone()
+        count = row["count"] if row else 0
+        if count == 0:
+            checks["active_sources"] = {"status": "degraded", "count": 0, "min": 1}
+            if overall_status != "unhealthy":
+                overall_status = "degraded"
+        else:
+            checks["active_sources"] = {"status": "ok", "count": count, "min": 1}
+    except Exception:
+        ops_logger.exception("Active sources health check failed")
+        checks["active_sources"] = {
+            "status": "error",
+            "message": "Unable to check active sources",
+        }
+        overall_status = "unhealthy"
+
+    conn.close()
+
+    # Log degraded/unhealthy
+    if overall_status != "healthy":
+        ops_logger.warning(
+            "Health check: %s — %s",
+            overall_status,
+            {
+                k: v.get("status") for k, v in checks.items()
+            },
+        )
+
+    result = {
+        "status": overall_status,
+        "timestamp": now.isoformat(),
+        "checks": checks,
+    }
+
+    if overall_status == "unhealthy":
+        raise HTTPException(status_code=503, detail=result)
+
+    return result
 
 
 @router.get("/news/trending", response_model=TrendingResponse)

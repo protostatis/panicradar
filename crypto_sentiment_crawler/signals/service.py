@@ -117,7 +117,10 @@ class SignalService:
             sentiment_history.append((ts, weighted_avg))
 
         # Compute latest multi-dimensional averages
-        multi_dimensional = {'activity_level': 0.0, 'fear_index': 0.0, 'euphoria_index': 0.0}
+        multi_dimensional = {
+            'activity_level': 0.0, 'fear_index': 0.0, 'euphoria_index': 0.0,
+            'warning_scam_phrase_rate': 0.0, 'explicit_fear_phrase_rate': 0.0, 'explicit_euphoria_phrase_rate': 0.0,
+        }
         if hourly_multidim:
             latest_hours = sorted(hourly_multidim.keys())[-24:]  # Last 24 hours
             all_activity = []
@@ -128,9 +131,15 @@ class SignalService:
                 all_fear.extend(hourly_multidim[h]['fear'])
                 all_euphoria.extend(hourly_multidim[h]['euphoria'])
             if all_activity:
-                multi_dimensional['activity_level'] = sum(all_activity) / len(all_activity)
-                multi_dimensional['fear_index'] = sum(all_fear) / len(all_fear)
-                multi_dimensional['euphoria_index'] = sum(all_euphoria) / len(all_euphoria)
+                avg_activity = sum(all_activity) / len(all_activity)
+                avg_fear = sum(all_fear) / len(all_fear)
+                avg_euphoria = sum(all_euphoria) / len(all_euphoria)
+                multi_dimensional['activity_level'] = avg_activity
+                multi_dimensional['fear_index'] = avg_fear
+                multi_dimensional['euphoria_index'] = avg_euphoria
+                multi_dimensional['warning_scam_phrase_rate'] = avg_activity
+                multi_dimensional['explicit_fear_phrase_rate'] = avg_fear
+                multi_dimensional['explicit_euphoria_phrase_rate'] = avg_euphoria
 
         # Get price data (last 30 days)
         cursor = await db.conn.execute(
@@ -152,6 +161,7 @@ class SignalService:
     async def check_signals(self) -> Optional[Signal]:
         """Check current conditions for signals."""
         try:
+            self._load_source_weights()
             sentiment_history, price_history, multi_dim = await self._load_data()
 
             if len(sentiment_history) < 10 or len(price_history) < 24:
@@ -189,6 +199,7 @@ class SignalService:
 
     async def get_market_summary(self) -> dict:
         """Get current market summary without requiring a signal."""
+        self._load_source_weights()
         sentiment_history, price_history, multi_dim = await self._load_data()
 
         if len(sentiment_history) < 5 or len(price_history) < 2:
@@ -205,6 +216,9 @@ class SignalService:
         summary['activity_level'] = multi_dim.get('activity_level', 0.0)
         summary['fear_index'] = multi_dim.get('fear_index', 0.0)
         summary['euphoria_index'] = multi_dim.get('euphoria_index', 0.0)
+        summary['warning_scam_phrase_rate'] = multi_dim.get('warning_scam_phrase_rate', 0.0)
+        summary['explicit_fear_phrase_rate'] = multi_dim.get('explicit_fear_phrase_rate', 0.0)
+        summary['explicit_euphoria_phrase_rate'] = multi_dim.get('explicit_euphoria_phrase_rate', 0.0)
         return summary
 
     async def run_once(self) -> Optional[Signal]:

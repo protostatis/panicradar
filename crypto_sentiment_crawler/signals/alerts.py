@@ -490,10 +490,23 @@ class TelegramBot:
 
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT source, weight, accuracy, is_contrarian, sample_size "
-                "FROM source_weights ORDER BY weight DESC LIMIT 10"
-            ).fetchall()
+            belief_version = weight_data.get("belief_version")
+            snapshot_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(source_weight_snapshots)")
+            }
+            if belief_version is None or "belief_version" not in snapshot_columns:
+                rows = conn.execute(
+                    "SELECT source, weight, accuracy, is_contrarian, sample_size "
+                    "FROM source_weights ORDER BY weight DESC LIMIT 10"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT source, weight, accuracy, is_contrarian, sample_size "
+                    "FROM source_weight_snapshots WHERE belief_version = ? "
+                    "ORDER BY weight DESC LIMIT 10",
+                    (belief_version,),
+                ).fetchall()
             conn.close()
 
             if not rows:

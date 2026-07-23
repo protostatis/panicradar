@@ -295,6 +295,10 @@ jobs:
             }
             trap 'rollback_on_exit' 0
 
+            # The current service set no longer includes belief-auto.
+            docker stop crypto-belief-auto 2>/dev/null || true
+            docker rm crypto-belief-auto 2>/dev/null || true
+
             echo "Stopping old containers..."
             for service in $PREVIOUS_SERVICES; do
               docker stop "$service"

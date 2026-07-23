@@ -2,9 +2,9 @@
 
 Uses multi-dimensional sentiment scoring:
 - final_score: Filtered sentiment (excludes bot/scam content)
-- fear_index: Proportion of segments with loss/panic mentions
-- euphoria_index: Proportion of segments with moon/FOMO mentions
-- activity_level: Proportion of segments with scam/warning activity
+- explicit_fear_rate: Proportion of segments with literal loss/panic phrases (e.g. "panic sell")
+- explicit_euphoria_rate: Proportion of segments with literal moon/FOMO phrases (e.g. "to the moon")
+- warning_scam_rate: Proportion of segments with scam alerts and exchange complaints
 """
 
 import statistics
@@ -178,7 +178,7 @@ class ContrarianSignalDetector:
 
         Args:
             coin: Cryptocurrency symbol
-            multi_dimensional: Optional dict with activity_level, fear_index, euphoria_index
+            multi_dimensional: Optional dict with explicit_fear_rate, explicit_euphoria_rate, warning_scam_rate
 
         Returns Signal if conditions are met, None otherwise.
         """
@@ -186,14 +186,14 @@ class ContrarianSignalDetector:
         change_24h, change_7d, current_price = self._get_price_changes()
         divergence = self._calculate_divergence(sentiment, sentiment_zscore, change_24h)
 
-        # Extract multi-dimensional signals if provided
-        fear_index = 0.0
-        euphoria_index = 0.0
-        activity_level = 0.0
+        # Extract multi-dimensional signals if provided (accept both old and new keys)
+        explicit_fear_rate = 0.0
+        explicit_euphoria_rate = 0.0
+        warning_scam_rate = 0.0
         if multi_dimensional:
-            fear_index = multi_dimensional.get('fear_index', 0.0)
-            euphoria_index = multi_dimensional.get('euphoria_index', 0.0)
-            activity_level = multi_dimensional.get('activity_level', 0.0)
+            explicit_fear_rate = multi_dimensional.get('explicit_fear_phrase_rate', multi_dimensional.get('fear_index', 0.0))
+            explicit_euphoria_rate = multi_dimensional.get('explicit_euphoria_phrase_rate', multi_dimensional.get('euphoria_index', 0.0))
+            warning_scam_rate = multi_dimensional.get('warning_scam_phrase_rate', multi_dimensional.get('activity_level', 0.0))
 
         signal_type = None
         description = ""
@@ -203,12 +203,12 @@ class ContrarianSignalDetector:
         fear_condition = (
             sentiment < self.EXTREME_FEAR_THRESHOLD
             and sentiment_zscore < -self.ZSCORE_EXTREME
-        ) or fear_index > 0.15  # High fear segment ratio
+        ) or explicit_fear_rate > 0.15  # High literal fear phrase ratio
 
         greed_condition = (
             sentiment > self.EXTREME_GREED_THRESHOLD
             and sentiment_zscore > self.ZSCORE_EXTREME
-        ) or euphoria_index > 0.15  # High euphoria segment ratio
+        ) or explicit_euphoria_rate > 0.15  # High literal euphoria phrase ratio
 
         # Check for BULLISH DIVERGENCE
         # Extreme fear + price not falling (or rising)
@@ -217,7 +217,7 @@ class ContrarianSignalDetector:
             and change_24h > -self.PRICE_STABLE_THRESHOLD
         ):
             signal_type = SignalType.BULLISH_DIVERGENCE
-            fear_note = f" Fear index: {fear_index:.1%}." if fear_index > 0.1 else ""
+            fear_note = f" Explicit fear phrases: {explicit_fear_rate:.1%}." if explicit_fear_rate > 0.1 else ""
             description = (
                 f"Extreme fear detected (sentiment {sentiment:+.2f}, "
                 f"{sentiment_zscore:.1f}σ below mean) while price is "
@@ -225,8 +225,8 @@ class ContrarianSignalDetector:
                 f"({change_24h:+.1f}% 24h).{fear_note} "
                 f"Historically, this divergence precedes recoveries."
             )
-            # Boost confidence if fear_index confirms signal
-            confidence = min(0.9, 0.4 + abs(divergence) * 0.5 + fear_index * 0.2)
+            # Boost confidence if explicit_fear_rate confirms signal
+            confidence = min(0.9, 0.4 + abs(divergence) * 0.5 + explicit_fear_rate * 0.2)
 
         # Check for BEARISH DIVERGENCE
         # Extreme greed + price not rising (or falling)
@@ -235,7 +235,7 @@ class ContrarianSignalDetector:
             and change_24h < self.PRICE_STABLE_THRESHOLD
         ):
             signal_type = SignalType.BEARISH_DIVERGENCE
-            euphoria_note = f" Euphoria index: {euphoria_index:.1%}." if euphoria_index > 0.1 else ""
+            euphoria_note = f" Explicit euphoria phrases: {explicit_euphoria_rate:.1%}." if explicit_euphoria_rate > 0.1 else ""
             description = (
                 f"Extreme greed detected (sentiment {sentiment:+.2f}, "
                 f"{sentiment_zscore:.1f}σ above mean) while price is "
@@ -243,34 +243,34 @@ class ContrarianSignalDetector:
                 f"({change_24h:+.1f}% 24h).{euphoria_note} "
                 f"Historically, this divergence precedes corrections."
             )
-            # Boost confidence if euphoria_index confirms signal
-            confidence = min(0.9, 0.4 + abs(divergence) * 0.5 + euphoria_index * 0.2)
+            # Boost confidence if explicit_euphoria_rate confirms signal
+            confidence = min(0.9, 0.4 + abs(divergence) * 0.5 + explicit_euphoria_rate * 0.2)
 
         # Check for CAPITULATION
-        # Extremely negative sentiment spike OR high fear_index
-        elif sentiment_zscore < -2.5 or fear_index > 0.25:
+        # Extremely negative sentiment spike OR high explicit_fear_rate
+        elif sentiment_zscore < -2.5 or explicit_fear_rate > 0.25:
             signal_type = SignalType.CAPITULATION
-            fear_note = f" Fear index: {fear_index:.1%}." if fear_index > 0.1 else ""
+            fear_note = f" Explicit fear phrases: {explicit_fear_rate:.1%}." if explicit_fear_rate > 0.1 else ""
             description = (
                 f"Capitulation detected: sentiment at {sentiment:+.2f} "
                 f"({sentiment_zscore:.1f}σ, extremely unusual).{fear_note} "
                 f"Price {change_24h:+.1f}% 24h, {change_7d:+.1f}% 7d. "
                 f"Extreme fear often marks local bottoms."
             )
-            confidence = min(0.85, 0.3 + abs(sentiment_zscore) * 0.2 + fear_index * 0.3)
+            confidence = min(0.85, 0.3 + abs(sentiment_zscore) * 0.2 + explicit_fear_rate * 0.3)
 
         # Check for EUPHORIA
-        # Extremely positive sentiment spike OR high euphoria_index
-        elif sentiment_zscore > 2.5 or euphoria_index > 0.25:
+        # Extremely positive sentiment spike OR high explicit_euphoria_rate
+        elif sentiment_zscore > 2.5 or explicit_euphoria_rate > 0.25:
             signal_type = SignalType.EUPHORIA
-            euphoria_note = f" Euphoria index: {euphoria_index:.1%}." if euphoria_index > 0.1 else ""
+            euphoria_note = f" Explicit euphoria phrases: {explicit_euphoria_rate:.1%}." if explicit_euphoria_rate > 0.1 else ""
             description = (
                 f"Euphoria detected: sentiment at {sentiment:+.2f} "
                 f"({sentiment_zscore:.1f}σ, extremely unusual).{euphoria_note} "
                 f"Price {change_24h:+.1f}% 24h, {change_7d:+.1f}% 7d. "
                 f"Extreme greed often marks local tops."
             )
-            confidence = min(0.85, 0.3 + abs(sentiment_zscore) * 0.2 + euphoria_index * 0.3)
+            confidence = min(0.85, 0.3 + abs(sentiment_zscore) * 0.2 + explicit_euphoria_rate * 0.3)
 
         if signal_type is None:
             return None

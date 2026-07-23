@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -105,9 +106,36 @@ CREATE TABLE IF NOT EXISTS source_weights (
     alpha FLOAT,
     beta FLOAT,
     sample_size INTEGER,
+    belief_version INTEGER,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_source_weights_source ON source_weights(source);
+
+CREATE TABLE IF NOT EXISTS source_weight_snapshots (
+    belief_version INTEGER NOT NULL,
+    source VARCHAR(50) NOT NULL,
+    weight FLOAT NOT NULL,
+    accuracy FLOAT,
+    is_contrarian BOOLEAN DEFAULT FALSE,
+    alpha FLOAT,
+    beta FLOAT,
+    sample_size INTEGER,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (belief_version, source)
+);
+CREATE INDEX IF NOT EXISTS idx_source_weight_snapshots_version
+ON source_weight_snapshots(belief_version);
+
+CREATE TABLE IF NOT EXISTS belief_publications (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    belief_version INTEGER NOT NULL,
+    published_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE VIEW IF NOT EXISTS active_source_weights AS
+SELECT sw.*
+FROM source_weight_snapshots sw
+JOIN belief_publications bp ON bp.belief_version = sw.belief_version;
 
 -- Confounders (Fear & Greed, VIX, etc.)
 CREATE TABLE IF NOT EXISTS confounders (
@@ -120,11 +148,60 @@ CREATE TABLE IF NOT EXISTS confounders (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_confounders_timestamp ON confounders(timestamp);
+
+-- Pipeline job status used by the operational health endpoint.
+CREATE TABLE IF NOT EXISTS pipeline_heartbeats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component TEXT NOT NULL,
+    last_success_at TIMESTAMP,
+    last_error_at TIMESTAMP,
+    last_error_message TEXT,
+    freshness_seconds REAL,
+    metadata TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_heartbeats_component_id
+ON pipeline_heartbeats(component, id DESC);
+
+-- Persistent prediction outcome ledger for auditable evaluation
+CREATE TABLE IF NOT EXISTS prediction_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    signal_timestamp TIMESTAMP NOT NULL,
+    target_timestamp TIMESTAMP NOT NULL,
+    calibrated_score REAL,
+    price_before REAL,
+    price_after REAL,
+    price_before_timestamp TIMESTAMP,
+    price_after_timestamp TIMESTAMP,
+    direction TEXT,
+    correct BOOLEAN,
+    abstained BOOLEAN DEFAULT FALSE,
+    price_gap_seconds REAL,
+    evaluated_at TIMESTAMP,
+    evaluator_version TEXT,
+    UNIQUE(source, signal_timestamp, evaluator_version)
+);
 """
 
 MIGRATIONS = [
     "ALTER TABLE sentiment_raw ADD COLUMN content_hash VARCHAR(64);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_raw_hash ON sentiment_raw(content_hash);",
+    "ALTER TABLE source_weights ADD COLUMN belief_version INTEGER;",
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_heartbeats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        component TEXT NOT NULL,
+        last_success_at TIMESTAMP,
+        last_error_at TIMESTAMP,
+        last_error_message TEXT,
+        freshness_seconds REAL,
+        metadata TEXT
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pipeline_heartbeats_component_id
+    ON pipeline_heartbeats(component, id DESC);
+    """,
 ]
 
 
@@ -163,6 +240,96 @@ class Database:
             self._connection = None
             logger.info("Database connection closed")
 
+    async def record_heartbeat(
+        self,
+        component: str,
+        success: bool = True,
+        error_message: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Append a status event for a scheduler component."""
+        now = datetime.now(timezone.utc)
+        previous_success = await self.conn.execute(
+            """
+            SELECT last_success_at
+            FROM pipeline_heartbeats
+            WHERE component = ? AND last_success_at IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (component,),
+        )
+        previous_row = await previous_success.fetchone()
+
+        if success:
+            last_success_at = now
+            freshness_seconds = 0.0
+            last_error_at = None
+            last_error_message = None
+        else:
+            last_success_at = (
+                datetime.fromisoformat(previous_row["last_success_at"])
+                if previous_row and previous_row["last_success_at"]
+                else None
+            )
+            if last_success_at is not None and last_success_at.tzinfo is None:
+                last_success_at = last_success_at.replace(tzinfo=timezone.utc)
+            freshness_seconds = (
+                (now - last_success_at).total_seconds()
+                if last_success_at is not None
+                else None
+            )
+            last_error_at = now
+            last_error_message = error_message
+
+        await self.conn.execute(
+            """
+            INSERT INTO pipeline_heartbeats (
+                component, last_success_at, last_error_at, last_error_message,
+                freshness_seconds, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                component,
+                last_success_at.isoformat() if last_success_at else None,
+                last_error_at.isoformat() if last_error_at else None,
+                last_error_message,
+                freshness_seconds,
+                json.dumps(metadata) if metadata is not None else None,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_latest_heartbeat(self, component: str) -> dict | None:
+        """Return the most recent heartbeat for one component."""
+        cursor = await self.conn.execute(
+            """
+            SELECT * FROM pipeline_heartbeats
+            WHERE component = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (component,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_heartbeats(self) -> dict[str, dict]:
+        """Return each component's most recent heartbeat."""
+        cursor = await self.conn.execute(
+            """
+            SELECT heartbeat.*
+            FROM pipeline_heartbeats heartbeat
+            INNER JOIN (
+                SELECT component, MAX(id) AS latest_id
+                FROM pipeline_heartbeats
+                GROUP BY component
+            ) latest ON heartbeat.id = latest.latest_id
+            """
+        )
+        rows = await cursor.fetchall()
+        return {row["component"]: dict(row) for row in rows}
+
     @property
     def conn(self) -> aiosqlite.Connection:
         """Get the active connection."""
@@ -183,7 +350,7 @@ class Database:
         content_hash = self._compute_content_hash(data.source, data.raw_data)
 
         # Check if already exists
-        cursor = await self.conn.execute(
+        await self.conn.execute(
             "SELECT id FROM sentiment_raw WHERE content_hash = ?",
             (content_hash,),
         )
@@ -279,3 +446,157 @@ class Database:
             )
             for row in rows
         ]
+
+    # ── Prediction outcome ledger ──────────────────────────────────────────
+
+    async def upsert_outcome(
+        self,
+        source: str,
+        signal_timestamp: datetime,
+        target_timestamp: datetime,
+        calibrated_score: float | None = None,
+        price_before: float | None = None,
+        price_before_timestamp: datetime | None = None,
+        evaluator_version: str = "1.0",
+    ) -> int:
+        """Insert or update an outcome row (idempotent via UNIQUE constraint).
+
+        Returns the row id.
+        """
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO prediction_outcomes
+                (source, signal_timestamp, target_timestamp, calibrated_score,
+                 price_before, price_before_timestamp, evaluator_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, signal_timestamp, evaluator_version) DO UPDATE SET
+                target_timestamp = excluded.target_timestamp,
+                calibrated_score = excluded.calibrated_score,
+                price_before = excluded.price_before,
+                price_before_timestamp = excluded.price_before_timestamp
+            """,
+            (
+                source.lower(),
+                signal_timestamp.isoformat(),
+                target_timestamp.isoformat(),
+                calibrated_score,
+                price_before,
+                price_before_timestamp.isoformat() if price_before_timestamp else None,
+                evaluator_version,
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid or 0
+
+    async def claim_pending_outcomes(
+        self, now: datetime | None = None
+    ) -> list[dict]:
+        """Atomically claim pending outcomes for evaluation.
+
+        Marks rows with a unique claim token so concurrent workers cannot
+        evaluate the same outcomes. Only the rows claimed by this call are
+        returned.
+
+        Returns the claimed rows.
+        """
+        now = now or datetime.now(timezone.utc)
+        claim_token = f"claim:{now.isoformat()}:{uuid.uuid4().hex}"
+        await self.conn.execute(
+            """
+            UPDATE prediction_outcomes
+            SET evaluated_at = ?
+            WHERE target_timestamp < ?
+              AND price_after IS NULL
+              AND abstained = FALSE
+              AND evaluated_at IS NULL
+            """,
+            (claim_token, now.isoformat()),
+        )
+
+        # Fetch only rows claimed by this worker. A generic "claiming" marker
+        # would allow a concurrent worker to process someone else's outcomes.
+        cursor = await self.conn.execute(
+            """
+            SELECT id, source, signal_timestamp, target_timestamp,
+                   calibrated_score, price_before, price_before_timestamp
+            FROM prediction_outcomes
+            WHERE evaluated_at = ?
+            ORDER BY signal_timestamp ASC
+            """,
+            (claim_token,),
+        )
+        rows = await cursor.fetchall()
+        await self.conn.commit()
+        return [dict(row) for row in rows]
+
+    async def mark_outcome_evaluated(
+        self,
+        outcome_id: int,
+        price_after: float,
+        price_after_timestamp: datetime,
+        correct: bool,
+        direction: str,
+        price_gap_seconds: float | None = None,
+    ) -> None:
+        """Update an outcome row with evaluation results."""
+        await self.conn.execute(
+            """
+            UPDATE prediction_outcomes
+            SET price_after = ?,
+                price_after_timestamp = ?,
+                correct = ?,
+                direction = ?,
+                price_gap_seconds = ?,
+                evaluated_at = ?
+            WHERE id = ?
+            """,
+            (
+                price_after,
+                price_after_timestamp.isoformat(),
+                1 if correct else 0,
+                direction,
+                price_gap_seconds,
+                datetime.now(timezone.utc).isoformat(),
+                outcome_id,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_source_performance(
+        self, source: str, days: int = 30
+    ) -> dict:
+        """Compute accuracy and stats for a source from the outcome ledger.
+
+        Returns dict with total_evaluated, correct, accuracy, avg_gap_seconds.
+        """
+        if days <= 0:
+            raise ValueError("days must be positive")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cursor = await self.conn.execute(
+            """
+            SELECT
+                COUNT(*) as total_evaluated,
+                SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END) as correct,
+                AVG(price_gap_seconds) as avg_gap_seconds
+            FROM prediction_outcomes
+            WHERE source = ?
+              AND evaluated_at IS NOT NULL
+              AND correct IS NOT NULL
+              AND signal_timestamp >= ?
+            """,
+            (source.lower(), cutoff),
+        )
+        row = await cursor.fetchone()
+        if row is None or row["total_evaluated"] == 0:
+            return {"source": source, "total_evaluated": 0, "correct": 0,
+                    "accuracy": None, "avg_gap_seconds": None}
+        total = row["total_evaluated"]
+        correct = row["correct"]
+        return {
+            "source": source,
+            "total_evaluated": total,
+            "correct": correct,
+            "accuracy": correct / total if total > 0 else None,
+            "avg_gap_seconds": row["avg_gap_seconds"],
+        }
