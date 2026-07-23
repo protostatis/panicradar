@@ -70,7 +70,6 @@ cp .env.example .env
 # Start all services
 uv run python -m crypto_sentiment_crawler.taskmanager start crawler
 uv run python -m crypto_sentiment_crawler.taskmanager start signals
-uv run python -m crypto_sentiment_crawler.taskmanager start belief_auto
 
 # Check status
 uv run python -m crypto_sentiment_crawler.taskmanager status
@@ -122,7 +121,6 @@ uv run python -m crypto_sentiment_crawler.taskmanager logs <task_name>
 |------|---------|-------------|
 | `crawler` | `start crawler` | Live Reddit sentiment crawler |
 | `signals` | `start signals` | Contrarian signal detector |
-| `belief_auto` | `start belief_auto` | Auto-update beliefs every 30 min |
 | `backfill` | `start backfill` | Historical Reddit backfill |
 | `biz_backfill` | `start biz_backfill` | 4chan /biz/ backfill |
 | `stocktwits_backfill` | `start stocktwits_backfill` | Stocktwits backfill |

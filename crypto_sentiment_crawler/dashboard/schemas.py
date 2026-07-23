@@ -32,10 +32,15 @@ class DashboardSummary(BaseModel):
     btc_price: Optional[float] = None
     btc_change_24h: Optional[float] = None
     btc_change_7d: Optional[float] = None
-    # Multi-dimensional signals
+    # Multi-dimensional signals (renamed to honestly reflect what they measure)
+    # Deprecated aliases — kept for one release, use _phrase_rate versions going forward
     fear_index: float = 0.0
     euphoria_index: float = 0.0
     activity_level: float = 0.0
+    # New honest names
+    explicit_fear_phrase_rate: float = 0.0
+    explicit_euphoria_phrase_rate: float = 0.0
+    warning_scam_phrase_rate: float = 0.0
 
 
 class HistoryPoint(BaseModel):
@@ -46,10 +51,14 @@ class HistoryPoint(BaseModel):
     sentiment_score: float
     btc_price: Optional[float] = None
     fear_greed_index: Optional[int] = None
-    # Bull vs Bear indices
-    fear_index: float = 0.0  # Bearish/panic signals
-    euphoria_index: float = 0.0  # Bullish/FOMO signals
-    activity_level: float = 0.0  # Market activity indicator
+    # Deprecated aliases — kept for one release
+    fear_index: float = 0.0
+    euphoria_index: float = 0.0
+    activity_level: float = 0.0
+    # New honest names
+    explicit_fear_phrase_rate: float = 0.0
+    explicit_euphoria_phrase_rate: float = 0.0
+    warning_scam_phrase_rate: float = 0.0
 
 
 class DashboardHistory(BaseModel):
@@ -125,9 +134,14 @@ class SourceSentimentPoint(BaseModel):
     timestamp: str
     date: str
     sentiment_score: float
+    # Deprecated aliases — kept for one release
     fear_index: float = 0.0
     euphoria_index: float = 0.0
     activity_level: float = 0.0
+    # New honest names
+    explicit_fear_phrase_rate: float = 0.0
+    explicit_euphoria_phrase_rate: float = 0.0
+    warning_scam_phrase_rate: float = 0.0
     sample_size: int = 0
 
 

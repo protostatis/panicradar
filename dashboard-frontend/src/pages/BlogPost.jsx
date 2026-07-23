@@ -72,6 +72,8 @@ The result: **4.15% of posts trigger any fear, 4.27% trigger any euphoria.** 91.
 
 These indices are useful high-precision event detectors. When they fire, something real is happening. But they're not psychological measurements — they're "literal-panic-phrase detector" and "literal-moon-phrase detector."
 
+**Update (Jul 2026):** We've renamed these metrics to honestly reflect what they measure. The API now serves them as <code>explicit_fear_phrase_rate</code>, <code>explicit_euphoria_phrase_rate</code>, and <code>warning_scam_phrase_rate</code> respectively. The old field names remain as deprecated aliases for one release.
+
 ### 4. Thompson Sampling was optimizing novelty, not accuracy
 
 We built a principled Bayesian bandit: Beta(α, β) posteriors, Thompson Sampling, mathematically well-understood tradeoffs. Except the live outcome evaluator caches the BTC price once and never refreshes it. \`price_before ≈ price_after\` — every move looks like ~0%.

@@ -88,7 +88,7 @@ const Dashboard = () => {
           <SectionHeader as="h3" kicker="Evidence" kickerTick title="Why these signals are trustworthy" description="Source accuracy, crowd-psychology dimensions, and the volatility outlook that ties them together." />
           {beliefs && <BeliefsSummary beliefs={beliefs.beliefs} lastUpdate={beliefs.last_belief_update} />}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <CrowdGauges fearIndex={summary.fear_index} euphoriaIndex={summary.euphoria_index} activityLevel={summary.activity_level} />
+            <CrowdGauges fearIndex={summary.fear_index} euphoriaIndex={summary.euphoria_index} activityLevel={summary.activity_level} explicitFearPhraseRate={summary.explicit_fear_phrase_rate} explicitEuphoriaPhraseRate={summary.explicit_euphoria_phrase_rate} warningScamPhraseRate={summary.warning_scam_phrase_rate} />
             <VolatilityOutlook volatilityState={summary.volatility_state} sentimentState={summary.sentiment_state} />
           </div>
         </section>

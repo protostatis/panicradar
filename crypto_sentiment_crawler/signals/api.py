@@ -96,9 +96,14 @@ class MarketSummary(BaseModel):
     sentiment_state: str
     divergence_score: float
     # Multi-dimensional signals from segment categorization
-    activity_level: float = 0.0  # Scam/warning activity (indicates market activity)
-    fear_index: float = 0.0  # Loss/panic mentions (contrarian BUY signal)
-    euphoria_index: float = 0.0  # Moon/FOMO mentions (contrarian SELL signal)
+    # Deprecated aliases — kept for one release
+    activity_level: float = 0.0
+    fear_index: float = 0.0
+    euphoria_index: float = 0.0
+    # New honest names
+    warning_scam_phrase_rate: float = 0.0
+    explicit_fear_phrase_rate: float = 0.0
+    explicit_euphoria_phrase_rate: float = 0.0
 
 
 class SignalResponse(BaseModel):

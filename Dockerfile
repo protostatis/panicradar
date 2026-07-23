@@ -65,7 +65,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV DATABASE_PATH=/app/data/sentiment.db
 
-# ---- base target (used by signals, belief-auto, etc.) ----
+# ---- base target (used by signals and maintenance workers) ----
 FROM ml-base AS base
 
 CMD ["uv", "run", "crawler", "background"]
