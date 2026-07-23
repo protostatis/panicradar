@@ -60,7 +60,7 @@ const MarketTicker = ({ context }) => {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-lg shadow-slate-950/30">
       <div className="flex items-center gap-2 overflow-x-auto font-mono text-xs">
-        <span className="sticky left-0 z-10 rounded-full border border-emerald-400/20 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300 shadow-lg shadow-slate-950/80">
+        <span className="sticky left-0 z-10 rounded-full border border-emerald-400/20 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300 shadow-lg shadow-slate-950/80">
           Market Tape
         </span>
         {items.map((item, i) => (

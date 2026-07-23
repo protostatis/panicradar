@@ -7,6 +7,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
+from ..config import settings
+
 from .affiliates import get_affiliates_for_context
 from .queries import (
     compute_beta_std,
@@ -414,18 +416,54 @@ async def get_sources_list():
         conn.close()
 
 
+# Stablecoin symbols excluded from coin pickers
+STABLECOINS = {
+    "USDT", "USDC", "DAI", "BUSD", "FRAX", "TUSD", "USDP",
+    "PYUSD", "FDUSD", "USDe", "crvUSD", "USTC",
+}
+
+
 @router.get("/dashboard/coins")
 async def get_coins_list():
     """
-    Get list of all available coins with price data.
+    Get tracked coins sorted by latest market cap (descending).
+    Stablecoins are excluded. Guarantees at least 6 coins by
+    supplementing with the configured coins list when the DB
+    hasn't populated price data for all tracked coins yet.
     """
     conn = get_db_connection(DB_PATH)
     try:
+        # Rank by latest market cap (DB-driven)
         cursor = conn.execute(
-            "SELECT DISTINCT coin FROM price_data ORDER BY coin"
+            """
+            SELECT DISTINCT pd1.coin
+            FROM price_data pd1
+            WHERE pd1.timestamp = (
+                SELECT MAX(pd2.timestamp)
+                FROM price_data pd2
+                WHERE pd2.coin = pd1.coin
+            )
+              AND pd1.market_cap IS NOT NULL
+            ORDER BY pd1.market_cap DESC
+            """
         )
-        coins = [row["coin"] for row in cursor.fetchall()]
-        return {"coins": coins, "count": len(coins)}
+        ranked = [row["coin"] for row in cursor.fetchall()
+                  if row["coin"].upper() not in STABLECOINS]
+
+        # Supplement from configured list so the frontend always
+        # has enough slots even before the collector has run
+        min_coins = 6
+        cfg_coins = [c for c in settings.coins_list
+                     if c.upper() not in STABLECOINS
+                     and c not in ranked]
+        coins = ranked + cfg_coins
+
+        if not coins:
+            # Absolute fallback — no DB data at all
+            coins = [c for c in settings.coins_list
+                     if c.upper() not in STABLECOINS]
+
+        return {"coins": coins[:min_coins], "count": len(coins[:min_coins])}
     finally:
         conn.close()
 

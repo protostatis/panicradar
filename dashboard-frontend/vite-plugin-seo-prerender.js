@@ -164,6 +164,7 @@ export default function seoPrerender() {
   return {
     name: 'seo-prerender',
     closeBundle() {
+      // eslint-disable-next-line no-undef -- process is always available in Node/Vite build
       const distDir = join(process.cwd(), 'dist');
       let template;
       try {

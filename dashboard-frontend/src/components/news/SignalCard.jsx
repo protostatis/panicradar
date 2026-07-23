@@ -85,7 +85,7 @@ const SignalCard = ({ signal }) => {
   }[signal.surprise_score] || 'border-l-slate-600';
 
   return (
-    <div className={`radar-card border-l-2 ${borderColor} p-6 transition-colors hover:border-emerald-400/30`}>
+    <div className={`radar-card border-l-2 ${borderColor} p-6 transition-colors hover:border-cyan-400/30`}>
       {/* Header: badge + source */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <SurpriseBadge level={signal.surprise_score} />

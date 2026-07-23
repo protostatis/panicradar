@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     database_path: str = "data/sentiment.db"
 
     # Tracked coins
-    tracked_coins: str = "BTC,ETH,SOL"
+    tracked_coins: str = "BTC,ETH,SOL,BNB,XRP,ADA,DOGE,AVAX,DOT,LINK"
 
     # Collector intervals (seconds)
     price_interval: int = 300

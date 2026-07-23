@@ -1,14 +1,16 @@
 """Thompson Sampling bandit for source selection."""
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
-from scipy.special import ndtr as norm_cdf
 
 from .beliefs import SourceBelief, SourceBeliefStore
 from .gp_model import GPSourceModel, SourceFeatures
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,6 +67,47 @@ class CrawlBandit:
         self._consecutive_same = 0
         self.max_consecutive_same = 3  # Force diversity after N repeats
 
+    def _get_eligible_sources(self, available_sources: list[str]) -> list[str]:
+        """Filter sources that are eligible for selection.
+
+        Excludes:
+        - Archived sources (never select)
+        - Inactive sources unless their probe time has passed
+        - Sources on cooldown (too many consecutive empty crawls)
+
+        Returns empty list if ALL sources are filtered out (no fallback).
+        """
+        now = datetime.now(timezone.utc)
+        eligible = []
+
+        for source in available_sources:
+            belief = self.belief_store.get(source)
+
+            # Never select archived sources
+            if belief.status == "archived":
+                continue
+
+            # Skip inactive sources unless it's time to probe
+            if belief.status == "inactive":
+                if (belief.next_probe_at is not None
+                        and now < belief.next_probe_at):
+                    continue
+
+            # Decay stale cooldowns: if a source hasn't been tried in a while,
+            # give it another chance (prevents permanent cooldown from persisted state)
+            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
+                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
+                if hours_since_update >= self.cooldown_decay_hours:
+                    belief.consecutive_empty_crawls = 0
+
+            # Skip sources on cooldown
+            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
+                continue
+
+            eligible.append(source)
+
+        return eligible
+
     def select_source(self, available_sources: list[str] | None = None) -> SelectionResult:
         """
         Select next source to crawl using Thompson Sampling.
@@ -82,26 +125,12 @@ class CrawlBandit:
         if not available_sources:
             raise ValueError("No sources available for selection")
 
-        # Decay stale cooldowns: if a source hasn't been tried in a while,
-        # give it another chance (prevents permanent cooldown from persisted state)
-        now = datetime.now(timezone.utc)
-        for source in available_sources:
-            belief = self.belief_store.get(source)
-            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
-                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
-                if hours_since_update >= self.cooldown_decay_hours:
-                    belief.consecutive_empty_crawls = 0
+        # Filter sources via shared eligibility method
+        active_sources = self._get_eligible_sources(available_sources)
 
-        # Filter out sources on cooldown (too many consecutive empty crawls)
-        active_sources = []
-        for source in available_sources:
-            belief = self.belief_store.get(source)
-            if belief.consecutive_empty_crawls < self.empty_crawl_cooldown:
-                active_sources.append(source)
-
-        # If all sources are on cooldown, use all (prevent deadlock)
         if not active_sources:
-            active_sources = list(available_sources)
+            logger.warning("No eligible sources available (all filtered out)")
+            raise ValueError("No eligible sources available")
 
         # Anti-starvation: if same source selected too many times in a row,
         # exclude it to force diversity
@@ -313,24 +342,12 @@ class GPBandit(CrawlBandit):
         if not available_sources:
             raise ValueError("No sources available for selection")
 
-        # Decay stale cooldowns
-        now = datetime.now(timezone.utc)
-        for source in available_sources:
-            belief = self.belief_store.get(source)
-            if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
-                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
-                if hours_since_update >= self.cooldown_decay_hours:
-                    belief.consecutive_empty_crawls = 0
-
-        # Filter out sources on cooldown
-        active_sources = []
-        for source in available_sources:
-            belief = self.belief_store.get(source)
-            if belief.consecutive_empty_crawls < self.empty_crawl_cooldown:
-                active_sources.append(source)
+        # Filter sources via shared eligibility method
+        active_sources = self._get_eligible_sources(available_sources)
 
         if not active_sources:
-            active_sources = list(available_sources)
+            logger.warning("No eligible sources available (all filtered out)")
+            raise ValueError("No eligible sources available")
 
         # Split into GP-eligible and cold-start
         gp_sources = []

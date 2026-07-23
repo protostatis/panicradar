@@ -177,36 +177,30 @@ const ProbitTransformViz = () => {
 
 // --- Visualization: Correlated vs Independent Sampling ---
 const SamplingComparisonViz = () => {
-  const [samples, setSamples] = useState({ independent: [], correlated: [] });
-  const [animating, setAnimating] = useState(false);
-
   // Box-Muller transform for normal samples
   const randn = () => {
     const u1 = Math.random(), u2 = Math.random();
     return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   };
 
-  const generateSamples = () => {
-    setAnimating(true);
-    const independent = [];
-    const correlated = [];
-    const rho = 0.75; // correlation between similar sources
-
+  // Lazy initializer — runs once on mount so samples are stable
+  const [samples] = useState(() => {
+    const independent = [], correlated = [];
+    const rho = 0.75;
     for (let i = 0; i < 80; i++) {
-      // Independent: two separate normal draws
       independent.push({ x: randn() * 0.8, y: randn() * 0.8 });
-      // Correlated: Cholesky decomposition
       const z1 = randn(), z2 = randn();
-      correlated.push({
-        x: z1 * 0.8,
-        y: (rho * z1 + Math.sqrt(1 - rho * rho) * z2) * 0.8,
-      });
+      correlated.push({ x: z1 * 0.8, y: (rho * z1 + Math.sqrt(1 - rho * rho) * z2) * 0.8 });
     }
-    setSamples({ independent, correlated });
-    setTimeout(() => setAnimating(false), 500);
-  };
+    return { independent, correlated };
+  });
 
-  useEffect(() => { generateSamples(); }, []);
+  // Play initial fade-in animation once
+  const [animating, setAnimating] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimating(false), 500);
+    return () => clearTimeout(timer);
+  }, []);
 
   const plotSamples = (data, label, xOff) => {
     const cx = xOff + 120, cy = 130;
@@ -241,9 +235,9 @@ const SamplingComparisonViz = () => {
         <text x={260} y={258} textAnchor="middle" style={{ fontSize: '9px', fill: '#64748b' }}>rho = 0.75 correlation</text>
         {plotSamples(samples.correlated, 'Correlated (GP posterior)', 280)}
       </svg>
-      <button onClick={generateSamples}
+      <button onClick={() => window.location.reload()}
         className="mt-2 mx-auto block px-3 py-1 text-xs bg-purple-500/20 text-purple-300 rounded hover:bg-purple-500/30 transition-colors border border-purple-500/30">
-        Resample
+        Regenerate
       </button>
     </div>
   );

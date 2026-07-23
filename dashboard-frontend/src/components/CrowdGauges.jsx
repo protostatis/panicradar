@@ -1,94 +1,42 @@
-import { useMemo } from 'react';
+import Panel from './ui/Panel';
+import { tone } from './ui/tones';
 
-const GaugeBar = ({ label, value, normalizedValue, color }) => {
-  const percentage = Math.min(100, Math.max(0, normalizedValue * 100));
+const PCT_MAX = 100;
 
+const GaugeBar = ({ label, value, toneKey, glyph }) => {
+  const t = tone(toneKey);
+  const pct = Math.min(100, Math.max(0, (value || 0) * 100));
+  const widthPct = (pct / PCT_MAX) * 100;
   return (
-    <div className="mb-3">
-      <div className="flex justify-between text-sm mb-1">
-        <span className="text-slate-400">{label}</span>
-        <span className="text-slate-300">{(value * 100).toFixed(1)}%</span>
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="inline-flex items-center gap-1.5 text-sm text-slate-300"><span aria-hidden="true" className={`text-[0.6rem] ${t.text}`}>{glyph}</span>{label}</span>
+        <span className="radar-tabular text-sm font-medium text-slate-200">{(value || 0).toFixed(1)}%</span>
       </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full ${color} transition-all duration-500`}
-          style={{ width: `${percentage}%` }}
-        />
+      <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-800">
+        <span className="absolute left-1/4 top-0 h-full w-px bg-slate-700/70" aria-hidden="true" />
+        <span className="absolute left-1/2 top-0 h-full w-px bg-slate-700/70" aria-hidden="true" />
+        <span className="absolute left-3/4 top-0 h-full w-px bg-slate-700/70" aria-hidden="true" />
+        <div className={`h-full rounded-full ${t.dot} transition-[width] duration-500`} style={{ width: `${widthPct}%` }} role="progressbar" aria-valuenow={Number((value || 0).toFixed(1))} aria-valuemin={0} aria-valuemax={100} aria-label={`${label} index`} />
       </div>
     </div>
   );
 };
 
 const CrowdGauges = ({ fearIndex, euphoriaIndex, activityLevel }) => {
-  // Normalize values relative to max for better visualization
-  const normalized = useMemo(() => {
-    const values = [fearIndex || 0, euphoriaIndex || 0, activityLevel || 0];
-    const maxVal = Math.max(...values, 0.001); // Avoid division by zero
-
-    return {
-      fear: (fearIndex || 0) / maxVal,
-      euphoria: (euphoriaIndex || 0) / maxVal,
-      activity: (activityLevel || 0) / maxVal,
-    };
-  }, [fearIndex, euphoriaIndex, activityLevel]);
-
-  // Determine dominant signal
-  const dominant = useMemo(() => {
-    const fear = fearIndex || 0;
-    const euphoria = euphoriaIndex || 0;
-    const activity = activityLevel || 0;
-
-    if (fear > euphoria && fear > activity) return 'Fear';
-    if (euphoria > fear && euphoria > activity) return 'Euphoria';
-    if (activity > fear && activity > euphoria) return 'Activity';
-    return 'Balanced';
-  }, [fearIndex, euphoriaIndex, activityLevel]);
-
-  const getDominantColor = () => {
-    switch (dominant) {
-      case 'Fear':
-        return 'text-red-400';
-      case 'Euphoria':
-        return 'text-green-400';
-      case 'Activity':
-        return 'text-blue-400';
-      default:
-        return 'text-slate-300';
-    }
-  };
-
+  const fear = fearIndex || 0, euphoria = euphoriaIndex || 0, activity = activityLevel || 0;
+  const dominant = fear === euphoria && euphoria === activity ? 'Balanced' : fear >= euphoria && fear >= activity ? 'Fear' : euphoria >= fear && euphoria >= activity ? 'Euphoria' : 'Activity';
+  const dominantTone = { Fear: 'bear', Euphoria: 'bull', Activity: 'accent', Balanced: 'neutral' }[dominant];
   return (
-    <div className="radar-panel p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-slate-200">
-          Crowd Psychology
-        </h3>
-        <span className={`text-sm font-medium ${getDominantColor()}`}>
-          {dominant}
-        </span>
+    <Panel pad="md">
+      <div className="mb-5 flex items-center justify-between"><h3 className="text-base font-semibold text-slate-100">Crowd psychology</h3><span className={`text-sm font-medium ${tone(dominantTone).text}`}>{dominant}</span></div>
+      <div className="space-y-4">
+        <GaugeBar label="Fear" value={fear} toneKey="bear" glyph={"\u25BC"} />
+        <GaugeBar label="Euphoria" value={euphoria} toneKey="bull" glyph={"\u25B2"} />
+        <GaugeBar label="Activity" value={activity} toneKey="accent" glyph={"\u25C6"} />
       </div>
-      <GaugeBar
-        label="Fear"
-        value={fearIndex || 0}
-        normalizedValue={normalized.fear}
-        color="bg-gradient-to-r from-orange-500 to-red-500"
-      />
-      <GaugeBar
-        label="Euphoria"
-        value={euphoriaIndex || 0}
-        normalizedValue={normalized.euphoria}
-        color="bg-gradient-to-r from-green-500 to-emerald-400"
-      />
-      <GaugeBar
-        label="Activity"
-        value={activityLevel || 0}
-        normalizedValue={normalized.activity}
-        color="bg-gradient-to-r from-blue-500 to-purple-500"
-      />
-      <p className="text-xs text-slate-500 mt-4">
-        Bars normalized relative to max. Values show raw %.
-      </p>
-    </div>
+      <p className="mt-5 text-xs text-slate-500">All indices on a fixed 0–100% scale. Raw values shown.</p>
+    </Panel>
   );
 };
 

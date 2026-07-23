@@ -114,7 +114,7 @@ class TestGPBanditSelection:
         assert result.source == "source_4"
 
     def test_cooldown_deadlock_prevention(self):
-        """If all sources are on cooldown, use all of them."""
+        """If all sources are filtered out, raises ValueError (no fallback)."""
         store = _make_belief_store(5, total_crawls=20)
         features = _make_features(5)
 
@@ -124,9 +124,9 @@ class TestGPBanditSelection:
         bandit = GPBandit(store, empty_crawl_cooldown=3)
         bandit.update_gp(features)
 
-        # Should not raise, should select from all
-        result = bandit.select_source()
-        assert result.source.startswith("source_")
+        # Should raise — no fallback to all sources
+        with pytest.raises(ValueError, match="No eligible sources"):
+            bandit.select_source()
 
 
 class TestGPBanditFallback:

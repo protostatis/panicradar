@@ -42,36 +42,56 @@ def compute_weight_from_belief(belief: dict, min_samples: int = 20) -> tuple[flo
 
     Returns (weight, should_invert).
 
+    Uses the lower bound of the credible interval as the conservative
+    accuracy estimate for weight calculation. Sources with insufficient
+    data get very low weight and are never treated as contrarian.
+
     Weight is based on:
     - Accuracy (distance from 0.5)
-    - Sample size (more samples = more confident)
+    - Effective sample size (more observations = more confident)
     - Contrarian status (inverted signal)
-
-    A source with 60% accuracy gets higher weight than 50%.
-    A source with 40% accuracy also gets higher weight (as contrarian).
-    Sources near 50% get low weight (uninformative).
     """
-    accuracy = belief.get("accuracy")
-    alpha = belief.get("alpha", 1)
-    beta = belief.get("beta", 1)
-    sample_size = alpha + beta
-    is_contrarian = belief.get("is_contrarian", False)
-
-    if accuracy is None or sample_size < min_samples:
-        # Not enough data - use minimal weight
+    # Change 7: Fail-closed for insufficient data
+    type_label = belief.get("type_label", "")
+    if type_label in ("insufficient_data", "uninitialized"):
         return 0.01, False
 
-    # Distance from 0.5 (uninformative baseline)
-    # Both 0.6 and 0.4 have distance 0.1
-    distance = abs(accuracy - 0.5)
+    # Use credible intervals to compute conservative edge over 50%
+    ci_lower = belief.get("credible_interval_lower")
+    ci_upper = belief.get("credible_interval_upper")
+    is_contrarian = belief.get("is_contrarian", False)
+
+    if ci_lower is not None and ci_upper is not None:
+        if is_contrarian:
+            # Conservative inverted accuracy: 1 - ci_upper (the best-case wrongness)
+            conservative_accuracy = 1.0 - ci_upper
+        else:
+            # Conservative accuracy: ci_lower (the worst-case correctness)
+            conservative_accuracy = ci_lower
+        # Distance from 0.5 — only count evidence OUTSIDE the null
+        distance = max(0.0, conservative_accuracy - 0.5)
+    else:
+        # Fallback to point accuracy if no CIs
+        accuracy = belief.get("accuracy")
+        if accuracy is None:
+            return 0.01, False
+        if is_contrarian:
+            distance = max(0.0, (1.0 - accuracy) - 0.5)  # Inverted edge
+        else:
+            distance = max(0.0, accuracy - 0.5)
+
+    # Use effective_n for confidence
+    effective_n = belief.get("effective_n", 0)
+    if effective_n < min_samples:
+        return 0.01, False
 
     # Base weight from predictive power
     # Max distance is 0.5, so scale to 0-1
     predictive_power = distance * 2  # 0 to 1
 
-    # Confidence factor from sample size
+    # Confidence factor from effective sample size
     # More samples = more confident in the weight
-    confidence = min(1.0, sample_size / 200)  # Cap at 200 samples
+    confidence = min(1.0, effective_n / 200)  # Cap at 200 samples
 
     # Combined weight (predictive power * confidence)
     # Scale to reasonable range (0.01 to 0.30)
@@ -98,7 +118,7 @@ def compute_weights_from_beliefs(beliefs: dict, min_samples: int = 20) -> dict:
             "is_contrarian": is_contrarian,
             "alpha": belief.get("alpha"),
             "beta": belief.get("beta"),
-            "sample_size": belief.get("alpha", 1) + belief.get("beta", 1),
+            "sample_size": belief.get("effective_n", belief.get("alpha", 1) + belief.get("beta", 1)),
         }
 
     # Normalize weights to sum to 1.0
