@@ -102,28 +102,31 @@ jobs:
                 ("legacy_22225", with_endpoint("zproxy.lum-superproxy.io", 22225)),
             ]
 
-            def curl_status(proxy_url: str, target: str):
+            def curl_status(proxy_url: str, target: str, insecure: bool = False):
                 env = os.environ.copy()
                 env.pop("NO_PROXY", None)
                 env.pop("no_proxy", None)
                 env["HTTPS_PROXY"] = proxy_url
                 env["https_proxy"] = proxy_url
+                command = [
+                    "curl",
+                    "--silent",
+                    "--noproxy",
+                    "",
+                    "--connect-timeout",
+                    "10",
+                    "--max-time",
+                    "20",
+                    "--output",
+                    "/dev/null",
+                    "--write-out",
+                    "%{http_connect} %{http_code}",
+                    target,
+                ]
+                if insecure:
+                    command.insert(2, "--insecure")
                 result = subprocess.run(
-                    [
-                        "curl",
-                        "--silent",
-                        "--noproxy",
-                        "",
-                        "--connect-timeout",
-                        "10",
-                        "--max-time",
-                        "20",
-                        "--output",
-                        "/dev/null",
-                        "--write-out",
-                        "%{http_connect} %{http_code}",
-                        target,
-                    ],
+                    command,
                     check=False,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -147,18 +150,31 @@ jobs:
                     f"{label}: neutral curl_exit={exit_code}; "
                     f"proxy_connect={proxy_connect}; target_http={target_http}"
                 )
+                insecure = False
                 if exit_code != 0 or target_http != "200":
-                    continue
+                    if exit_code != 60 or proxy_connect != "200":
+                        continue
+
+                    exit_code, proxy_connect, target_http = curl_status(
+                        candidate, "https://example.com/", insecure=True
+                    )
+                    print(
+                        f"{label}: neutral insecure curl_exit={exit_code}; "
+                        f"proxy_connect={proxy_connect}; target_http={target_http}"
+                    )
+                    if exit_code != 0 or target_http != "200":
+                        continue
+                    insecure = True
 
                 exit_code, proxy_connect, target_http = curl_status(
-                    candidate, "https://old.reddit.com/r/bitcoin/new/"
+                    candidate, "https://old.reddit.com/r/bitcoin/new/", insecure=insecure
                 )
                 print(
-                    f"{label}: reddit curl_exit={exit_code}; "
+                    f"{label}: reddit{' insecure' if insecure else ''} curl_exit={exit_code}; "
                     f"proxy_connect={proxy_connect}; target_http={target_http}"
                 )
                 if exit_code == 0 and target_http == "200":
-                    usable.append(label)
+                    usable.append(f"{label}{' (TLS bypass required)' if insecure else ''}")
 
             if not usable:
                 fail("No documented Bright Data endpoint returned HTTP 200 for Reddit.")
