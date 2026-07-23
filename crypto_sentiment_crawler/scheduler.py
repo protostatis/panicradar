@@ -196,13 +196,15 @@ class CrawlerScheduler:
             self._stats["errors"] += 1
 
     async def _job_belief_update(self) -> None:
-        """Job: Recompute source accuracy and sync source_weights to DB."""
+        """Job: Recompute source accuracy, sync source_weights, and reload live bandit."""
         try:
             from .analysis.belief_updater import update_orchestrator_beliefs
 
-            await update_orchestrator_beliefs()
+            updated_beliefs = await update_orchestrator_beliefs()
+            if self.orchestrator and updated_beliefs:
+                await self.orchestrator.apply_belief_snapshot(updated_beliefs)
             self._stats["belief_updates"] += 1
-            logger.info("Belief update and source_weights sync complete")
+            logger.info("Belief update, source_weights sync, and bandit reload complete")
         except Exception as e:
             logger.error(f"Belief update job error: {e}")
             self._stats["errors"] += 1

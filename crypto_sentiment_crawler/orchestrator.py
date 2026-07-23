@@ -7,7 +7,7 @@ This is the main loop that ties the decision layer to the execution layer.
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .bayesian import CrawlBandit, GPBandit, SourceBeliefStore, UtilityScorer
@@ -119,6 +119,7 @@ class CrawlerOrchestrator:
         self.gp_model: GPSourceModel | None = None
         self.feature_extractor = SourceFeatureExtractor(db_path=str(db.db_path))
         self._gp_eval_counter = 0
+        self._belief_lock = asyncio.Lock()  # Guards belief_store modifications
 
         # Crawlers
         self.fetcher = Fetcher()
@@ -131,9 +132,6 @@ class CrawlerOrchestrator:
         # State
         self.state = OrchestratorState()
         self.pending_outcomes: list[CrawlOutcome] = []
-
-        # Current prices (for utility evaluation)
-        self.current_prices: dict[str, float] = {}
 
     async def initialize(self) -> None:
         """Initialize all components."""
@@ -219,6 +217,45 @@ class CrawlerOrchestrator:
                     f"Initialized {source_name}: α={belief.alpha:.2f}, "
                     f"β={belief.beta:.2f}, mean={belief.mean:.3f}"
                 )
+
+    async def apply_belief_snapshot(self, belief_data: dict) -> None:
+        """Atomically apply a belief snapshot from the scheduled batch updater.
+
+        Args:
+            belief_data: Dict of source -> belief-serialized dict, as produced
+                         by the scheduled belief updater.
+        """
+        async with self._belief_lock:
+            # Preserve source status fields that only the orchestrator manages
+            for source, new_data in belief_data.items():
+                existing = self.belief_store.beliefs.get(source)
+                if existing:
+                    new_data["status"] = existing.status
+                    new_data["last_success_at"] = (
+                        existing.last_success_at.isoformat()
+                        if existing.last_success_at else None
+                    )
+                    new_data["first_empty_at"] = (
+                        existing.first_empty_at.isoformat()
+                        if existing.first_empty_at else None
+                    )
+                    new_data["next_probe_at"] = (
+                        existing.next_probe_at.isoformat()
+                        if existing.next_probe_at else None
+                    )
+                    new_data["consecutive_empty_crawls"] = existing.consecutive_empty_crawls
+
+            new_store = SourceBeliefStore.from_dict(belief_data)
+            self.belief_store.beliefs = new_store.beliefs
+            self.state.beliefs = belief_data
+            self.state.last_belief_update = datetime.now(timezone.utc).isoformat()
+
+            if isinstance(self.bandit, GPBandit):
+                await self._refit_gp()
+
+            logger.info(
+                f"Applied belief snapshot: {len(belief_data)} sources"
+            )
 
     async def _try_init_gp_bandit(self) -> GPBandit | None:
         """Try to initialize a GPBandit. Returns None if not enough data."""
@@ -320,16 +357,23 @@ class CrawlerOrchestrator:
             logger.warning(f"Could not compute baseline: {e}")
             return 0.5
 
-    async def _get_current_price(self, coin: str = "BTC") -> float:
-        """Get current price for a coin."""
-        if coin in self.current_prices:
-            return self.current_prices[coin]
+    async def _get_current_price(self, coin: str = "BTC") -> PriceData | None:
+        """Get current price for a coin, always fetching from DB.
 
+        Returns:
+            PriceData record with timestamp, or None if unavailable.
+            Logs a warning if price is older than 10 minutes.
+        """
         prices = await self.db.get_latest_prices(coin, limit=1)
         if prices:
-            self.current_prices[coin] = prices[0].price_usd
-            return prices[0].price_usd
-        return 0.0
+            price_data = prices[0]
+            age_seconds = (datetime.now(timezone.utc) - price_data.timestamp).total_seconds()
+            if age_seconds > 600:  # 10 minutes
+                logger.warning(
+                    f"Stale price for {coin}: {age_seconds / 60:.1f} minutes old"
+                )
+            return price_data
+        return None
 
     async def select_and_crawl(self) -> list[CrawledContent]:
         """
@@ -361,20 +405,48 @@ class CrawlerOrchestrator:
         if not contents:
             # Penalize empty crawl so the bandit learns to avoid dry sources
             belief = self.belief_store.get(source_name)
+            was_probe = (belief.status == "inactive")
             belief.record_empty_crawl(penalty=0.3)
             logger.info(
                 f"Empty crawl from {source_name} "
                 f"(consecutive={belief.consecutive_empty_crawls}, "
-                f"mean={belief.mean:.3f})"
+                f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
             )
+            # Mark source inactive after 24h of continuous empty crawls
+            if (belief.status == "active"
+                    and belief.first_empty_at is not None
+                    and belief.consecutive_empty_crawls >= 6):
+                hours_empty = (
+                    datetime.now(timezone.utc) - belief.first_empty_at
+                ).total_seconds() / 3600
+                if hours_empty >= 24:
+                    belief.status = "inactive"
+                    belief.next_probe_at = (
+                        datetime.now(timezone.utc) + timedelta(hours=24)
+                    )
+                    logger.warning(
+                        f"Source {source_name} marked inactive after "
+                        f"{belief.consecutive_empty_crawls} empty crawls over "
+                        f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
+                    )
+            # Reschedule probe after failed inactive-source probe
+            elif was_probe:
+                belief.next_probe_at = (
+                    datetime.now(timezone.utc) + timedelta(hours=24)
+                )
+                logger.info(
+                    f"Probe of inactive source {source_name} was empty. "
+                    f"Next probe at {belief.next_probe_at}."
+                )
             return []
 
-        # Successful crawl — reset empty counter
+        # Successful crawl — reset empty counter via dedicated method
         belief = self.belief_store.get(source_name)
-        belief.consecutive_empty_crawls = 0
+        belief.record_successful_crawl()
 
         # Get current price for later evaluation
-        price = await self._get_current_price("BTC")
+        price_data = await self._get_current_price("BTC")
+        price = price_data.price_usd if price_data else 0.0
         stored_count = 0
 
         for content in contents:
@@ -566,7 +638,8 @@ class CrawlerOrchestrator:
         evaluated_count = 0
 
         # Get current price
-        current_price = await self._get_current_price("BTC")
+        price_data = await self._get_current_price("BTC")
+        current_price = price_data.price_usd if price_data else 0.0
 
         for outcome in self.pending_outcomes:
             if outcome.evaluated:
@@ -582,7 +655,7 @@ class CrawlerOrchestrator:
                 outcome.evaluated = True
                 continue
 
-            # Compute utility
+            # Compute utility (for monitoring/diagnostics only — does NOT modify beliefs)
             content_text = outcome.content.content or outcome.content.title or ""
             result = self.utility_scorer.compute_utility(
                 content=content_text,
@@ -594,12 +667,6 @@ class CrawlerOrchestrator:
 
             outcome.utility = result["utility"]
             outcome.evaluated = True
-
-            # Update belief
-            self.bandit.update_from_outcome(
-                outcome.content.source,
-                result["utility"],
-            )
 
             logger.info(
                 f"Evaluated {outcome.content.source}: "

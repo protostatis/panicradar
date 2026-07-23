@@ -206,16 +206,16 @@ class TestBanditCooldown:
         assert len(selected) == 2
 
     def test_deadlock_prevention(self):
-        """When ALL sources are on cooldown, use all to prevent deadlock."""
+        """When ALL sources are filtered out, raises ValueError (no fallback)."""
         store = self._make_store({
             "reddit_a": 5,
             "reddit_b": 10,
         })
         bandit = CrawlBandit(store, empty_crawl_cooldown=3)
 
-        # Should not raise — falls back to all sources
-        result = bandit.select_source(["reddit_a", "reddit_b"])
-        assert result.source in ("reddit_a", "reddit_b")
+        # Should raise — no fallback to all sources anymore
+        with pytest.raises(ValueError, match="No eligible sources"):
+            bandit.select_source(["reddit_a", "reddit_b"])
 
     def test_recovery_after_reset(self):
         """Source becomes eligible again after counter reset."""

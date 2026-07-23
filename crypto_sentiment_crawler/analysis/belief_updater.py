@@ -10,6 +10,7 @@ Uses user_sentiment_scores.final_score which is filtered sentiment
 
 import asyncio
 import json
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,28 +28,34 @@ MIN_SAMPLES = 20
 # Prediction lag (hours) for accuracy measurement
 PREDICTION_LAG = 4
 
-# Prior strength - how much to weight new observations vs existing prior
-# Lower = faster adaptation, higher = more stable
-PRIOR_STRENGTH = 0.3
 
-
-async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG) -> dict:
+async def compute_source_accuracy(
+    db: Database,
+    lag_hours: int = PREDICTION_LAG,
+    lookback_days: int = 90,
+) -> dict:
     """
     Compute prediction accuracy for each source.
 
-    Uses final_score from user_sentiment_scores which is filtered
-    (excludes bot messages, scam warnings, and other noise).
+    Aggregates sentiment by source-hour (mean final_score) to avoid counting
+    thousands of posts as independent observations. Applies a neutral deadband
+    (|mean_score| < 0.05) treated as abstention.
 
-    Returns dict of source -> {accuracy, correct, total, correlation}
+    Returns dict of source -> {accuracy, correct, incorrect, abstained, total,
+    correlation, coverage, is_contrarian, type_label, credible_interval_lower,
+    credible_interval_upper, effective_n}
     """
+    # Compute start date from lookback_days (Change 6)
+    start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+
     # Get sentiment scores from user_sentiment_scores (filtered scores)
     cursor = await db.conn.execute("""
         SELECT uss.timestamp, up.source, uss.final_score
         FROM user_sentiment_scores uss
         JOIN user_profiles up ON uss.user_id = up.user_id
-        WHERE uss.timestamp >= '2026-01-01'
+        WHERE uss.timestamp >= ?
         ORDER BY uss.timestamp
-    """)
+    """, (start_date,))
     sent_rows = await cursor.fetchall()
 
     # Get prices
@@ -70,12 +77,21 @@ async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG)
         price_by_hour[hour_key].append(price)
     price_by_hour = {h: np.mean(p) for h, p in price_by_hour.items()}
 
-    # Track predictions per source
-    source_data = defaultdict(lambda: {'correct': 0, 'total': 0, 'sents': [], 'changes': []})
-
+    # Change 1: Group sentiment by (source, hour_key) and compute mean score
+    source_hour_scores = defaultdict(list)
     for ts_str, source, score in sent_rows:
         ts = datetime.fromisoformat(ts_str).replace(tzinfo=None)
         hour_key = ts.replace(minute=0, second=0, microsecond=0)
+        source_hour_scores[(source, hour_key)].append(score)
+
+    # Evaluate each source-hour against price change
+    source_data = defaultdict(lambda: {
+        'correct': 0, 'incorrect': 0, 'abstained': 0,
+        'total': 0, 'sents': [], 'changes': [],
+    })
+
+    for (source, hour_key), scores in source_hour_scores.items():
+        mean_score = float(np.mean(scores))
         future_hour = hour_key + timedelta(hours=lag_hours)
 
         if hour_key in price_by_hour and future_hour in price_by_hour:
@@ -83,21 +99,32 @@ async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG)
             price_future = price_by_hour[future_hour]
             price_change = (price_future - price_now) / price_now
 
-            # Direction correct?
-            correct = (score > 0 and price_change > 0) or (score < 0 and price_change < 0)
+            d = source_data[source]
+            d['total'] += 1
+            d['sents'].append(mean_score)
+            d['changes'].append(price_change * 100)
 
-            source_data[source]['total'] += 1
-            source_data[source]['correct'] += int(correct)
-            source_data[source]['sents'].append(score)
-            source_data[source]['changes'].append(price_change * 100)
+            # Change 2: Neutral deadband — |mean_score| < 0.05 is abstention
+            if abs(mean_score) < 0.05:
+                d['abstained'] += 1
+            else:
+                correct = (mean_score > 0 and price_change > 0) or (mean_score < 0 and price_change < 0)
+                if correct:
+                    d['correct'] += 1
+                else:
+                    d['incorrect'] += 1
 
     # Compute final metrics
     results = {}
     for source, data in source_data.items():
-        if data['total'] < MIN_SAMPLES:
+        effective_n = data['correct'] + data['incorrect']
+        if effective_n < MIN_SAMPLES:
             continue
 
-        accuracy = data['correct'] / data['total']
+        accuracy = data['correct'] / effective_n if effective_n > 0 else 0.5
+
+        # Change 2: Coverage — fraction of non-abstained observations
+        coverage = (data['total'] - data['abstained']) / data['total'] if data['total'] > 0 else 0.0
 
         # Correlation
         corr = 0
@@ -106,12 +133,39 @@ async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG)
             if np.isnan(corr):
                 corr = 0
 
+        # Change 4: Compute 95% Beta credible interval
+        alpha_post = 1 + data['correct']
+        beta_post = 1 + data['incorrect']
+        ci_lower = float(stats.beta.ppf(0.025, alpha_post, beta_post))
+        ci_upper = float(stats.beta.ppf(0.975, alpha_post, beta_post))
+
+        # Change 4: Fail-closed contrarian classification
+        if effective_n < 100:
+            is_contrarian = False
+            type_label = "insufficient_data"
+        elif ci_upper < 0.50:
+            is_contrarian = True
+            type_label = "contrarian"
+        elif ci_lower > 0.50:
+            is_contrarian = False
+            type_label = "momentum"
+        else:
+            is_contrarian = False
+            type_label = "neutral"
+
         results[source] = {
-            'accuracy': accuracy,
+            'accuracy': round(accuracy, 4),
             'correct': data['correct'],
+            'incorrect': data['incorrect'],
+            'abstained': data['abstained'],
             'total': data['total'],
-            'correlation': corr,
-            'is_contrarian': accuracy < 0.45,  # Worse than random = contrarian signal
+            'correlation': round(corr, 4),
+            'coverage': round(coverage, 4),
+            'is_contrarian': is_contrarian,
+            'type_label': type_label,
+            'credible_interval_lower': round(ci_lower, 4),
+            'credible_interval_upper': round(ci_upper, 4),
+            'effective_n': effective_n,
         }
 
     return results
@@ -120,14 +174,13 @@ async def compute_source_accuracy(db: Database, lag_hours: int = PREDICTION_LAG)
 def update_belief_priors(
     current_beliefs: dict,
     source_accuracy: dict,
-    prior_strength: float = PRIOR_STRENGTH,
 ) -> dict:
     """
-    Update belief priors based on observed accuracy.
+    Rebuild belief priors deterministically from observed accuracy.
 
-    Uses a weighted combination of:
-    - Current prior (for stability)
-    - Observed accuracy (for adaptation)
+    Starts from neutral prior (alpha=1, beta=1) and adds observed
+    correct/incorrect source-hours. No blending with previous beliefs
+    — the function recomputes alpha/beta from raw counts every time.
     """
     updated_beliefs = {}
     now = datetime.now(timezone.utc).isoformat()
@@ -138,14 +191,9 @@ def update_belief_priors(
         if source in source_accuracy:
             obs = source_accuracy[source]
 
-            # Compute new alpha/beta from observations
-            # Scale by prior_strength to control adaptation rate
-            obs_alpha = 1 + obs['correct'] * prior_strength
-            obs_beta = 1 + (obs['total'] - obs['correct']) * prior_strength
-
-            # Combine with existing prior
-            new_alpha = belief.get('alpha', 1.0) * (1 - prior_strength) + obs_alpha
-            new_beta = belief.get('beta', 1.0) * (1 - prior_strength) + obs_beta
+            # Change 3: Deterministic rebuild from neutral prior (no PRIOR_STRENGTH blending)
+            new_alpha = 1 + obs['correct']
+            new_beta = 1 + obs['incorrect']
 
             updated['alpha'] = round(new_alpha, 2)
             updated['beta'] = round(new_beta, 2)
@@ -153,32 +201,43 @@ def update_belief_priors(
             updated['accuracy'] = round(obs['accuracy'], 4)
             updated['correlation'] = round(obs['correlation'], 4)
             updated['is_contrarian'] = obs['is_contrarian']
+            updated['type_label'] = obs['type_label']
+            updated['credible_interval_lower'] = obs['credible_interval_lower']
+            updated['credible_interval_upper'] = obs['credible_interval_upper']
+            updated['effective_n'] = obs['effective_n']
+            updated['coverage'] = round(obs['coverage'], 4)
             updated['last_updated'] = now
 
             logger.info(
                 f"Updated {source}: accuracy={obs['accuracy']:.1%}, "
-                f"Beta({updated['alpha']:.1f}, {updated['beta']:.1f})"
+                f"Beta({updated['alpha']:.1f}, {updated['beta']:.1f}), "
+                f"type={obs['type_label']}"
             )
 
         updated_beliefs[source] = updated
 
     # Add new sources not in current beliefs
     for source, obs in source_accuracy.items():
-        source = source.lower()
-        if source not in updated_beliefs:
-            updated_beliefs[source] = {
-                'source': source,
-                'alpha': 1 + obs['correct'] * prior_strength,
-                'beta': 1 + (obs['total'] - obs['correct']) * prior_strength,
+        source_lower = source.lower()
+        if source_lower not in updated_beliefs:
+            updated_beliefs[source_lower] = {
+                'source': source_lower,
+                'alpha': 1 + obs['correct'],
+                'beta': 1 + obs['incorrect'],
                 'granger_pvalue': None,
                 'lead_time_hours': None,
                 'total_crawls': obs['total'],
                 'accuracy': round(obs['accuracy'], 4),
                 'correlation': round(obs['correlation'], 4),
                 'is_contrarian': obs['is_contrarian'],
+                'type_label': obs['type_label'],
+                'credible_interval_lower': obs['credible_interval_lower'],
+                'credible_interval_upper': obs['credible_interval_upper'],
+                'effective_n': obs['effective_n'],
+                'coverage': round(obs['coverage'], 4),
                 'last_updated': now,
             }
-            logger.info(f"Added new source {source}: accuracy={obs['accuracy']:.1%}")
+            logger.info(f"Added new source {source_lower}: accuracy={obs['accuracy']:.1%}, type={obs['type_label']}")
 
     return updated_beliefs
 
@@ -186,9 +245,15 @@ def update_belief_priors(
 async def update_orchestrator_beliefs(
     state_path: str = "data/orchestrator_state.json",
     db_path: str = "data/sentiment.db",
+    lookback_days: int = 90,
 ) -> dict:
     """
     Main function to update orchestrator beliefs based on observed performance.
+
+    Args:
+        state_path: Path to orchestrator state JSON.
+        db_path: Path to SQLite database.
+        lookback_days: Number of days of history to consider (default 90).
     """
     logger.info("=" * 60)
     logger.info("UPDATING BAYESIAN BELIEFS")
@@ -210,21 +275,25 @@ async def update_orchestrator_beliefs(
     await db.connect()
 
     try:
-        # Compute source accuracy
-        source_accuracy = await compute_source_accuracy(db)
+        # Compute source accuracy with configurable lookback (Change 6)
+        source_accuracy = await compute_source_accuracy(db, lookback_days=lookback_days)
         logger.info(f"Computed accuracy for {len(source_accuracy)} sources")
 
         # Update beliefs
         updated_beliefs = update_belief_priors(current_beliefs, source_accuracy)
 
-        # Save updated state
+        # Change 5: Increment belief version
+        state['belief_version'] = state.get('belief_version', 0) + 1
         state["beliefs"] = updated_beliefs
         state["last_belief_update"] = datetime.now(timezone.utc).isoformat()
 
-        with open(state_file, "w") as f:
+        # Change 5: Atomic write via temp file + os.replace
+        tmp_path = state_file.with_suffix('.tmp')
+        with open(tmp_path, "w") as f:
             json.dump(state, f, indent=4)
+        os.replace(tmp_path, state_file)
 
-        logger.info(f"Saved {len(updated_beliefs)} updated beliefs")
+        logger.info(f"Saved {len(updated_beliefs)} updated beliefs (version {state['belief_version']})")
 
         # Update source weights for inference
         from .source_weights import (
@@ -241,8 +310,8 @@ async def update_orchestrator_beliefs(
         print("\n" + "=" * 60)
         print("BELIEF UPDATE SUMMARY")
         print("=" * 60)
-        print(f"\n{'Source':<28} {'Accuracy':<10} {'Alpha':<8} {'Beta':<8} {'Mean':<8} {'Type'}")
-        print("-" * 75)
+        print(f"\n{'Source':<28} {'Accuracy':<10} {'Alpha':<8} {'Beta':<8} {'Mean':<8} {'Type':<18} {'Coverage':<10}")
+        print("-" * 92)
 
         sorted_beliefs = sorted(
             updated_beliefs.items(),
@@ -257,8 +326,9 @@ async def update_orchestrator_beliefs(
             alpha = belief.get('alpha', 1)
             beta = belief.get('beta', 1)
             mean = alpha / (alpha + beta)
-            type_str = "CONTRARIAN" if belief.get('is_contrarian') else "MOMENTUM"
-            print(f"{source:<28} {acc:>6.1%}     {alpha:>6.1f}   {beta:>6.1f}   {mean:>6.3f}   {type_str}")
+            type_label = belief.get('type_label', 'unknown')
+            coverage = belief.get('coverage', 1.0)
+            print(f"{source:<28} {acc:>6.1%}     {alpha:>6.1f}   {beta:>6.1f}   {mean:>6.3f}   {type_label:<18} {coverage:>6.1%}")
 
         print("=" * 60)
 

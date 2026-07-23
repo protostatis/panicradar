@@ -34,6 +34,22 @@ class SourceBelief:
     consecutive_empty_crawls: int = 0
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # Source status tracking
+    last_success_at: datetime | None = None
+    first_empty_at: datetime | None = None
+    status: str = "active"  # "active", "inactive", "archived"
+    next_probe_at: datetime | None = None
+
+    # Updater metadata (populated by belief_updater)
+    accuracy: float | None = None
+    correlation: float | None = None
+    is_contrarian: bool = False
+    type_label: str = "uninitialized"  # momentum, neutral, contrarian, insufficient_data
+    credible_interval_lower: float | None = None
+    credible_interval_upper: float | None = None
+    effective_n: int = 0
+    coverage: float | None = None
+
     @property
     def mean(self) -> float:
         """Posterior mean: expected probability of being informative."""
@@ -69,6 +85,18 @@ class SourceBelief:
         self.consecutive_empty_crawls = 0  # Reset on any real outcome
         self.last_updated = datetime.now(timezone.utc)
 
+    def record_successful_crawl(self) -> None:
+        """Record a successful crawl (content was returned).
+
+        Resets empty-crawl tracking and marks source as active.
+        """
+        self.consecutive_empty_crawls = 0
+        self.last_success_at = datetime.now(timezone.utc)
+        self.first_empty_at = None
+        if self.status == "inactive":
+            self.status = "active"
+        self.last_updated = datetime.now(timezone.utc)
+
     def record_empty_crawl(self, penalty: float = 0.3) -> None:
         """Record an empty crawl (no posts returned).
 
@@ -77,6 +105,8 @@ class SourceBelief:
         that empty != bad content, just no content.
         """
         self.consecutive_empty_crawls += 1
+        if self.consecutive_empty_crawls == 1:
+            self.first_empty_at = datetime.now(timezone.utc)
         self.beta += penalty
         self.last_updated = datetime.now(timezone.utc)
 
@@ -120,6 +150,22 @@ class SourceBelief:
             "total_crawls": self.total_crawls,
             "consecutive_empty_crawls": self.consecutive_empty_crawls,
             "last_updated": self.last_updated.isoformat(),
+            "last_success_at": self.last_success_at.isoformat()
+            if self.last_success_at else None,
+            "first_empty_at": self.first_empty_at.isoformat()
+            if self.first_empty_at else None,
+            "status": self.status,
+            "next_probe_at": self.next_probe_at.isoformat()
+            if self.next_probe_at else None,
+            # Updater metadata
+            "accuracy": self.accuracy,
+            "correlation": self.correlation,
+            "is_contrarian": self.is_contrarian,
+            "type_label": self.type_label,
+            "credible_interval_lower": self.credible_interval_lower,
+            "credible_interval_upper": self.credible_interval_upper,
+            "effective_n": self.effective_n,
+            "coverage": self.coverage,
         }
 
     @classmethod
@@ -136,6 +182,25 @@ class SourceBelief:
             last_updated=datetime.fromisoformat(data["last_updated"])
             if "last_updated" in data
             else datetime.now(timezone.utc),
+            last_success_at=datetime.fromisoformat(data["last_success_at"])
+            if data.get("last_success_at")
+            else None,
+            first_empty_at=datetime.fromisoformat(data["first_empty_at"])
+            if data.get("first_empty_at")
+            else None,
+            status=data.get("status", "active"),
+            next_probe_at=datetime.fromisoformat(data["next_probe_at"])
+            if data.get("next_probe_at")
+            else None,
+            # Updater metadata
+            accuracy=data.get("accuracy"),
+            correlation=data.get("correlation"),
+            is_contrarian=data.get("is_contrarian", False),
+            type_label=data.get("type_label", "uninitialized"),
+            credible_interval_lower=data.get("credible_interval_lower"),
+            credible_interval_upper=data.get("credible_interval_upper"),
+            effective_n=data.get("effective_n", 0),
+            coverage=data.get("coverage"),
         )
 
 
