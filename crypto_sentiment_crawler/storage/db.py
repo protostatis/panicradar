@@ -350,7 +350,7 @@ class Database:
         content_hash = self._compute_content_hash(data.source, data.raw_data)
 
         # Check if already exists
-        await self.conn.execute(
+        cursor = await self.conn.execute(
             "SELECT id FROM sentiment_raw WHERE content_hash = ?",
             (content_hash,),
         )
