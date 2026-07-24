@@ -6,6 +6,7 @@ export { default as StatTile } from './StatTile';
 export { default as Delta } from './Delta';
 export { default as ToneBadge } from './ToneBadge';
 export { default as FreshnessChip } from './FreshnessChip';
+export { default as Reveal } from './Reveal';
 export { default as ContrarianLens, lensFromBelief } from './ContrarianLens';
 export { LoadingState, EmptyState, ErrorState } from './StateViews';
 export {

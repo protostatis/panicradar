@@ -1,0 +1,110 @@
+import { useMemo, useState } from 'react';
+import SignalCard from './SignalCard';
+import SectionHeader from '../ui/SectionHeader';
+import Reveal from '../ui/Reveal';
+import { EmptyState } from '../ui/StateViews';
+
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'high', label: 'High impact' },
+  { key: 'medium', label: 'Watch' },
+  { key: 'low', label: 'Context' },
+];
+
+const countByLevel = (signals) => {
+  const counts = { all: signals.length, high: 0, medium: 0, low: 0 };
+  signals.forEach((s) => {
+    if (counts[s.surprise_score] != null) counts[s.surprise_score] += 1;
+  });
+  return counts;
+};
+
+const SignalsSection = ({ signals }) => {
+  const [filter, setFilter] = useState('all');
+  const [query, setQuery] = useState('');
+
+  const counts = useMemo(() => countByLevel(signals), [signals]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return signals.filter((signal) => {
+      if (filter !== 'all' && signal.surprise_score !== filter) return false;
+      if (!q) return true;
+      return (
+        signal.headline?.toLowerCase().includes(q) ||
+        signal.why_interesting?.toLowerCase().includes(q) ||
+        signal.source?.toLowerCase().includes(q)
+      );
+    });
+  }, [signals, filter, query]);
+
+  return (
+    <section id="signals" className="scroll-mt-32">
+      <SectionHeader
+        kicker="Priorities"
+        title="Signals"
+        description="Contrarian reads: where the crowd is positioned and what that implies."
+        actions={
+          <div className="relative">
+            <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+              {'\u2315'}
+            </span>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter signals…"
+              aria-label="Filter signals by text"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950/80 py-1.5 pl-8 pr-3 text-sm text-slate-200 placeholder:text-slate-600 focus:border-cyan-400/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/40 sm:w-56"
+            />
+          </div>
+        }
+      />
+
+      {/* Priority filters */}
+      <div className="mt-4 mb-4 flex flex-wrap items-center gap-1" role="group" aria-label="Filter by impact level">
+        {FILTERS.map(({ key, label }) => {
+          const active = filter === key;
+          const disabled = key !== 'all' && counts[key] === 0;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              disabled={disabled}
+              aria-pressed={active}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
+                active
+                  ? 'border border-cyan-400/40 bg-cyan-400/15 text-cyan-300 shadow-[0_0_20px_-6px_rgba(34,211,238,0.5)]'
+                  : 'border border-slate-700/60 text-slate-400 hover:border-slate-600 hover:bg-slate-800 hover:text-slate-200'
+              } ${disabled ? 'cursor-not-allowed opacity-40 hover:bg-transparent' : ''}`}
+            >
+              {label}
+              <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none transition-colors ${
+                active ? 'bg-cyan-400/20 text-cyan-200' : 'bg-slate-700/60 text-slate-400'
+              }`}>{counts[key] ?? 0}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {visible.length > 0 ? (
+        <div className="space-y-4">
+          {visible.map((signal, i) => (
+            <Reveal key={i} delay={Math.min(i, 6) * 60}>
+              <SignalCard signal={signal} />
+            </Reveal>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          icon={'\u2315'}
+          title="No matching signals"
+          message={query ? `Nothing matches "${query}".` : 'No signals at this impact level today.'}
+        />
+      )}
+    </section>
+  );
+};
+
+export default SignalsSection;
