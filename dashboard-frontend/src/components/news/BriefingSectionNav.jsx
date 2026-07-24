@@ -53,7 +53,7 @@ const BriefingSectionNav = ({ items }) => {
               <a
                 key={id}
                 href={`#${id}`}
-                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
+                className={`group shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
                   active
                     ? 'bg-cyan-400/15 text-cyan-300 shadow-[0_0_18px_-6px_rgba(34,211,238,0.5)]'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
@@ -61,8 +61,10 @@ const BriefingSectionNav = ({ items }) => {
                 aria-current={active ? 'true' : undefined}
               >
                 {label}
-                {count != null && (
-                  <span className="ml-1.5 text-[0.65rem] text-slate-500">{count}</span>
+                {count != null && count > 0 && (
+                  <span className="ml-2 rounded-full bg-slate-700/70 px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none text-slate-300 transition-colors group-hover:bg-slate-600/70">
+                    {count}
+                  </span>
                 )}
               </a>
             );

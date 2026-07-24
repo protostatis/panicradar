@@ -80,7 +80,9 @@ const SignalsSection = ({ signals }) => {
               } ${disabled ? 'cursor-not-allowed opacity-40 hover:bg-transparent' : ''}`}
             >
               {label}
-              <span className="ml-1.5 text-[0.65rem] text-slate-500">{counts[key] ?? 0}</span>
+              <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none transition-colors ${
+                active ? 'bg-cyan-400/20 text-cyan-200' : 'bg-slate-700/60 text-slate-400'
+              }`}>{counts[key] ?? 0}</span>
             </button>
           );
         })}
