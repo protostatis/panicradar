@@ -36,13 +36,13 @@ const BriefingHero = ({ data, calendarLabel }) => (
       <div>
         <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_14px_rgba(110,231,183,0.9)]" />
-          {calendarLabel || 'Daily Intelligence Briefing'}
+          {calendarLabel ? `${calendarLabel} \u00b7 Briefing` : 'Daily Intelligence Briefing'}
         </div>
-        <h1 className="max-w-4xl text-4xl font-bold leading-[0.95] tracking-tight text-slate-50 sm:text-5xl lg:text-6xl">
-          The crowd-risk tape for crypto markets.
+        <h1 className="max-w-3xl text-2xl font-bold leading-snug tracking-tight text-slate-50 sm:text-3xl lg:text-4xl">
+          {data.summary || 'The crowd-risk tape for crypto markets.'}
         </h1>
-        <p className="mt-5 max-w-2xl text-base leading-relaxed text-slate-300 sm:text-lg">
-          {data.summary}
+        <p className="mt-4 text-sm leading-relaxed text-slate-400 sm:text-base">
+          Crowd-risk intelligence scanned across {data.sources_browsed}+ sources. Surfacing the stories traders are likely to notice late.
         </p>
 
         <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
@@ -91,7 +91,7 @@ const BriefingHero = ({ data, calendarLabel }) => (
             <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
               Market Read
             </div>
-            <p className="line-clamp-5 text-sm leading-relaxed text-slate-400">
+            <p className="line-clamp-4 text-sm leading-relaxed text-slate-400">
               {data.market_context.dominant_sentiment}
             </p>
           </div>

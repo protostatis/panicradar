@@ -1,3 +1,6 @@
+import { useRef } from 'react';
+import { useScrollFade } from '../ui/useScrollFade';
+
 const TickerItem = ({ label, value, isPositive, isNegative }) => (
   <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-slate-700/70 bg-slate-950/80 px-3 py-1.5">
     <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
@@ -12,6 +15,9 @@ const TickerItem = ({ label, value, isPositive, isNegative }) => (
 );
 
 const MarketTicker = ({ context }) => {
+  const scrollRef = useRef(null);
+  const { canScrollRight } = useScrollFade(scrollRef, [context]);
+
   if (!context) return null;
 
   const items = [
@@ -48,12 +54,8 @@ const MarketTicker = ({ context }) => {
 
   return (
     <div className="relative rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-lg shadow-slate-950/30">
-      {/* Scroll affordance: right-edge fade so users know there's more */}
       <div
-        aria-hidden="true"
-        className="pointer-events-none absolute right-0 top-0 z-10 h-full w-10 bg-gradient-to-l from-slate-950 via-slate-950/60 to-transparent"
-      />
-      <div
+        ref={scrollRef}
         className="flex items-center gap-2 overflow-x-auto font-mono text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         role="marquee"
         aria-label="Live market prices"
@@ -64,10 +66,14 @@ const MarketTicker = ({ context }) => {
         {items.map((item, i) => (
           <TickerItem key={`${item.label}-${i}`} {...item} />
         ))}
-        <span aria-hidden="true" className="shrink-0 px-1 text-slate-700">
-          {'\u00B7'}
-        </span>
       </div>
+      {/* Scroll-aware fade: only when content overflows (mobile), never on wide desktop */}
+      {canScrollRight && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-0 top-0 z-20 h-full w-10 rounded-r-2xl bg-gradient-to-l from-slate-950 via-slate-950/60 to-transparent"
+        />
+      )}
     </div>
   );
 };
