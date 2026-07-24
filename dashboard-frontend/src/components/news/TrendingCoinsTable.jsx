@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { EmptyState } from '../ui/StateViews';
 
 const CoinRow = ({ coin }) => {
   const change = coin.price_change_24h || '';
@@ -6,20 +7,24 @@ const CoinRow = ({ coin }) => {
   const isNegative = change.startsWith('-');
 
   return (
-    <tr className="border-t border-slate-700/50 hover:bg-slate-700/30 transition-colors">
-      <td className="py-2.5 px-3 text-slate-500 text-xs font-mono">{coin.rank != null ? `#${coin.rank}` : '—'}</td>
-      <td className="py-2.5 px-3">
-        <span className="text-slate-100 font-semibold text-sm">{coin.symbol}</span>
-        <span className="text-slate-500 text-xs ml-2 hidden sm:inline">{coin.name}</span>
+    <tr className="border-t border-slate-700/50 transition-colors hover:bg-slate-700/30">
+      <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{coin.rank != null ? `#${coin.rank}` : '—'}</td>
+      <td className="px-3 py-2.5">
+        <span className="text-sm font-semibold text-slate-100">{coin.symbol}</span>
+        <span className="ml-2 hidden text-xs text-slate-500 sm:inline">{coin.name}</span>
       </td>
-      <td className={`py-2.5 px-3 text-right font-mono text-sm ${isPositive ? 'text-green-400' : isNegative ? 'text-red-400' : 'text-slate-400'}`}>
+      <td
+        className={`px-3 py-2.5 text-right font-mono text-sm ${
+          isPositive ? 'text-green-400' : isNegative ? 'text-red-400' : 'text-slate-400'
+        }`}
+      >
         {change || '—'}
       </td>
-      <td className="py-2.5 px-3 text-right text-slate-400 text-xs font-mono hidden sm:table-cell">
+      <td className="hidden px-3 py-2.5 text-right font-mono text-xs text-slate-400 sm:table-cell">
         {coin.volume || '—'}
       </td>
       {coin.note && (
-        <td className="py-2.5 px-3 text-slate-500 text-xs max-w-[200px] truncate hidden lg:table-cell">
+        <td className="hidden max-w-[200px] truncate px-3 py-2.5 text-xs text-slate-500 lg:table-cell">
           {coin.note}
         </td>
       )}
@@ -31,11 +36,11 @@ const Table = ({ coins, hasNotes }) => (
   <table className="w-full">
     <thead>
       <tr className="text-xs uppercase tracking-wider text-slate-500">
-        <th className="py-2 px-3 text-left w-16">Rank</th>
-        <th className="py-2 px-3 text-left">Coin</th>
-        <th className="py-2 px-3 text-right">24h</th>
-        <th className="py-2 px-3 text-right hidden sm:table-cell">Volume</th>
-        {hasNotes && <th className="py-2 px-3 text-left hidden lg:table-cell">Note</th>}
+        <th scope="col" className="w-16 px-3 py-2 text-left">Rank</th>
+        <th scope="col" className="px-3 py-2 text-left">Coin</th>
+        <th scope="col" className="px-3 py-2 text-right">24h</th>
+        <th scope="col" className="hidden px-3 py-2 text-right sm:table-cell">Volume</th>
+        {hasNotes && <th scope="col" className="hidden px-3 py-2 text-left lg:table-cell">Note</th>}
       </tr>
     </thead>
     <tbody>
@@ -46,44 +51,65 @@ const Table = ({ coins, hasNotes }) => (
   </table>
 );
 
+const TabButton = ({ active, onClick, children }) => (
+  <button
+    type="button"
+    role="tab"
+    aria-selected={active}
+    onClick={onClick}
+    className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+      active
+        ? 'border border-green-500/30 bg-green-500/20 text-green-400'
+        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+    }`}
+  >
+    {children}
+  </button>
+);
+
 const TrendingCoinsTable = ({ coins, losers }) => {
   const [tab, setTab] = useState('trending');
 
-  if (!coins?.length && !losers?.length) return null;
+  const trending = coins || [];
+  const losersList = losers || [];
 
-  const hasNotes = coins?.some(c => c.note);
+  if (trending.length === 0 && losersList.length === 0) {
+    return (
+      <section>
+        <EmptyState
+          icon={'\u2248'}
+          title="No mover data today"
+          message="Trending coin and top-loser data refreshes with the daily scan."
+        />
+      </section>
+    );
+  }
+
+  const hasNotes = trending.some((c) => c.note);
+  const activeCoins = tab === 'trending' ? trending : losersList;
 
   return (
-    <section>
-      <div className="flex items-center gap-1 mb-4">
-        <button
-          onClick={() => setTab('trending')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            tab === 'trending'
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-          }`}
-        >
-          Trending ({coins?.length || 0})
-        </button>
-        <button
-          onClick={() => setTab('losers')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            tab === 'losers'
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-          }`}
-        >
-          Top Losers ({losers?.length || 0})
-        </button>
+    <section id="movers" className="scroll-mt-24">
+      <div className="mb-4 flex items-center gap-1" role="tablist" aria-label="Coin movers">
+        <TabButton active={tab === 'trending'} onClick={() => setTab('trending')}>
+          Trending ({trending.length})
+        </TabButton>
+        <TabButton active={tab === 'losers'} onClick={() => setTab('losers')}>
+          Top Losers ({losersList.length})
+        </TabButton>
       </div>
 
       <div className="radar-panel overflow-hidden">
-        {tab === 'trending' && coins?.length > 0 && (
-          <Table coins={coins} hasNotes={hasNotes} />
-        )}
-        {tab === 'losers' && losers?.length > 0 && (
-          <Table coins={losers} hasNotes={false} />
+        {activeCoins.length > 0 ? (
+          <Table coins={activeCoins} hasNotes={tab === 'trending' && hasNotes} />
+        ) : (
+          <div className="p-6">
+            <EmptyState
+              icon={'\u2014'}
+              title={`No ${tab === 'trending' ? 'trending' : 'loser'} data`}
+              message="Try the other tab."
+            />
+          </div>
         )}
       </div>
     </section>

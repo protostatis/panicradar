@@ -35,7 +35,7 @@ const HeroSignals = ({ hooks }) => {
   };
 
   return (
-    <section className="radar-panel overflow-hidden p-5 sm:p-6">
+    <section id="top-signals" className="radar-panel scroll-mt-24 overflow-hidden p-5 sm:p-6">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(16,185,129,0.20),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(14,165,233,0.14),transparent_32%)]" />
       <div className="absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.04)_1px,transparent_1px)] bg-[size:28px_28px] opacity-50" />
 
@@ -43,7 +43,7 @@ const HeroSignals = ({ hooks }) => {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
-              Today's 3 Crypto Risk Signals
+              Today's Top Risk Signals
             </div>
             <p className="mt-1.5 max-w-2xl text-sm text-slate-400">
               The highest-signal stories from today's scan, packaged for sharing before the crowd narrative hardens.
