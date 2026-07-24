@@ -58,15 +58,15 @@ const HeroSignals = ({ hooks }) => {
           {hooks.map((hook, i) => (
             <article
               key={i}
-              className="group relative min-h-36 overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/75 p-4 transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-400/50 hover:bg-slate-900"
+              className="group relative min-h-36 overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/75 p-4 transition-all duration-300 hover:-translate-y-1 hover:border-emerald-400/50 hover:bg-slate-900 hover:shadow-[0_20px_50px_-20px_rgba(16,185,129,0.4)]"
             >
-              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 via-cyan-300 to-transparent opacity-70" />
-              <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-emerald-400/10 blur-2xl transition-opacity group-hover:opacity-80" />
+              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 via-cyan-300 to-transparent opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-emerald-400/10 blur-2xl transition-all duration-300 group-hover:scale-150 group-hover:opacity-100" />
 
               <div className="relative flex h-full flex-col justify-between gap-4">
                 <div>
                   <div className="mb-3 flex items-center justify-between">
-                    <span className="font-mono text-2xl font-semibold leading-none text-slate-700">
+                    <span className="font-mono text-2xl font-semibold leading-none text-slate-700 transition-colors duration-300 group-hover:text-emerald-400/60">
                       0{i + 1}
                     </span>
                     <span className="rounded-full border border-cyan-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-300">

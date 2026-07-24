@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import SignalCard from './SignalCard';
 import SectionHeader from '../ui/SectionHeader';
+import Reveal from '../ui/Reveal';
 import { EmptyState } from '../ui/StateViews';
 
 const FILTERS = [
@@ -72,10 +73,10 @@ const SignalsSection = ({ signals }) => {
               onClick={() => setFilter(key)}
               disabled={disabled}
               aria-pressed={active}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
                 active
-                  ? 'border border-cyan-400/40 bg-cyan-400/15 text-cyan-300'
-                  : 'border border-slate-700/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                  ? 'border border-cyan-400/40 bg-cyan-400/15 text-cyan-300 shadow-[0_0_20px_-6px_rgba(34,211,238,0.5)]'
+                  : 'border border-slate-700/60 text-slate-400 hover:border-slate-600 hover:bg-slate-800 hover:text-slate-200'
               } ${disabled ? 'cursor-not-allowed opacity-40 hover:bg-transparent' : ''}`}
             >
               {label}
@@ -88,7 +89,9 @@ const SignalsSection = ({ signals }) => {
       {visible.length > 0 ? (
         <div className="space-y-4">
           {visible.map((signal, i) => (
-            <SignalCard key={i} signal={signal} />
+            <Reveal key={i} delay={Math.min(i, 6) * 60}>
+              <SignalCard signal={signal} />
+            </Reveal>
           ))}
         </div>
       ) : (

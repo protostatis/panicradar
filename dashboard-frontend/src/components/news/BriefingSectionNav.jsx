@@ -53,9 +53,9 @@ const BriefingSectionNav = ({ items }) => {
               <a
                 key={id}
                 href={`#${id}`}
-                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
                   active
-                    ? 'bg-cyan-400/15 text-cyan-300'
+                    ? 'bg-cyan-400/15 text-cyan-300 shadow-[0_0_18px_-6px_rgba(34,211,238,0.5)]'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                 }`}
                 aria-current={active ? 'true' : undefined}

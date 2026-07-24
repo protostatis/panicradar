@@ -17,6 +17,13 @@ const SURPRISE_BORDER = {
   low: 'border-l-slate-500',
 };
 
+/** Tone-matched hover glow + border lift, so each card reacts in its own colour. */
+const SURPRISE_HOVER = {
+  high: 'hover:border-red-500/50 hover:shadow-[0_16px_44px_-16px_rgba(239,68,68,0.45)]',
+  medium: 'hover:border-amber-500/50 hover:shadow-[0_16px_44px_-16px_rgba(245,158,11,0.30)]',
+  low: 'hover:border-slate-400/40 hover:shadow-[0_16px_44px_-16px_rgba(148,163,184,0.22)]',
+};
+
 /** Humanize an arbitrary engagement key (e.g. reddit_upvotes -> "Reddit upvotes"). */
 const humanizeKey = (key) =>
   String(key)
@@ -77,10 +84,11 @@ const SignalCard = ({ signal }) => {
   const mapping = SURPRISE_TO_TONE[level] || SURPRISE_TO_TONE.low;
   const t = tone(mapping.key);
   const borderColor = SURPRISE_BORDER[level] || 'border-l-slate-600';
+  const hoverGlow = SURPRISE_HOVER[level] || SURPRISE_HOVER.low;
   const url = signal.url || signal.link;
 
-  const cardClasses = `radar-card border-l-2 ${borderColor} p-5 sm:p-6 transition-colors ${
-    url ? 'cursor-pointer hover:border-cyan-400/40' : ''
+  const cardClasses = `radar-card group border-l-2 ${borderColor} p-5 sm:p-6 transition-all duration-200 hover:-translate-y-0.5 ${hoverGlow} ${
+    url ? 'cursor-pointer' : ''
   }`;
 
   const inner = (
@@ -132,7 +140,7 @@ const SignalCard = ({ signal }) => {
         )}
         <EngagementMetrics engagement={signal.engagement} />
         {url && (
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${t.text}`}>
+          <span className={`inline-flex items-center gap-1 text-xs font-medium transition-transform duration-200 group-hover:translate-x-0.5 ${t.text}`}>
             Read source
             <span aria-hidden="true">{'\u2197'}</span>
           </span>

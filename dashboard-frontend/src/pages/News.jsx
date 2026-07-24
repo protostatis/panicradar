@@ -11,6 +11,7 @@ import MarketContextPanel from '../components/news/MarketContextPanel';
 import BriefingSectionNav from '../components/news/BriefingSectionNav';
 import { LoadingState, ErrorState } from '../components/ui/StateViews';
 import FreshnessChip from '../components/ui/FreshnessChip';
+import Reveal from '../components/ui/Reveal';
 import useSEO from '../hooks/useSEO';
 
 const TELEGRAM_URL = 'https://t.me/PanicRadarAlerts';
@@ -65,7 +66,7 @@ const BriefingHero = ({ data, calendarLabel }) => {
             <Link
               to="/dashboard"
               onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_hero_dashboard' })}
-              className="radar-button-primary px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-slate-950"
+              className="radar-button-primary px-5 py-3 text-sm active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-slate-950"
             >
               Open Live Dashboard
             </Link>
@@ -74,7 +75,7 @@ const BriefingHero = ({ data, calendarLabel }) => {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_hero_telegram' })}
-              className="radar-button-ghost px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-slate-950"
+              className="radar-button-ghost px-5 py-3 text-sm active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-slate-950"
             >
               Get Telegram Alerts
             </a>
@@ -187,62 +188,76 @@ const News = () => {
 
   return (
     <div className="space-y-6 sm:space-y-8">
-      <MarketTicker context={data.market_context} />
-      <BriefingHero data={data} calendarLabel={calendarLabel} />
+      <Reveal>
+        <MarketTicker context={data.market_context} />
+      </Reveal>
+      <Reveal delay={80}>
+        <BriefingHero data={data} calendarLabel={calendarLabel} />
+      </Reveal>
 
       {navItems.length > 1 && <BriefingSectionNav items={navItems} />}
 
       {/* Remaining top hooks — the #1 lead is already featured in the hero */}
       {data.top_3_hooks?.length > 1 && (
-        <HeroSignals hooks={data.top_3_hooks.slice(1)} />
+        <Reveal>
+          <HeroSignals hooks={data.top_3_hooks.slice(1)} />
+        </Reveal>
       )}
 
       {/* Signal cards — with filtering + search */}
       {data.signals?.length > 0 && <SignalsSection signals={data.signals} />}
 
       {/* Trending Coins + Top Losers */}
-      <TrendingCoinsTable coins={data.trending_coins} losers={data.top_losers} />
+      <Reveal>
+        <TrendingCoinsTable coins={data.trending_coins} losers={data.top_losers} />
+      </Reveal>
 
       {/* DeFi Signals */}
-      <DefiSignalsSection signals={data.defi_signals} />
+      <Reveal>
+        <DefiSignalsSection signals={data.defi_signals} />
+      </Reveal>
 
       {/* Market Context (stats only — narrative lives in the hero) */}
-      <MarketContextPanel context={data.market_context} />
+      <Reveal>
+        <MarketContextPanel context={data.market_context} />
+      </Reveal>
 
       {/* CTA */}
-      <section className="radar-panel p-6 text-center sm:p-8">
-        <h2 className="text-2xl font-bold text-slate-50">Turn the briefing into alerts.</h2>
-        <p className="mx-auto mt-2 mb-5 max-w-xl text-sm leading-relaxed text-slate-400">
-          The daily report shows what moved. Telegram alerts are for when crowd-risk changes while the market is still moving.
-        </p>
-        <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link
-            to="/dashboard"
-            onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_bottom_dashboard' })}
-            className="radar-button-primary px-8 py-3"
-          >
-            View Live Dashboard
-          </Link>
-          <a
-            href={TELEGRAM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_bottom_telegram' })}
-            className="radar-button-ghost px-8 py-3"
-          >
-            Get Telegram Alerts
-          </a>
-          <a
-            href={NEWSLETTER_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => trackEvent(GA_EVENTS.NEWSLETTER_CLICK, { label: 'news_bottom_newsletter' })}
-            className="radar-button-ghost px-8 py-3"
-          >
-            Weekly Email
-          </a>
-        </div>
-      </section>
+      <Reveal>
+        <section className="radar-panel p-6 text-center sm:p-8">
+          <h2 className="text-2xl font-bold text-slate-50">Turn the briefing into alerts.</h2>
+          <p className="mx-auto mt-2 mb-5 max-w-xl text-sm leading-relaxed text-slate-400">
+            The daily report shows what moved. Telegram alerts are for when crowd-risk changes while the market is still moving.
+          </p>
+          <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <Link
+              to="/dashboard"
+              onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_bottom_dashboard' })}
+              className="radar-button-primary px-8 py-3 active:scale-[0.97]"
+            >
+              View Live Dashboard
+            </Link>
+            <a
+              href={TELEGRAM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackEvent(GA_EVENTS.NEWS_CTA_CLICK, { label: 'news_bottom_telegram' })}
+              className="radar-button-ghost px-8 py-3 active:scale-[0.97]"
+            >
+              Get Telegram Alerts
+            </a>
+            <a
+              href={NEWSLETTER_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackEvent(GA_EVENTS.NEWSLETTER_CLICK, { label: 'news_bottom_newsletter' })}
+              className="radar-button-ghost px-8 py-3 active:scale-[0.97]"
+            >
+              Weekly Email
+            </a>
+          </div>
+        </section>
+      </Reveal>
     </div>
   );
 };
