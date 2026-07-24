@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import SectionHeader from '../ui/SectionHeader';
 import { EmptyState } from '../ui/StateViews';
 
 const CoinRow = ({ coin }) => {
@@ -89,17 +90,24 @@ const TrendingCoinsTable = ({ coins, losers }) => {
   const activeCoins = tab === 'trending' ? trending : losersList;
 
   return (
-    <section id="movers" className="scroll-mt-24">
-      <div className="mb-4 flex items-center gap-1" role="tablist" aria-label="Coin movers">
-        <TabButton active={tab === 'trending'} onClick={() => setTab('trending')}>
-          Trending ({trending.length})
-        </TabButton>
-        <TabButton active={tab === 'losers'} onClick={() => setTab('losers')}>
-          Top Losers ({losersList.length})
-        </TabButton>
-      </div>
+    <section id="movers" className="scroll-mt-32">
+      <SectionHeader
+        kicker="Flow"
+        title="Movers"
+        description="Trending tickers and the day's worst performers."
+        actions={
+          <div className="flex items-center gap-1" role="tablist" aria-label="Coin movers">
+            <TabButton active={tab === 'trending'} onClick={() => setTab('trending')}>
+              Trending ({trending.length})
+            </TabButton>
+            <TabButton active={tab === 'losers'} onClick={() => setTab('losers')}>
+              Top Losers ({losersList.length})
+            </TabButton>
+          </div>
+        }
+      />
 
-      <div className="radar-panel overflow-hidden">
+      <div className="mt-4 radar-panel overflow-hidden">
         {activeCoins.length > 0 ? (
           <Table coins={activeCoins} hasNotes={tab === 'trending' && hasNotes} />
         ) : (

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import SignalCard from './SignalCard';
+import SectionHeader from '../ui/SectionHeader';
 import { EmptyState } from '../ui/StateViews';
 
 const FILTERS = [
@@ -37,18 +38,12 @@ const SignalsSection = ({ signals }) => {
   }, [signals, filter, query]);
 
   return (
-    <section id="signals" className="scroll-mt-24">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <h2 className="text-xl font-bold text-slate-100">
-          Signals{' '}
-          <span className="font-mono text-base font-normal text-slate-500">
-            ({visible.length}
-            {visible.length !== signals.length ? ` of ${signals.length}` : ''})
-          </span>
-        </h2>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          {/* Search */}
+    <section id="signals" className="scroll-mt-32">
+      <SectionHeader
+        kicker="Priorities"
+        title="Signals"
+        description="Contrarian reads: where the crowd is positioned and what that implies."
+        actions={
           <div className="relative">
             <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
               {'\u2315'}
@@ -62,11 +57,11 @@ const SignalsSection = ({ signals }) => {
               className="w-full rounded-lg border border-slate-700 bg-slate-950/80 py-1.5 pl-8 pr-3 text-sm text-slate-200 placeholder:text-slate-600 focus:border-cyan-400/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/40 sm:w-56"
             />
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Priority filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-1" role="group" aria-label="Filter by impact level">
+      <div className="mt-4 mb-4 flex flex-wrap items-center gap-1" role="group" aria-label="Filter by impact level">
         {FILTERS.map(({ key, label }) => {
           const active = filter === key;
           const disabled = key !== 'all' && counts[key] === 0;

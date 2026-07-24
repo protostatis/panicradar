@@ -29,7 +29,7 @@ const MarketContextPanel = ({ context }) => {
 
   if (stats.length === 0) {
     return (
-      <section id="context" className="scroll-mt-24">
+      <section id="context" className="scroll-mt-32">
         <SectionHeader kicker="Backdrop" title="Market Context" />
         <div className="mt-4">
           <EmptyState
@@ -43,7 +43,7 @@ const MarketContextPanel = ({ context }) => {
   }
 
   return (
-    <section id="context" className="scroll-mt-24">
+    <section id="context" className="scroll-mt-32">
       <SectionHeader
         kicker="Backdrop"
         title="Market Context"

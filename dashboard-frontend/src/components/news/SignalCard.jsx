@@ -90,7 +90,6 @@ const SignalCard = ({ signal }) => {
         <ToneBadge
           toneKey={mapping.key}
           label={mapping.label}
-          live={level === 'high'}
           title={`Surprise score: ${level}`}
         />
         <SourceChain source={signal.source} />

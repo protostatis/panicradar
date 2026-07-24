@@ -37,7 +37,7 @@ const BriefingSectionNav = ({ items }) => {
   return (
     <nav
       aria-label="Briefing sections"
-      className="sticky top-2 z-30 -mx-1"
+      className="sticky top-16 z-30 -mx-1"
     >
       <div className="radar-card flex items-center gap-1 overflow-x-auto p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {items.map(({ id, label, count }) => {

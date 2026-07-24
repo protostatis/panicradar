@@ -1,22 +1,30 @@
+import SectionHeader from '../ui/SectionHeader';
 import { EmptyState } from '../ui/StateViews';
 
 const DefiSignalsSection = ({ signals }) => {
   if (!signals || signals.length === 0) {
     return (
-      <section id="defi" className="scroll-mt-24">
-        <EmptyState
-          icon={'\u29BF'}
-          title="No DeFi signals today"
-          message="On-chain DeFi signals appear here when the daily scan surfaces them."
-        />
+      <section id="defi" className="scroll-mt-32">
+        <SectionHeader kicker="On-chain" title="DeFi Signals" />
+        <div className="mt-4">
+          <EmptyState
+            icon={'\u29BF'}
+            title="No DeFi signals today"
+            message="On-chain DeFi signals appear here when the daily scan surfaces them."
+          />
+        </div>
       </section>
     );
   }
 
   return (
-    <section id="defi" className="scroll-mt-24">
-      <h2 className="mb-4 text-xl font-bold text-slate-100">DeFi Signals</h2>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <section id="defi" className="scroll-mt-32">
+      <SectionHeader
+        kicker="On-chain"
+        title="DeFi Signals"
+        description="Lending, liquidity, and leverage shifts from on-chain data."
+      />
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         {signals.map((signal, i) => (
           <div
             key={i}
