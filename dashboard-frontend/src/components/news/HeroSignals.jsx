@@ -43,10 +43,10 @@ const HeroSignals = ({ hooks }) => {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
-              Today's Top Risk Signals
+              More Signals to Watch
             </div>
             <p className="mt-1.5 max-w-2xl text-sm text-slate-400">
-              The highest-signal stories from today's scan, packaged for sharing before the crowd narrative hardens.
+              The next highest-signal stories from today&apos;s scan, packaged for sharing before the crowd narrative hardens.
             </p>
           </div>
           <div className="rounded-full border border-slate-700/80 bg-slate-900/80 px-3 py-1 text-xs font-mono text-slate-400">
