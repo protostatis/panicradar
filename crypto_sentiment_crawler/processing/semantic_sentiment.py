@@ -14,7 +14,7 @@ import numpy as np
 from ..logging_config import logger
 
 if TYPE_CHECKING:
-    from .embedding_providers import EmbeddingProvider
+    from .embedding_providers import EmbeddingProvider  # noqa: F401 — used in type annotation below
 
 
 # Bullish phrases - expressing optimism, gains, buying intent

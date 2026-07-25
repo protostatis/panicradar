@@ -11,12 +11,10 @@ import numpy as np
 import pytest
 
 from crypto_sentiment_crawler.processing.embedding_providers import (
-    EmbeddingProvider,
     LocalSentenceTransformerProvider,
     OpenRouterEmbeddingProvider,
     get_provider,
 )
-
 
 # ── get_provider ───────────────────────────────────────────────────────────
 
