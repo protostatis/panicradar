@@ -108,6 +108,8 @@ async def compute_source_accuracy(
     # Build price lookup by hour
     price_by_hour = {}
     for ts_str, price in price_rows:
+        if price is None:
+            continue
         ts = datetime.fromisoformat(ts_str).replace(tzinfo=None)
         hour_key = ts.replace(minute=0, second=0, microsecond=0)
         if hour_key not in price_by_hour:
@@ -129,12 +131,22 @@ async def compute_source_accuracy(
     })
 
     for (source, hour_key), scores in source_hour_scores.items():
-        mean_score = float(np.mean(scores))
+        # Filter out None/NULL scores that can appear in mixed
+        # embedding-provider contexts (older schema rows may lack
+        # scores computed by a different provider version).
+        valid_scores = [s for s in scores if s is not None]
+        if not valid_scores:
+            continue
+        mean_score = float(np.mean(valid_scores))
         future_hour = hour_key + timedelta(hours=lag_hours)
 
         if hour_key in price_by_hour and future_hour in price_by_hour:
             price_now = price_by_hour[hour_key]
             price_future = price_by_hour[future_hour]
+            if price_now is None or price_future is None:
+                continue
+            if price_now == 0:
+                continue
             price_change = (price_future - price_now) / price_now
 
             d = source_data[source]
