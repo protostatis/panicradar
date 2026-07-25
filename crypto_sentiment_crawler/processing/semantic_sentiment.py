@@ -5,10 +5,16 @@ Uses example phrases as "lexicons" instead of individual words.
 Computes cosine similarity to bullish/bearish/neutral anchor phrases.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from ..logging_config import logger
+
+if TYPE_CHECKING:
+    from .embedding_providers import EmbeddingProvider
 
 
 # Bullish phrases - expressing optimism, gains, buying intent
@@ -559,24 +565,79 @@ class SemanticSentimentAnalyzer:
     bullish/bearish/neutral anchor phrases.
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        """
-        Initialize with a sentence transformer model.
+    def __init__(
+        self,
+        model_name: str | None = None,
+        *,
+        provider: "EmbeddingProvider | None" = None,
+        backend: str | None = None,
+    ):
+        """Initialize with an embedding backend.
+
+        Three ways to choose the backend (in priority order):
+
+        1. ``provider=`` — pass a pre-built :class:`EmbeddingProvider`
+           (e.g. an :class:`OpenRouterEmbeddingProvider`).
+        2. ``backend=`` — ``"local"`` or ``"openrouter"``; the provider is
+           constructed from environment / ``model_name``.
+        3. ``model_name=`` — a local SentenceTransformer name (backwards-
+           compatible with the original single-argument call).
 
         Args:
-            model_name: HuggingFace model name. Options:
-                - "all-MiniLM-L6-v2" (fast, good quality)
-                - "all-mpnet-base-v2" (slower, higher quality)
-                - "paraphrase-MiniLM-L6-v2" (optimized for similarity)
+            model_name: HuggingFace model name for the *local* backend.
+                Ignored if ``provider`` is given. Defaults to
+                ``"all-MiniLM-L6-v2"``.
+            provider: Pre-built embedding backend. Wins over everything else.
+            backend: ``"local"`` | ``"openrouter"``. If unset, defaults to
+                ``"local"`` unless ``model_name`` is a hosted slug.
         """
-        logger.info(f"Loading sentence transformer: {model_name}")
-        self.model = SentenceTransformer(model_name)
+        from .embedding_providers import (
+            LocalSentenceTransformerProvider,
+            OpenRouterEmbeddingProvider,
+            get_provider,
+        )
+
+        if provider is not None:
+            self.provider = provider
+        elif backend is not None:
+            self.provider = get_provider(backend, model=model_name)
+        else:
+            # No explicit backend/model specified — fall back to settings or
+            # the (deprecated) model_name positional argument.
+            from ..config import settings
+
+            cfg_backend = settings.embedding_backend or "local"
+            cfg_model = model_name or settings.embedding_model or "all-MiniLM-L6-v2"
+
+            # Determine whether this model slug implies OpenRouter.
+            is_or_hosted = "/" in cfg_model and not cfg_model.startswith(
+                ("all-", "paraphrase-", "BAAI", "baai", "sentence-transformers/")
+            )
+            if is_or_hosted or cfg_backend == "openrouter":
+                try:
+                    self.provider = OpenRouterEmbeddingProvider(
+                        model=cfg_model, api_key=settings.openrouter_api_key
+                    )
+                except RuntimeError:
+                    logger.warning(
+                        "OpenRouter unavailable (no API key?); falling back to MiniLM"
+                    )
+                    self.provider = LocalSentenceTransformerProvider(
+                        model_name="all-MiniLM-L6-v2"
+                    )
+            else:
+                self.provider = LocalSentenceTransformerProvider(model_name=cfg_model)
+        logger.info(
+            "SemanticSentimentAnalyzer using provider=%s dim=%d",
+            type(self.provider).__name__,
+            self.provider.dim,
+        )
 
         # Pre-compute anchor embeddings
         logger.info("Computing anchor phrase embeddings...")
-        self.bullish_embeddings = self.model.encode(BULLISH_PHRASES, normalize_embeddings=True)
-        self.bearish_embeddings = self.model.encode(BEARISH_PHRASES, normalize_embeddings=True)
-        self.neutral_embeddings = self.model.encode(NEUTRAL_PHRASES, normalize_embeddings=True)
+        self.bullish_embeddings = self.provider.encode(BULLISH_PHRASES, normalize=True)
+        self.bearish_embeddings = self.provider.encode(BEARISH_PHRASES, normalize=True)
+        self.neutral_embeddings = self.provider.encode(NEUTRAL_PHRASES, normalize=True)
 
         # Compute centroid for each category
         self.bullish_centroid = np.mean(self.bullish_embeddings, axis=0)
@@ -594,7 +655,9 @@ class SemanticSentimentAnalyzer:
         """Compute cosine similarity between two vectors."""
         return float(np.dot(a, b))
 
-    def _get_top_k_similarity(self, embedding: np.ndarray, anchors: np.ndarray, k: int = 5) -> float:
+    def _get_top_k_similarity(
+        self, embedding: np.ndarray, anchors: np.ndarray, k: int = 5
+    ) -> float:
         """Get average similarity to top-k most similar anchors."""
         similarities = np.dot(anchors, embedding)
         top_k = np.sort(similarities)[-k:]
@@ -616,7 +679,7 @@ class SemanticSentimentAnalyzer:
             'neutral_sim', 'confidence'
         """
         # Encode input text
-        embedding = self.model.encode(text, normalize_embeddings=True)
+        embedding = self.provider.encode_single(text, normalize=True)
 
         if method == "centroid":
             bullish_sim = self._cosine_similarity(embedding, self.bullish_centroid)
@@ -671,7 +734,7 @@ class SemanticSentimentAnalyzer:
 
     def analyze_batch(self, texts: list[str]) -> list[dict]:
         """Analyze multiple texts efficiently."""
-        embeddings = self.model.encode(texts, normalize_embeddings=True)
+        embeddings = self.provider.encode(texts, normalize=True)
 
         results = []
         for embedding in embeddings:
@@ -680,7 +743,7 @@ class SemanticSentimentAnalyzer:
             neutral_sim = self._cosine_similarity(embedding, self.neutral_centroid)
 
             raw_score = bullish_sim - bearish_sim
-            score = np.tanh(raw_score * 5)
+            score = np.tanh(raw_score * 3)
             sentiment_strength = max(bullish_sim, bearish_sim) - neutral_sim
             confidence = max(0.0, min(1.0, sentiment_strength * 2 + 0.5))
 
@@ -704,7 +767,7 @@ class SemanticSentimentAnalyzer:
 
         Useful for debugging/explainability.
         """
-        embedding = self.model.encode(text, normalize_embeddings=True)
+        embedding = self.provider.encode_single(text, normalize=True)
 
         # Find top-k similar from each category
         bullish_sims = np.dot(self.bullish_embeddings, embedding)

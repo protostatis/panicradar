@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Twitter/X API (optional - for reliable access)
     twitter_bearer_token: str = ""
 
+    # OpenRouter (embeddings + optional LLM scoring)
+    openrouter_api_key: str = ""
+
+    # Embedding backend for sentiment scoring.
+    #   backend="local"        → uses EMBEDDING_MODEL via sentence-transformers
+    #   backend="openrouter"   → calls OpenRouter /embeddings (needs OPENROUTER_API_KEY)
+    embedding_backend: str = "openrouter"
+    embedding_model: str = "qwen/qwen3-embedding-8b"
+
     # Database
     database_path: str = "data/sentiment.db"
 

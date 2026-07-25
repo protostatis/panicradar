@@ -4,13 +4,12 @@ import json
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
 import numpy as np
-
 
 logger = logging.getLogger("crypto_sentiment")
 

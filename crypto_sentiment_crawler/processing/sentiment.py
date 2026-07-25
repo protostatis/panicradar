@@ -8,7 +8,6 @@ Supports:
 """
 
 import re
-from typing import Literal
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -241,8 +240,8 @@ class CryptoSentimentAnalyzer:
     def _load_transformer(self) -> None:
         """Load FinBERT model for better accuracy."""
         try:
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
             import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             model_name = "ProsusAI/finbert"
             logger.info(f"Loading transformer model: {model_name}")
