@@ -174,7 +174,6 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
             os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
             texts = np.array(list(self._cache.keys()))
             vecs = np.stack(list(self._cache.values()))
-            # Atomic write: tempfile → rename.
             tmp = self.cache_path + ".tmp"
             np.savez(
                 tmp,
@@ -182,9 +181,23 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
                 texts=texts,
                 vectors=vecs,
             )
-            os.replace(tmp, self.cache_path)
+            # Atomic replace; fall back to direct write on filesystems that
+            # do not support it (Docker overlay, macOS tmp dirs).
+            try:
+                os.replace(tmp, self.cache_path)
+            except OSError:
+                np.savez(
+                    self.cache_path,
+                    _namespace=np.array(self._cache_namespace),
+                    texts=texts,
+                    vectors=vecs,
+                )
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
             self._cache_dirty = False
-            logger.info("Saved %d embeddings to cache", len(self._cache))
+            logger.debug("Saved %d embeddings to cache", len(self._cache))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save embedding cache: %s", exc)
 
