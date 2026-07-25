@@ -134,7 +134,7 @@ async def compute_source_accuracy(
         # Filter out None/NULL scores that can appear in mixed
         # embedding-provider contexts (older schema rows may lack
         # scores computed by a different provider version).
-        valid_scores = [s for s in scores if s is not None]
+        valid_scores = [s for s in scores if isinstance(s, (int, float)) and not (isinstance(s, float) and np.isnan(s))]
         if not valid_scores:
             continue
         mean_score = float(np.mean(valid_scores))
@@ -158,7 +158,11 @@ async def compute_source_accuracy(
             if abs(mean_score) < 0.05:
                 d['abstained'] += 1
             else:
-                correct = (mean_score > 0 and price_change > 0) or (mean_score < 0 and price_change < 0)
+                # Defensive: guard against non-numeric price_change
+                try:
+                    correct = (mean_score > 0 and price_change > 0) or (mean_score < 0 and price_change < 0)
+                except TypeError:
+                    continue
                 if correct:
                     d['correct'] += 1
                 else:
@@ -176,11 +180,14 @@ async def compute_source_accuracy(
         # Change 2: Coverage — fraction of non-abstained observations
         coverage = (data['total'] - data['abstained']) / data['total'] if data['total'] > 0 else 0.0
 
-        # Correlation
+        # Calculate correlation — guard against empty/bad data
         corr = 0
         if len(data['sents']) >= 5:
-            corr, _ = stats.pearsonr(data['sents'], data['changes'])
-            if np.isnan(corr):
+            try:
+                corr, _ = stats.pearsonr(data['sents'], data['changes'])
+                if np.isnan(corr):
+                    corr = 0
+            except Exception:
                 corr = 0
 
         # Change 4: Compute 95% Beta credible interval
