@@ -83,6 +83,18 @@ async def compute_source_accuracy(
     correlation, coverage, is_contrarian, type_label, credible_interval_lower,
     credible_interval_upper, effective_n}
     """
+    import traceback as _tb
+
+    try:
+        return await _compute_source_accuracy_impl(db, lag_hours, lookback_days)
+    except Exception:
+        logger.error("compute_source_accuracy failed:\n%s", _tb.format_exc())
+        return {}
+
+
+async def _compute_source_accuracy_impl(
+    db: Database, lag_hours: int, lookback_days: int
+) -> dict:
     # Compute start date from lookback_days (Change 6)
     start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
 
