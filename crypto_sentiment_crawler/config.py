@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     # Twitter/X API (optional - for reliable access)
     twitter_bearer_token: str = ""
 
+    # OpenRouter (embeddings + optional LLM scoring)
+    openrouter_api_key: str = ""
+
+    # Embedding backend for sentiment scoring.
+    #   backend="local"        → uses EMBEDDING_MODEL via sentence-transformers
+    #   backend="openrouter"   → calls OpenRouter /embeddings (needs OPENROUTER_API_KEY)
+    # OpenRouter is opt-in: set EMBEDDING_BACKEND=openrouter explicitly.
+    embedding_backend: str = "local"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    # When True, the pipeline asserts a valid OpenRouter key before starting a
+    # crawl (rather than falling back silently).  Default False = safe.
+    embedding_require_openrouter: bool = False
+
     # Database
     database_path: str = "data/sentiment.db"
 
