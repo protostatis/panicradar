@@ -328,7 +328,9 @@ class CrawlerScheduler:
             logger.info("Belief update, source_weights sync, and bandit reload complete")
             await self._record_heartbeat("belief_update", success=True)
         except Exception as e:
-            logger.error(f"Belief update job error: {e}")
+            import traceback as _tb
+
+            logger.error(f"Belief update job error: {e}\n{_tb.format_exc()}")
             self._stats["errors"] += 1
             await self._record_heartbeat("belief_update", success=False, error_message=str(e))
 
