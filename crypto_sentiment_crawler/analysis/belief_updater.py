@@ -445,14 +445,20 @@ async def update_orchestrator_beliefs(
 
         sorted_beliefs = sorted(
             updated_beliefs.items(),
-            key=lambda x: x[1].get('accuracy', 0),
-            reverse=True
+            key=lambda x: (
+                x[1].get('accuracy')
+                if isinstance(x[1], dict) and x[1].get('accuracy') is not None
+                else 0
+            ),
+            reverse=True,
         )
 
         for source, belief in sorted_beliefs:
-            if 'accuracy' not in belief:
+            if not isinstance(belief, dict) or 'accuracy' not in belief:
                 continue
             acc = belief.get('accuracy', 0)
+            if acc is None:
+                continue
             alpha = belief.get('alpha', 1)
             beta = belief.get('beta', 1)
             mean = alpha / (alpha + beta)
