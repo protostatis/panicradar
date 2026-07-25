@@ -85,11 +85,17 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
     """Calls the OpenRouter ``/embeddings`` endpoint (OpenAI-compatible).
 
     Designed for hosted models such as ``qwen/qwen3-embedding-8b`` that are too
-    large to run locally. Batches requests, retries transient failures, and
-    caches vectors on disk to keep repeat runs cheap.
+    large to run locally.  Batches requests, retries transient failures with
+    exponential backoff and jitter, keeps a model-scoped disk cache with atomic
+    writes, and uses a simple circuit-breaker to avoid hammering the API during
+    prolonged outages.
     """
 
     BASE_URL = "https://openrouter.ai/api/v1/embeddings"
+
+    # Circuit‑breaker state.
+    _CIRCUIT_OPEN_AFTER = 4       # consecutive failures
+    _CIRCUIT_COOLDOWN_S = 120.0   # wait before retrying a single probe
 
     def __init__(
         self,
@@ -97,7 +103,8 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
         api_key: str | None = None,
         dimensions: int | None = None,
         batch_size: int = 64,
-        max_retries: int = 4,
+        max_retries: int = 2,
+        request_timeout_s: float = 30.0,
         cache_path: str | None = "data/openrouter_embeddings_cache.npz",
     ) -> None:
         self.model = model
@@ -106,29 +113,58 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
             raise RuntimeError(
                 "OPENROUTER_API_KEY is required for OpenRouterEmbeddingProvider"
             )
-        self.dimensions = dimensions  # MRL-trimmed dims; None = model default
+        self.dimensions = dimensions
         self.batch_size = batch_size
         self.max_retries = max_retries
+        self.request_timeout_s = request_timeout_s
         self.cache_path = cache_path
         self._cache: dict[str, np.ndarray] = {}
         self._cache_dirty = False
+        # --- circuit breaker ---
+        self._consecutive_failures = 0
+        self._circuit_open_until: float = 0.0
+        # --- load cache (with metadata validation) ---
+        self._cache_namespace = self._make_cache_namespace()
         self._load_cache()
-        # Dim is only known after the first successful call (depends on model +
-        # requested ``dimensions``). Until then we expose a sentinel.
+        # Dim is only known after the first successful API call.
         self._dim: int | None = None
 
-    # -- cache -----------------------------------------------------------
+    # -- cache identity ------------------------------------------------------
+    def _make_cache_namespace(self) -> str:
+        """Return a unique key namespace for this provider configuration."""
+        parts = [self.model]
+        if self.dimensions is not None:
+            parts.append(f"d{self.dimensions}")
+        return "::".join(parts)
+
+    @staticmethod
+    def _text_key(text: str) -> str:
+        """Stable key for a text snippet (prefix prevents pure-numeric collisions)."""
+        return "t::" + text
+
+    # -- cache persistence ---------------------------------------------------
     def _load_cache(self) -> None:
         if not self.cache_path or not os.path.exists(self.cache_path):
             return
         try:
             data = np.load(self.cache_path, allow_pickle=False)
+            # Validate namespace metadata to prevent model-version collisions.
+            ns = str(data.get("_namespace", ""))
+            if ns != self._cache_namespace:
+                logger.info(
+                    "Cache namespace mismatch (%s → %s); discarding old cache",
+                    ns, self._cache_namespace,
+                )
+                return
             texts = data["texts"].astype(str)
             vecs = data["vectors"]
+            if len(texts) != len(vecs):
+                logger.warning("Cache text/vector length mismatch; discarding")
+                return
             for t, v in zip(texts, vecs):
-                self._cache[t] = v
-            logger.info("Loaded %d cached OpenRouter embeddings", len(self._cache))
-        except Exception as exc:  # noqa: BLE001 - corrupt cache is non-fatal
+                self._cache[t] = np.asarray(v, dtype=np.float32)
+            logger.info("Loaded %d cached embeddings (ns=%s)", len(self._cache), ns)
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to load embedding cache: %s", exc)
 
     def _save_cache(self) -> None:
@@ -138,15 +174,56 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
             os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
             texts = np.array(list(self._cache.keys()))
             vecs = np.stack(list(self._cache.values()))
-            np.savez(self.cache_path, texts=texts, vectors=vecs)
+            # Atomic write: tempfile → rename.
+            tmp = self.cache_path + ".tmp"
+            np.savez(
+                tmp,
+                _namespace=np.array(self._cache_namespace),
+                texts=texts,
+                vectors=vecs,
+            )
+            os.replace(tmp, self.cache_path)
             self._cache_dirty = False
             logger.info("Saved %d embeddings to cache", len(self._cache))
-        except Exception as exc:  # noqa: BLE001 - cache failure is non-fatal
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save embedding cache: %s", exc)
 
-    # -- HTTP ------------------------------------------------------------
+    # -- circuit breaker -----------------------------------------------------
+    def _check_circuit(self) -> None:
+        if self._consecutive_failures < self._CIRCUIT_OPEN_AFTER:
+            return
+        if time.monotonic() < self._circuit_open_until:
+            raise RuntimeError(
+                f"OpenRouter circuit open: {self._consecutive_failures} consecutive "
+                f"failures; cooling off for {self._CIRCUIT_COOLDOWN_S:.0f}s"
+            )
+        # Cooldown expired — allow one probe.
+        logger.info("Circuit cooldown elapsed; sending probe request")
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
+    def _record_failure(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._CIRCUIT_OPEN_AFTER:
+            self._circuit_open_until = (
+                time.monotonic() + self._CIRCUIT_COOLDOWN_S
+            )
+            logger.warning(
+                "Circuit opened after %d consecutive failures; "
+                "pausing for %.0fs",
+                self._consecutive_failures,
+                self._CIRCUIT_COOLDOWN_S,
+            )
+
+    def _record_success(self) -> None:
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
+    # -- HTTP ----------------------------------------------------------------
     def _post_batch(self, batch: list[str]) -> np.ndarray:
-        import requests  # local import keeps module import cheap
+        import requests  # local import
+
+        self._check_circuit()
 
         payload: dict[str, Any] = {"model": self.model, "input": batch}
         if self.dimensions is not None:
@@ -157,33 +234,74 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
             "HTTP-Referer": "https://github.com/protostatis/panicradar",
             "X-Title": "crypto-sentiment-crawler",
         }
+
         last_exc: Exception | None = None
-        for attempt in range(self.max_retries):
+        # Distinguish permanent client errors (never retry) from transient ones.
+        for attempt in range(self.max_retries + 1):
             try:
                 resp = requests.post(
-                    self.BASE_URL, headers=headers, json=payload, timeout=120
+                    self.BASE_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.request_timeout_s,
                 )
+                if resp.status_code in (400, 401, 402, 403, 404):
+                    # Permanent — do NOT retry.
+                    self._record_failure()
+                    raise RuntimeError(
+                        f"Permanent OpenRouter error {resp.status_code}: "
+                        f"{resp.text[:300]}"
+                    ) from None
                 if resp.status_code == 429 or resp.status_code >= 500:
-                    raise RuntimeError(f"transient {resp.status_code}: {resp.text[:200]}")
+                    raise RuntimeError(
+                        f"Transient {resp.status_code}: {resp.text[:200]}"
+                    )
                 resp.raise_for_status()
                 data = resp.json()
-                vecs = [np.asarray(item["embedding"], dtype=np.float32) for item in data["data"]]
-                if self._dim is None and vecs:
-                    self._dim = vecs[0].shape[0]
+
+                # --- response validation ---
+                items = data.get("data", [])
+                if len(items) != len(batch):
+                    raise RuntimeError(
+                        f"Got {len(items)} embeddings, expected {len(batch)}"
+                    )
+                vecs: list[np.ndarray] = []
+                for idx, item in enumerate(items):
+                    raw = item.get("embedding", [])
+                    arr = np.asarray(raw, dtype=np.float32)
+                    if arr.ndim != 1 or arr.shape[0] == 0:
+                        raise RuntimeError(f"Bad embedding shape at idx {idx}")
+                    if not np.all(np.isfinite(arr)):
+                        raise RuntimeError(f"NaN/Inf in embedding at idx {idx}")
+                    if self._dim is None and idx == 0:
+                        self._dim = int(arr.shape[0])
+                    elif self._dim is not None and arr.shape[0] != self._dim:
+                        raise RuntimeError(
+                            f"Dimension mismatch at idx {idx}: "
+                            f"{arr.shape[0]} != {self._dim}"
+                        )
+                    vecs.append(arr)
+                # --- success ---
+                self._record_success()
                 return np.stack(vecs)
-            except Exception as exc:  # noqa: BLE001 - retry broad transient faults
+
+            except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                backoff = 2 ** attempt
-                logger.warning(
-                    "OpenRouter embeddings attempt %d/%d failed: %s (retry in %ds)",
-                    attempt + 1,
-                    self.max_retries,
-                    exc,
-                    backoff,
-                )
-                time.sleep(backoff)
+                self._record_failure()  # may open circuit
+                if attempt < self.max_retries:
+                    # Only retry *transient* failures.
+                    if isinstance(exc, RuntimeError) and "Transient" not in str(exc):
+                        break
+                    backoff = (2 ** attempt) + (0.1 * time.monotonic() % 1)
+                    logger.warning(
+                        "OpenRouter attempt %d/%d failed: %s (retry in %.1fs)",
+                        attempt + 1, self.max_retries, exc, backoff,
+                    )
+                    time.sleep(backoff)
+                    self._check_circuit()
+
         raise RuntimeError(
-            f"OpenRouter embeddings failed after {self.max_retries} retries: {last_exc}"
+            f"OpenRouter embeddings failed ({self.max_retries+1} attempts): {last_exc}"
         )
 
     # -- public API ------------------------------------------------------
@@ -247,23 +365,24 @@ def get_provider(
     backend: str = "local",
     *,
     model: str | None = None,
+    api_key: str | None = None,
     **kwargs: Any,
 ) -> EmbeddingProvider:
     """Factory keyed off ``backend`` (``"local"`` | ``"openrouter"``).
 
-    Reads defaults from environment to ease CLI usage::
-
-        EMBEDDING_BACKEND=openrouter EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+    With no argument, uses the default local MiniLM.  Set environment
+    variables or pass explicit kwargs to override.
     """
-    backend = (backend or os.environ.get("EMBEDDING_BACKEND", "local")).lower()
+    backend = (backend or "local").lower()
     if backend in ("local", "minilm", "sentence-transformers", "st"):
         return LocalSentenceTransformerProvider(
-            model_name=model or os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+            model_name=model or "all-MiniLM-L6-v2",
             **kwargs,
         )
     if backend in ("openrouter", "or", "api"):
         return OpenRouterEmbeddingProvider(
-            model=model or os.environ.get("EMBEDDING_MODEL", "qwen/qwen3-embedding-8b"),
+            model=model or "qwen/qwen3-embedding-8b",
+            api_key=api_key,
             **kwargs,
         )
     raise ValueError(f"Unknown embedding backend: {backend!r}")

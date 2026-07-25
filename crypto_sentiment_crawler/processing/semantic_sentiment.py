@@ -601,26 +601,27 @@ class SemanticSentimentAnalyzer:
             self.provider = provider
         elif backend is not None:
             self.provider = get_provider(backend, model=model_name)
+        elif model_name is not None:
+            # Explicit model_name → always local (backwards-compatible).
+            self.provider = LocalSentenceTransformerProvider(model_name=model_name)
         else:
-            # No explicit backend/model specified — fall back to settings or
-            # the (deprecated) model_name positional argument.
+            # Neither provider, backend, nor model_name given — read settings.
             from ..config import settings
 
             cfg_backend = settings.embedding_backend or "local"
-            cfg_model = model_name or settings.embedding_model or "all-MiniLM-L6-v2"
+            cfg_model = settings.embedding_model or "all-MiniLM-L6-v2"
 
-            # Determine whether this model slug implies OpenRouter.
-            is_or_hosted = "/" in cfg_model and not cfg_model.startswith(
-                ("all-", "paraphrase-", "BAAI", "baai", "sentence-transformers/")
-            )
-            if is_or_hosted or cfg_backend == "openrouter":
+            if cfg_backend == "openrouter":
                 try:
                     self.provider = OpenRouterEmbeddingProvider(
-                        model=cfg_model, api_key=settings.openrouter_api_key
+                        model=cfg_model,
+                        api_key=settings.openrouter_api_key,
                     )
                 except RuntimeError:
+                    if settings.embedding_require_openrouter:
+                        raise
                     logger.warning(
-                        "OpenRouter unavailable (no API key?); falling back to MiniLM"
+                        "OpenRouter unavailable; falling back to local MiniLM"
                     )
                     self.provider = LocalSentenceTransformerProvider(
                         model_name="all-MiniLM-L6-v2"
