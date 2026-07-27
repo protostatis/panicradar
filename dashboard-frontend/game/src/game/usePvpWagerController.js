@@ -308,7 +308,18 @@ export function usePvpWagerController({ transport, myId }) {
     if (transport.lastSnapshot) applySnapshot(transport.lastSnapshot);
 
     const off = transport.onMessage((msg) => {
-      if (msg.type === 'V2_SNAPSHOT') {
+      if (msg.type === 'REMATCH_STARTED') {
+        // New room starts with revision 1; reset so we don't reject its
+        // first snapshot below the old room's last revision.
+        genRef.current += 1;
+        animatingRef.current = false;
+        setIsAnimating(false);
+        setMatchedIndices([]);
+        setPhase('idle');
+        setSelected(null);
+        authoritativeRevisionRef.current = -1;
+        displayRevisionRef.current = -1;
+      } else if (msg.type === 'V2_SNAPSHOT') {
         applySnapshot(msg);
       } else if (msg.type === 'ERROR') {
         setMessage(msg.message || 'An error occurred');

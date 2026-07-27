@@ -113,7 +113,14 @@ export class V2PvpTransport {
           this.expectedRevision = msg.revision;
           if (msg.lifecycle === 'active') this._inMatch = true;
         }
-        if (msg.type === 'MATCH_STARTED' || msg.type === 'REMATCH_STARTED') this._inMatch = true;
+        if (msg.type === 'MATCH_STARTED' || msg.type === 'REMATCH_STARTED') {
+          this._inMatch = true;
+          if (msg.type === 'REMATCH_STARTED') {
+            // New room has its own revision sequence; reset stale state.
+            this.lastSnapshot = null;
+            this.expectedRevision = -1;
+          }
+        }
         if (msg.type === 'MATCH_ENDED') {
           this._inMatch = false;
           this.lastSnapshot = null;
