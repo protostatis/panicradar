@@ -669,6 +669,49 @@ describe('V2WagerRoom — rematch consent', () => {
   });
 });
 
+describe('V2WagerRoom — rematch revision gap', () => {
+  test('new rematch room starts with revision 1, below the settled room\'s final revision', () => {
+    const ledger = new DemoCreditLedger();
+
+    // Play a single street (move+bet for each player) to build revision history
+    const oldRoom = newRoom(ledger);
+    oldRoom.join({ id: 'alice', name: 'Alice' });
+    oldRoom.join({ id: 'bob', name: 'Bob' });
+
+    // Revision is 1 after activation. Play one full street.
+    const seats = [...oldRoom._seats];
+    for (const s of seats) {
+      const [i, j] = findValidMove(oldRoom);
+      const r = oldRoom.tryMove(s.id, i, j, oldRoom.revision);
+      assert.equal(r.ok, true, `move should succeed for ${s.id}`);
+    }
+    assert.equal(oldRoom.wager.phase, WAGER_PHASE.BETTING, 'should enter betting');
+    for (const s of seats) {
+      const r = oldRoom.tryBet(s.id, BET_ACTION.CHECK, oldRoom.revision);
+      assert.equal(r.ok, true, `check should succeed for ${s.id}`);
+    }
+
+    const oldFinalRevision = oldRoom.revision;
+    assert.ok(oldFinalRevision >= 5,
+      `Expected room revision >= 5 after one street, got ${oldFinalRevision}`);
+
+    // Simulate startV2Rematch: close old room (refunds escrow) and create a new one
+    oldRoom.close();
+
+    const rematchRoom = new V2WagerRoom({ code: 'REMATCH01', ledger });
+    testRooms.add(rematchRoom);
+    rematchRoom.join({ id: 'alice', name: 'Alice' });
+    rematchRoom.join({ id: 'bob', name: 'Bob' });
+
+    // After auto-activation, revision is 1 (constructor 0 + _tryActivate++)
+    assert.equal(rematchRoom.lifecycle, 'active');
+    assert.ok(rematchRoom.revision < oldFinalRevision,
+      `New room revision (${rematchRoom.revision}) should be < old room revision (${oldFinalRevision})`);
+    assert.equal(rematchRoom.revision, 1,
+      'New room should start at revision 1 after activation');
+  });
+});
+
 describe('V2WagerRoom — dead-board handling', () => {
   test('_ensurePlayable returns true after reshuffle on dead board', () => {
     const room = newRoom();
