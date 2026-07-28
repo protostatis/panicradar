@@ -147,8 +147,8 @@ describe('SessionStore eviction', () => {
     const store = freshStore(2);
 
     const s1 = store.getOrCreate();
-    const s2 = store.getOrCreate();
-    store.getOrCreate(); // evicts s1
+    store.getOrCreate(); // fills slot 2
+    store.getOrCreate(); // evicts s1 (slot 1)
 
     const restored = store.getOrCreate(s1.token);
     assert.notEqual(restored.userId, s1.userId, 'evicted token should not restore old identity');
