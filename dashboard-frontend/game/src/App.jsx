@@ -5,6 +5,7 @@ import V2PvpLobby from './components/V2PvpLobby';
 import V2PvpScreen from './components/V2PvpScreen';
 import TutorialScreen from './components/TutorialScreen';
 import { V2PvpTransport } from './transports/v2PvpTransport';
+import { clearSession } from './utils/storage';
 import { trackGameEvent, trackGamePageView } from './utils/analytics';
 
 export default function App() {
@@ -94,6 +95,22 @@ export default function App() {
     setV2PvpConnectionError('');
   };
 
+  const handleNewIdentity = () => {
+    // Tear down the existing connection
+    const v2Transport = v2PvpSession?.transport || v2PvpMatch?.transport;
+    if (v2Transport) {
+      v2Transport.leaveMatch();
+      v2Transport.close();
+    }
+    // Clear the persisted session so the next connect creates a fresh identity
+    clearSession();
+    // Reset all PvP state and trigger a new connection
+    setV2PvpSession(null);
+    setV2PvpMatch(null);
+    setV2PvpConnectionError('');
+    setV2PvpConnectAttempt((attempt) => attempt + 1);
+  };
+
   // ---- PvP screen ----
   if (showPvP) {
     return (
@@ -117,6 +134,7 @@ export default function App() {
                 setV2PvpConnectionError('');
                 setV2PvpConnectAttempt((attempt) => attempt + 1);
               }}
+              onNewIdentity={handleNewIdentity}
             />
             <button className="btn btn-menu" onClick={backToMenu}>Menu</button>
           </>
@@ -190,10 +208,10 @@ export default function App() {
         <p className="v2-card-desc">
           Challenge another player in a live match over demo credits. Both
           players connect to the lobby, challenge, and play by the same V2
-          wagering rules. Guest identities and credit balances are temporary.
+          wagering rules. Your guest identity persists across page reloads.
         </p>
         <p className="v2-card-desc" style={{ color: '#f4d03f', fontSize: '0.78rem', marginTop: 4 }}>
-          Guest identities and demo balances reset on server restart.
+          Demo balances reset on server restart. Demo credits only — no real money.
         </p>
         <button className="btn btn-v2" style={{ background: 'linear-gradient(135deg, #4facfe, #00f2fe)' }} onClick={() => {
           trackGameEvent('game_start', { game_name: 'blockcoined_pvp' });

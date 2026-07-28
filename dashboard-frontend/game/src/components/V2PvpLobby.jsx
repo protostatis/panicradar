@@ -3,9 +3,9 @@
  *
  * Guest-only adaptation for PanicRadar:
  *  - Every visitor receives a server-issued guest identity on connection.
+ *  - Guest identity persists across page reloads via localStorage session token.
  *  - No Google sign-in, auth module, config, or CSP references.
- *  - Lobby discloses that identities and PvP demo balances are temporary
- *    and reset on restart/reconnect.
+ *  - Lobby discloses that demo balances reset on server restart.
  */
 import React, { useEffect, useState } from 'react';
 
@@ -19,7 +19,7 @@ function shortId(userId) {
   return userId ? userId.slice(-6).toUpperCase() : '';
 }
 
-export default function V2PvpLobby({ session, connectionError, onRetry }) {
+export default function V2PvpLobby({ session, connectionError, onRetry, onNewIdentity }) {
   const transport = session?.transport;
   const [lobby, setLobby] = useState(() => transport?.lastLobbySnapshot || null);
   const [incoming, setIncoming] = useState(null);
@@ -105,7 +105,7 @@ export default function V2PvpLobby({ session, connectionError, onRetry }) {
           Challenge any available player. A two-player demo-credit match begins only when they accept.
         </p>
         <p className="lobby-blurb" style={{ color: '#f4d03f', fontSize: '0.78rem', marginTop: 6 }}>
-          Guest identities and PvP demo balances are temporary — they reset when the server restarts or you reconnect.
+          Your guest identity persists across page reloads. Demo balances reset on server restart. Use "New Identity" below to start fresh.
         </p>
       </div>
 
@@ -117,6 +117,15 @@ export default function V2PvpLobby({ session, connectionError, onRetry }) {
           <strong>{identity?.name}</strong>
           <span className="identity-id">ID {shortId(identity?.userId)}</span>
         </div>
+        {onNewIdentity && !incoming && !outgoing && (
+          <button
+            className="btn-new-identity"
+            onClick={() => { if (window.confirm('Start a new identity? Your current identity and demo credits will no longer be accessible from this browser.')) onNewIdentity(); }}
+            title="Start a new guest identity"
+          >
+            New Identity
+          </button>
+        )}
       </div>
 
       {incoming && (

@@ -89,6 +89,12 @@ export class V2WagerRoom {
     return false;
   }
 
+  /** Total demo-credit balance, including credits reserved in this match. */
+  _totalCredits(playerId) {
+    return this.ledger.getBalance(playerId)
+      + this.ledger.getEscrowedBalance(playerId, this._escrowMatchId);
+  }
+
   /* ------------------------------------------------------------------ */
   /*  Dead-board fix: ensure playable after cascades                     */
   /* ------------------------------------------------------------------ */
@@ -434,10 +440,11 @@ export class V2WagerRoom {
         id: s.id,
         name: s.name,
         connected: this._isConnected(s.id),
+        totalCredits: this._totalCredits(s.id),
       })),
       self: {
         id: playerId,
-        credits: this.ledger.getBalance(playerId) + this.ledger.getEscrowedBalance(playerId, this._escrowMatchId),
+        credits: this._totalCredits(playerId),
         seat: seatIdx !== -1 ? seatIdx : null,
       },
       activeSeatId: null,

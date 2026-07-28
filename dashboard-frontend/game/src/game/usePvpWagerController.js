@@ -149,6 +149,14 @@ export function usePvpWagerController({ transport, myId }) {
   const opponentSeat = seats.find(
     (s, i) => i !== mySeatIndex && !s.folded
   ) || seats.find((s, i) => i !== mySeatIndex) || null;
+  const myPlayer = players.find((player) => player.id === viewerId) || null;
+  const opponentPlayer = players.find((player) => player.id === opponentSeat?.id) || null;
+  const myTotalCredits = Number.isFinite(myPlayer?.totalCredits)
+    ? myPlayer.totalCredits
+    : (Number.isFinite(self?.credits) ? self.credits : null);
+  const opponentTotalCredits = Number.isFinite(opponentPlayer?.totalCredits)
+    ? opponentPlayer.totalCredits
+    : null;
 
   // ---- Turn detection ----
   const isMyMove =
@@ -308,7 +316,18 @@ export function usePvpWagerController({ transport, myId }) {
     if (transport.lastSnapshot) applySnapshot(transport.lastSnapshot);
 
     const off = transport.onMessage((msg) => {
-      if (msg.type === 'V2_SNAPSHOT') {
+      if (msg.type === 'REMATCH_STARTED') {
+        // New room starts with revision 1; reset so we don't reject its
+        // first snapshot below the old room's last revision.
+        genRef.current += 1;
+        animatingRef.current = false;
+        setIsAnimating(false);
+        setMatchedIndices([]);
+        setPhase('idle');
+        setSelected(null);
+        authoritativeRevisionRef.current = -1;
+        displayRevisionRef.current = -1;
+      } else if (msg.type === 'V2_SNAPSHOT') {
         applySnapshot(msg);
       } else if (msg.type === 'ERROR') {
         setMessage(msg.message || 'An error occurred');
@@ -385,6 +404,8 @@ export function usePvpWagerController({ transport, myId }) {
     // Derived
     mySeat,
     opponentSeat,
+    myTotalCredits,
+    opponentTotalCredits,
     seats,
     players,
     self,
