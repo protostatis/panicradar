@@ -151,6 +151,7 @@ body {
   max-width: 100%;
 }
 .player-coins { font-size: 0.95rem; font-weight: 700; color: #43e97b; }
+.player-total-credits { font-size: 0.66rem; color: #79c0ff; text-align: center; }
 .player-pts { font-size: 0.74rem; color: #8b949e; }
 .player-committed { font-size: 0.64rem; color: #f093fb; }
 
