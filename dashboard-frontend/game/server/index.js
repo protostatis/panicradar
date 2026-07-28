@@ -25,6 +25,7 @@ import { randomBytes } from 'crypto';
 import { DemoCreditLedger } from './DemoCreditLedger.js';
 import { MatchLobby } from './MatchLobby.js';
 import { V2WagerRoom } from './V2WagerRoom.js';
+import { SessionStore } from './SessionStore.js';
 
 // ---- Configuration ----
 
@@ -60,6 +61,12 @@ const v2Credits = new DemoCreditLedger();
 const clients = new Map();
 /** @type {Map<string, number>} IP -> connection count */
 const ipCounts = new Map();
+
+/** In-memory session store for PvP guest identity persistence.
+ *  Resets on server restart (Phase 1). */
+const sessions = new SessionStore({
+  createPlayer: () => newGuestPlayer(),
+});
 
 const GUEST_ADJECTIVES = [
   'Amber', 'Brisk', 'Cobalt', 'Copper', 'Daring', 'Ember', 'Fable', 'Golden',
@@ -106,7 +113,7 @@ function newGuestPlayer() {
   };
 }
 
-function identityMessage(player) {
+function identityMessage(player, sessionToken) {
   return {
     type: 'IDENTITY_OK',
     self: {
@@ -114,6 +121,7 @@ function identityMessage(player) {
       name: player.name,
       authType: player.authType,
     },
+    sessionToken,
   };
 }
 
@@ -259,16 +267,41 @@ const matchLobby = new MatchLobby({
 
 // ---- Identity ----
 
-function identifyGuest(ws) {
+/** Identify (or re-identify) a WebSocket client.
+ *
+ *  New socket: looks up `sessionToken` in the sessions map. If found,
+ *  restores that identity (userId, name) and DemoCreditLedger automatically
+ *  serves the existing credit balance (keyed by userId). If not found,
+ *  creates a fresh session + identity. NEVER calls ensurePlayable here —
+ *  V2WagerRoom._tryActivate handles the pre-match top-up with the correct
+ *  ante threshold.
+ *
+ *  Already-identified socket: ignores any incoming sessionToken and resends
+ *  the existing identity with the stored token. This prevents a second
+ *  IDENTIFY_GUEST from corrupting the token-to-player mapping. */
+function identifyGuest(ws, sessionToken) {
   const meta = clients.get(ws);
   if (!meta) return null;
-  if (!meta.player) {
-    meta.player = newGuestPlayer();
-    send(ws, identityMessage(meta.player));
-    matchLobby.attach(ws, meta.player);
-  } else {
-    send(ws, identityMessage(meta.player));
+
+  // Already identified — resend existing identity with its stored session
+  // token. Do NOT call sessions.getOrCreate again; a mismatched or empty
+  // token on a second IDENTIFY_GUEST would create a spurious session entry.
+  if (meta.player && meta.sessionToken) {
+    send(ws, identityMessage(meta.player, meta.sessionToken));
+    return meta;
   }
+
+  const session = sessions.getOrCreate(sessionToken);
+
+  meta.player = {
+    id: session.userId,
+    name: session.name,
+    authType: 'guest',
+  };
+  meta.sessionToken = session.token;
+
+  send(ws, identityMessage(meta.player, session.token));
+  matchLobby.attach(ws, meta.player);
   return meta;
 }
 
@@ -406,6 +439,7 @@ wss.on('connection', (ws, request) => {
 
   const meta = {
     player: null,
+    sessionToken: null,
     v2Room: null,
     ip,
     tokenWindow: { tokens: BURST_LIMIT, resetAt: Date.now() + WINDOW_MS },
@@ -465,7 +499,12 @@ wss.on('connection', (ws, request) => {
         });
         return;
       }
-      identifyGuest(ws);
+      // Optional session token for identity persistence across page loads.
+      // Must be a string if provided; bounded to prevent abuse.
+      const sessionToken = typeof msg.sessionToken === 'string' && msg.sessionToken.length <= 128
+        ? msg.sessionToken
+        : undefined;
+      identifyGuest(ws, sessionToken);
       return;
     }
 
@@ -604,5 +643,5 @@ httpServer.listen(PORT, () => {
   console.log(`[server] PanicRadar BlockCoined V2 PvP server listening on port ${PORT}`);
   console.log(`[server] Mode: ${process.env.NODE_ENV || 'development'}`);
   console.log(`[server] Allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : '(fail-closed)'}`);
-  console.log(`[server] Demo credits reset on restart. Guest identities are temporary.`);
+  console.log(`[server] Guest identities persist via session tokens (lost on server restart). Demo credits are in-memory.`);
 });
