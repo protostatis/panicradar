@@ -1,10 +1,12 @@
 /**
  * Sound effects. Uses Web Audio API for reliable playback outside user
- * gesture contexts (e.g. WebSocket callbacks in PvP). The AudioContext is
- * created on first import and unlocked on the first user interaction via a
- * global pointer-down listener — after that, source.start() works from any
- * calling context. A new BufferSource is created per play so overlapping
- * scores don't cut each other off.
+ * gesture contexts (e.g. WebSocket callbacks in PvP).
+ *
+ * An AudioContext is created eagerly on module load. A global first-gesture
+ * listener (pointerdown / keydown) resumes the context and kicks off MP3
+ * preloading. After that, source.start() works from any calling context
+ * (WebSocket onmessage, timers, etc.). A new BufferSource is created per
+ * play so overlapping scores don't cut each other off.
  */
 import chaching from '../sound/Cha-ching-sound.mp3';
 
@@ -16,44 +18,110 @@ let ctx = null;
 /** @type {AudioBuffer|null} */
 let buffer = null;
 
-let unlockPending = true;
+/** @type {Promise<void>|null} */
+let loadPromise = null;
 
-function getContext() {
-  if (!ctx && typeof window !== 'undefined') {
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) return null;
+/** Queue of plays that arrived before the buffer finished loading. */
+let pendingPlays = 0;
+
+/** @type {(()=>void)|null} */
+let removeListener = null;
+
+// ---- AudioContext — eager creation (no gesture needed) ----
+
+if (typeof window !== 'undefined') {
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (Ctor) {
     ctx = new Ctor();
   }
-  return ctx;
 }
 
-/** Unlock the AudioContext on first user gesture. */
-function unlock() {
-  if (!unlockPending) return;
-  unlockPending = false;
-  if (ctx && ctx.state === 'suspended') {
+// ---- Unlock on first gesture ----
+
+function ensureRunning() {
+  if (!ctx) return;
+  if (ctx.state === 'suspended') {
     ctx.resume().catch(() => {});
   }
-}
-
-// Register global unlock — pointerdown fires before click and covers touch/pen.
-if (typeof document !== 'undefined') {
-  const handler = () => { unlock(); document.removeEventListener('pointerdown', handler, true); };
-  document.addEventListener('pointerdown', handler, true);
-}
-
-async function loadBuffer() {
-  if (buffer) return;
-  const c = getContext();
-  if (!c) return;
-  try {
-    const resp = await fetch(chaching);
-    const raw = await resp.arrayBuffer();
-    buffer = await c.decodeAudioData(raw);
-  } catch {
-    /* can't decode — sound stays silent */
+  // Safari may enter 'interrupted' after a tab switch; re-create if so.
+  if (ctx.state === 'closed') {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (Ctor) {
+      ctx = new Ctor();
+      // Start preload again for the new context.
+      loadPromise = null;
+      buffer = null;
+      preload();
+    }
   }
 }
+
+async function preload() {
+  if (loadPromise) return loadPromise;
+  if (!ctx || buffer) return Promise.resolve();
+  loadPromise = (async () => {
+    try {
+      const resp = await fetch(chaching);
+      if (!resp.ok) throw new Error(`Audio fetch failed: ${resp.status}`);
+      const raw = await resp.arrayBuffer();
+      buffer = await ctx.decodeAudioData(raw);
+      // Flush any plays that were queued while the buffer was loading.
+      // For each, create and schedule a source node with the freshly
+      // decoded buffer.
+      if (buffer && pendingPlays > 0) {
+        for (let i = 0; i < pendingPlays; i++) {
+          playBuffer();
+        }
+        pendingPlays = 0;
+      }
+    } catch {
+      loadPromise = null; // allow retry on next playScoreSound call
+    }
+  })();
+  return loadPromise;
+}
+
+function onFirstGesture() {
+  if (removeListener) {
+    removeListener();
+    removeListener = null;
+  }
+  ensureRunning();
+  // Start preloading the MP3 now — the first score may arrive before the
+  // buffer is decoded, but subsequent ones will play instantly.
+  preload();
+}
+
+if (typeof document !== 'undefined' && ctx) {
+  const down = () => { onFirstGesture(); };
+  const key = () => { onFirstGesture(); };
+  document.addEventListener('pointerdown', down, true);
+  document.addEventListener('keydown', key, true);
+  removeListener = () => {
+    document.removeEventListener('pointerdown', down, true);
+    document.removeEventListener('keydown', key, true);
+  };
+}
+
+// ---- Play helpers ----
+
+/** Internal: play from the decoded buffer (must be non-null). */
+function playBuffer() {
+  if (!ctx || !buffer) return;
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.6;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(0);
+  } catch {
+    /* audio not available — ignore */
+  }
+}
+
+// ---- Public API ----
 
 export function setSoundEnabled(on) {
   enabled = !!on;
@@ -66,40 +134,20 @@ export function isSoundEnabled() {
 /**
  * Play the score "cha-ching". Safe to call repeatedly; ignores failures.
  *
- * First call triggers buffer loading (the promise is cached). Once the
- * AudioContext is unlocked via user gesture, all subsequent plays work
- * even from non-gesture contexts (WebSocket onmessage, timers, etc.).
+ * The AudioContext must be unlocked by a user gesture before audio plays.
+ * Once unlocked and the MP3 buffer is loaded, this works from any calling
+ * context (WebSocket onmessage, timers, etc.).
  */
 export function playScoreSound() {
-  if (!enabled) return;
-
-  const c = getContext();
-  if (!c) return;
+  if (!enabled || !ctx) return;
 
   if (!buffer) {
-    // Kick off background load; sound for this call is best-effort.
-    loadBuffer();
-    // Fallback: try the old HTMLAudioElement approach for the first play.
-    try {
-      const a = new Audio(chaching);
-      a.volume = 0.6;
-      const p = a.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch {
-      /* ignore */
-    }
+    // Buffer not yet loaded — queue this play and kick off loading if not
+    // already in-flight.  The queue is flushed when decoding completes.
+    pendingPlays++;
+    preload();
     return;
   }
 
-  try {
-    const src = c.createBufferSource();
-    src.buffer = buffer;
-    const gain = c.createGain();
-    gain.gain.value = 0.6;
-    src.connect(gain);
-    gain.connect(c.destination);
-    src.start(0);
-  } catch {
-    /* audio not available — ignore */
-  }
+  playBuffer();
 }
