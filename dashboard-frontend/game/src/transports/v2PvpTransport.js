@@ -5,9 +5,12 @@
  *  - Derives ws/wss from location.host with exact /game/ws.
  *  - Permits VITE_PVP_URL override only for local development.
  *  - Versioned protocol handshake (protocolVersion 1 in IDENTIFY_GUEST).
+ *  - Session token in localStorage persists guest identity across page loads.
  *  - Bounded reconnect/backoff for lobby disconnections only.
  *  - No Google auth import, config, module, or CSP references.
  */
+import { loadSession, saveSession } from '../utils/storage';
+
 const PROTOCOL_VERSION = 1;
 
 function devOverrideUrl() {
@@ -70,6 +73,10 @@ export class V2PvpTransport {
       let settled = false;
       let handshakeTimer = null;
 
+      // Read persisted session token for identity restoration.
+      const persistedSession = loadSession();
+      const sessionToken = persistedSession?.sessionToken;
+
       const resolveConnection = (identity) => {
         if (settled) return;
         settled = true;
@@ -90,7 +97,9 @@ export class V2PvpTransport {
       }, 10_000);
 
       ws.onopen = () => {
-        this._send({ type: 'IDENTIFY_GUEST', protocolVersion: PROTOCOL_VERSION });
+        const handshake = { type: 'IDENTIFY_GUEST', protocolVersion: PROTOCOL_VERSION };
+        if (sessionToken) handshake.sessionToken = sessionToken;
+        this._send(handshake);
       };
 
       ws.onmessage = (ev) => {
@@ -106,6 +115,13 @@ export class V2PvpTransport {
           this._connectedOnce = true;
           this._reconnectAttempts = 0;
           resolveConnection(msg.self);
+          // Persist the session token + identity so reloads restore them.
+          // saveSession validates all fields internally before writing.
+          saveSession({
+            sessionToken: msg.sessionToken,
+            userId: msg.self?.userId,
+            name: msg.self?.name,
+          });
         }
         if (msg.type === 'LOBBY_SNAPSHOT') this.lastLobbySnapshot = msg;
         if (msg.type === 'V2_SNAPSHOT') {

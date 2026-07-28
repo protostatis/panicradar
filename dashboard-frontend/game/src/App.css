@@ -1197,6 +1197,22 @@ body {
   margin-top: 1px;
 }
 
+.btn-new-identity {
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  border: 1px solid #484f58;
+  border-radius: 8px;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-new-identity:hover {
+  border-color: #f093fb;
+  color: #f093fb;
+}
+
 .challenge-card {
   width: 100%;
   display: flex;
