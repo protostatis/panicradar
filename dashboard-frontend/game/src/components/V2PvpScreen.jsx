@@ -26,6 +26,20 @@ function phaseLabel(phase, moveKind) {
   return '';
 }
 
+/** Distinguish the in-match stack from the escrow-inclusive demo total. */
+export function PlayerCreditSummary({ tableCredits = 0, totalCredits = null }) {
+  return (
+    <>
+      <span className="player-coins">Table {tableCredits} cr</span>
+      {Number.isFinite(totalCredits) && (
+        <span className="player-total-credits">
+          Total {totalCredits} cr &middot; includes table
+        </span>
+      )}
+    </>
+  );
+}
+
 /** Small local game-over overlay — avoids the data-shape mismatch of GameOverOverlay. */
 function WinnerOverlay({
   session,
@@ -171,9 +185,10 @@ export default function V2PvpScreen({ transport, myId, onLobby }) {
               <span className="player-name">
                 {c.mySeat ? c.mySeat.name : 'You'}
               </span>
-              <span className="player-coins">
-                {c.mySeat ? c.mySeat.coins : 0} cr
-              </span>
+              <PlayerCreditSummary
+                tableCredits={c.mySeat ? c.mySeat.coins : 0}
+                totalCredits={c.myTotalCredits}
+              />
               <span className="player-pts">
                 {c.mySeat ? c.mySeat.score || 0 : 0} pts
               </span>
@@ -202,9 +217,10 @@ export default function V2PvpScreen({ transport, myId, onLobby }) {
               <span className="player-name">
                 {c.opponentSeat ? c.opponentSeat.name : 'Opponent'}
               </span>
-              <span className="player-coins">
-                {c.opponentSeat ? c.opponentSeat.coins : 0} cr
-              </span>
+              <PlayerCreditSummary
+                tableCredits={c.opponentSeat ? c.opponentSeat.coins : 0}
+                totalCredits={c.opponentTotalCredits}
+              />
               <span className="player-pts">
                 {c.opponentSeat ? c.opponentSeat.score || 0 : 0} pts
               </span>

@@ -149,6 +149,14 @@ export function usePvpWagerController({ transport, myId }) {
   const opponentSeat = seats.find(
     (s, i) => i !== mySeatIndex && !s.folded
   ) || seats.find((s, i) => i !== mySeatIndex) || null;
+  const myPlayer = players.find((player) => player.id === viewerId) || null;
+  const opponentPlayer = players.find((player) => player.id === opponentSeat?.id) || null;
+  const myTotalCredits = Number.isFinite(myPlayer?.totalCredits)
+    ? myPlayer.totalCredits
+    : (Number.isFinite(self?.credits) ? self.credits : null);
+  const opponentTotalCredits = Number.isFinite(opponentPlayer?.totalCredits)
+    ? opponentPlayer.totalCredits
+    : null;
 
   // ---- Turn detection ----
   const isMyMove =
@@ -396,6 +404,8 @@ export function usePvpWagerController({ transport, myId }) {
     // Derived
     mySeat,
     opponentSeat,
+    myTotalCredits,
+    opponentTotalCredits,
     seats,
     players,
     self,

@@ -351,7 +351,10 @@ describe('V2WagerRoom — snapshot + broadcast', () => {
     assert.ok(snap.wager);
     assert.ok(Array.isArray(snap.players));
     assert.equal(snap.players.length, 2);
+    assert.equal(snap.players[0].totalCredits, 100);
+    assert.equal(snap.players[1].totalCredits, 100);
     assert.equal(snap.self.id, 'alice');
+    assert.equal(snap.self.credits, 100);
     assert.equal(snap.self.seat, 0);
     assert.ok(snap.activeSeatId);
   });
@@ -666,6 +669,54 @@ describe('V2WagerRoom — rematch consent', () => {
     room.lifecycle = 'complete';
     room._settled = true;
     assert.match(room.requestRematch('charlie').error, /match players/i);
+  });
+});
+
+describe('V2WagerRoom — rematch credit display', () => {
+  test('tops up only the broke wallet while preserving equal table stacks', () => {
+    const ledger = new DemoCreditLedger();
+    ledger.reserve('alice', 100, 'previous');
+    ledger.reserve('bob', 100, 'previous');
+    ledger.settle('previous', { alice: 200, bob: 0 });
+
+    const room = newRoom(ledger);
+    room.join({ id: 'alice', name: 'Alice' });
+    room.join({ id: 'bob', name: 'Bob' });
+
+    const snap = room.snapshotFor('alice');
+    const totals = Object.fromEntries(
+      snap.players.map((player) => [player.id, player.totalCredits])
+    );
+
+    assert.deepEqual(totals, { alice: 200, bob: 100 });
+    assert.equal(snap.self.credits, 200);
+    assert.equal(room.buyIn, 100);
+    assert.deepEqual(
+      room.wager.seats.map((seat) => seat.coins),
+      [90, 90],
+      'Both table stacks should remain equal after the ante'
+    );
+
+    // Betting changes table/pot allocation, not each player's displayed
+    // escrow-inclusive total.
+    for (const seat of room._seats) {
+      const [i, j] = findValidMove(room);
+      assert.equal(room.tryMove(seat.id, i, j, room.revision).ok, true);
+    }
+    const actor = currentActor(room.wager);
+    assert.equal(room.tryBet(actor.id, BET_ACTION.RAISE, room.revision).ok, true);
+    assert.deepEqual(
+      Object.fromEntries(
+        room.snapshotFor('alice').players.map((player) => [player.id, player.totalCredits])
+      ),
+      { alice: 200, bob: 100 }
+    );
+
+    room.forfeit('bob', 'test forfeit');
+    const completed = room.snapshotFor('alice');
+    for (const player of completed.players) {
+      assert.equal(player.totalCredits, ledger.getBalance(player.id));
+    }
   });
 });
 
