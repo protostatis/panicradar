@@ -1,9 +1,9 @@
 # Reddit Unbrowser Cookie Transport
 
-Reddit blocks the crawler's normal HTTP client, including through the production
-WireGuard exit. The crawler can use Unbrowser for existing `old.reddit.com`
-listing, thread, and comment parsing. It asks a Mac-only solver for fresh
-cookies only after Reddit returns a `403` or an HTTP-200 blocked/welcome page.
+Reddit blocks the crawler's normal HTTP client from EC2. The crawler uses
+Unbrowser over direct EC2 egress for existing `old.reddit.com` listing, thread,
+and comment parsing. It asks a Mac-only solver for fresh cookies only after
+Reddit returns a `403` or an HTTP-200 blocked/welcome page.
 
 The integration does not intentionally log cookie values or write them to its
 database. The Unbrowser client clears its cookies on orderly shutdown, but its
@@ -144,7 +144,7 @@ stat -c '%a:%U:%G' /opt/crypto-sentiment/run/reddit-cookie-solver.sock
 The expected metadata is mode `600` and the deployment SSH user's owner/group.
 The release workflow verifies the socket, token-authenticated cookie solver,
 and a crawlable `old.reddit.com` listing before enabling Unbrowser for the new
-crawler. WireGuard stays enabled.
+crawler. The host remains on direct EC2 networking; WireGuard is not required.
 
 If the solver is unavailable or canary fails, deployment continues with standard
 Reddit fetching so unrelated API, frontend, and security releases remain

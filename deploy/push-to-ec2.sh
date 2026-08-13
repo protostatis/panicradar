@@ -56,17 +56,75 @@ echo "Deploying on EC2..."
 ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no "ec2-user@$EC2_IP" << 'ENDSSH'
 set -e
 
-# Extract application
-sudo rm -rf /opt/crypto-sentiment/*
-sudo tar -xzf /tmp/crypto-sentiment.tar.gz -C /opt
-sudo mv /opt/app/* /opt/crypto-sentiment/
-sudo rmdir /opt/app
-sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
+APP_DIR=/opt/crypto-sentiment
+PERSIST_DIR=/tmp/crypto-sentiment-persist
 
-cd /opt/crypto-sentiment
+# Retire the legacy host-wide VPN before any destructive deployment step.
+# Reddit uses the cookie-backed Unbrowser transport in production.
+sudo systemctl disable --now wg-quick@wg0 >/dev/null 2>&1 || true
+if /sbin/ip link show wg0 >/dev/null 2>&1; then
+    echo "Stopping legacy WireGuard interface..."
+    if ! command -v wg-quick >/dev/null 2>&1; then
+        echo "ERROR: wg0 is active but wg-quick is unavailable"
+        exit 1
+    fi
+    sudo wg-quick down wg0
+fi
+if /sbin/ip link show wg0 >/dev/null 2>&1; then
+    echo "ERROR: Legacy WireGuard interface is still active"
+    exit 1
+fi
+WG_UNIT_STATE=$(sudo systemctl is-enabled wg-quick@wg0 2>/dev/null || true)
+case "$WG_UNIT_STATE" in
+    enabled|enabled-runtime|linked|linked-runtime)
+        echo "ERROR: Legacy WireGuard service remains enabled ($WG_UNIT_STATE)"
+        exit 1
+        ;;
+esac
+sudo rm -f /etc/wireguard/wg0.conf
+if ! timeout 15 getent ahostsv4 github.com >/dev/null 2>&1; then
+    echo "ERROR: Direct EC2 DNS is unavailable after WireGuard cleanup"
+    exit 1
+fi
+if ! curl -fsS --connect-timeout 5 --max-time 15 https://github.com/robots.txt >/dev/null; then
+    echo "ERROR: Direct EC2 HTTPS egress is unavailable after WireGuard cleanup"
+    exit 1
+fi
+
+# Preserve runtime state before replacing application files.
+rm -rf "$PERSIST_DIR"
+mkdir -p "$PERSIST_DIR"
+for name in data logs backups run .env; do
+    if [ -e "$APP_DIR/$name" ]; then
+        mv "$APP_DIR/$name" "$PERSIST_DIR/$name"
+    fi
+done
+
+# Extract application. Restore runtime state even if extraction fails.
+restore_runtime_state() {
+    sudo mkdir -p "$APP_DIR"
+    sudo chown ec2-user:ec2-user "$APP_DIR"
+    for name in data logs backups run .env; do
+        if [ -e "$PERSIST_DIR/$name" ]; then
+            rm -rf "$APP_DIR/$name"
+            mv "$PERSIST_DIR/$name" "$APP_DIR/$name"
+        fi
+    done
+}
+trap restore_runtime_state EXIT
+
+sudo rm -rf "$APP_DIR"
+sudo tar -xzf /tmp/crypto-sentiment.tar.gz -C /opt
+sudo mv /opt/app "$APP_DIR"
+sudo chown -R ec2-user:ec2-user "$APP_DIR"
+restore_runtime_state
+trap - EXIT
+rm -rf "$PERSIST_DIR"
+
+cd "$APP_DIR"
 
 # Create data directories
-mkdir -p data logs
+mkdir -p data logs backups run
 
 # Check for .env file
 if [ ! -f .env ]; then
@@ -75,12 +133,6 @@ if [ ! -f .env ]; then
     echo "Please create /opt/crypto-sentiment/.env with your API keys"
     echo "Template available at: .env.example"
     echo ""
-fi
-
-# Setup WireGuard VPN if configured
-if grep -q WG_PRIVATE_KEY .env 2>/dev/null; then
-    echo "Setting up WireGuard VPN..."
-    bash deploy/setup-wireguard.sh .env
 fi
 
 # Build and start services
