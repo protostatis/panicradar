@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "incident_id": "vpn-dns-20260811",
+  "provider": "coingecko",
+  "source_tag": "coingecko_gap_backfill:vpn-dns-20260811",
+  "start_hour": "2026-08-11T02:00:00+00:00",
+  "end_exclusive": "2026-08-13T14:00:00+00:00",
+  "coins": {
+    "ADA": "cardano",
+    "AVAX": "avalanche-2",
+    "BNB": "binancecoin",
+    "BTC": "bitcoin",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "ETH": "ethereum",
+    "LINK": "chainlink",
+    "SOL": "solana",
+    "XRP": "ripple"
+  }
+}
