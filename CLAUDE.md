@@ -68,26 +68,21 @@ cd /opt/crypto-sentiment && docker-compose up -d
 
 `deploy/push-to-ec2.sh <EC2_IP>` — packages local code, uploads via SCP, rebuilds on EC2. Only use if CI/CD is broken.
 
-## Reddit Access via WireGuard VPN
+## Reddit Access via Unbrowser
 
-Reddit blocks AWS/EC2 IP addresses. A WireGuard VPN on the EC2 host routes
-outbound crawler traffic through a clean IP.
+Production uses direct EC2 egress. Reddit HTML is fetched by Unbrowser with
+cookies supplied by a supervised Mac solver over a mode-0600 SSH Unix socket.
+Do not enable a host-wide VPN: a dead full tunnel also blocks CoinGecko,
+Telegram, and every other outbound feed.
 
-### Setup (one-time):
-
-1. Add WireGuard config to `/opt/crypto-sentiment/.env` (see `.env.docker.example` for template).
-2. Run `deploy/setup-wireguard.sh /opt/crypto-sentiment/.env` on EC2.
-
-### Verify VPN is active:
+See `docs/REDDIT_UNBROWSER_SETUP.md` for setup and recovery. Quick checks:
 
 ```bash
-# Should show the VPN egress IP, not the EC2 IP
-curl https://httpbin.org/ip
-
-# Check WireGuard status
-sudo wg show
+curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+  http://localhost/healthz
+docker exec crypto-crawler sh -c 'test "$REDDIT_FETCH_MODE" = unbrowser'
 ```
 
-### If crawler shows "No fresh posts" or 403 errors:
-- VPN may be down: `sudo wg-quick up wg0`.
-- Check status: `sudo systemctl status wg-quick@wg0`.
+If the crawler shows repeated empty results, verify the solver/tunnel agents on
+the Mac, the EC2 socket metadata, and the deployment canary before restarting
+the crawler.

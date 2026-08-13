@@ -117,8 +117,38 @@ jobs:
 
             cd /home/ec2-user/crypto_sentiment_crawler
 
-            # Keep WireGuard active for non-Reddit crawler dependencies. Reddit
-            # HTML is fetched by Unbrowser with a local cookie refresh socket.
+            # Retire the legacy host-wide WireGuard tunnel before any
+            # DNS-dependent deployment step. Reddit now uses the cookie-backed
+            # Unbrowser transport; all other traffic uses direct EC2 egress.
+            sudo systemctl disable --now wg-quick@wg0 >/dev/null 2>&1 || true
+            if /sbin/ip link show wg0 >/dev/null 2>&1; then
+              echo "Stopping legacy WireGuard interface..."
+              if ! command -v wg-quick >/dev/null 2>&1; then
+                echo "ERROR: wg0 is active but wg-quick is unavailable"
+                exit 1
+              fi
+              sudo wg-quick down wg0
+            fi
+            if /sbin/ip link show wg0 >/dev/null 2>&1; then
+              echo "ERROR: Legacy WireGuard interface is still active"
+              exit 1
+            fi
+            WG_UNIT_STATE=$(sudo systemctl is-enabled wg-quick@wg0 2>/dev/null || true)
+            case "$WG_UNIT_STATE" in
+              enabled|enabled-runtime|linked|linked-runtime)
+                echo "ERROR: Legacy WireGuard service remains enabled ($WG_UNIT_STATE)"
+                exit 1
+                ;;
+            esac
+            sudo rm -f /etc/wireguard/wg0.conf
+            if ! timeout 15 getent ahostsv4 github.com >/dev/null 2>&1; then
+              echo "ERROR: Direct EC2 DNS is unavailable after WireGuard cleanup"
+              exit 1
+            fi
+            if ! curl -fsS --connect-timeout 5 --max-time 15 https://github.com/robots.txt >/dev/null; then
+              echo "ERROR: Direct EC2 HTTPS egress is unavailable after WireGuard cleanup"
+              exit 1
+            fi
 
             # Pull latest code. Preserve any EC2-local edits so deployment can
             # move to the release tag without discarding operational changes.

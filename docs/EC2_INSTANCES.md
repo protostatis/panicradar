@@ -50,8 +50,8 @@ curl -SL https://github.com/docker/compose/releases/latest/download/docker-compo
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-# Install git and wireguard-tools
-yum install -y git wireguard-tools
+# Install git
+yum install -y git
 
 # Create 2GB swap (prevents OOM during deployments)
 dd if=/dev/zero of=/swapfile bs=128M count=16
@@ -79,10 +79,9 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
    sudo chown ec2-user:ec2-user /opt/crypto-sentiment
    ```
 6. **Create `.env` file** at `/opt/crypto-sentiment/.env` with API keys (see `.env.docker.example` for template)
-7. **Set up WireGuard VPN for normal crawler egress** (see below)
-8. **Set up the Reddit Unbrowser solver** (see `REDDIT_UNBROWSER_SETUP.md`)
-9. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
-10. **Set up daily S3 backup cron:**
+7. **Set up the Reddit Unbrowser solver** (see `REDDIT_UNBROWSER_SETUP.md`)
+8. **Deploy the application** using `deploy/push-to-ec2.sh` or CI/CD
+9. **Set up daily S3 backup cron:**
    ```bash
    crontab -e
    # Add: 0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh
@@ -90,47 +89,28 @@ echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
 
 ---
 
-## WireGuard VPN Setup
+## Production Egress
 
-Reddit blocks AWS/datacenter IPs. WireGuard runs on the EC2 host and routes
-outbound crawler traffic through the VPN. Docker containers inherit that route
-through host NAT.
+The host and Docker containers use direct EC2 egress for CoinGecko, Telegram,
+macro data, on-chain APIs, and Unbrowser navigation. Reddit cookies come from
+the supervised solver described in `REDDIT_UNBROWSER_SETUP.md`; no host-wide
+VPN is required.
 
-### Setup
+Existing hosts previously configured with WireGuard must retire the full
+tunnel before running collectors:
 
-1. **Add WireGuard config to `/opt/crypto-sentiment/.env`** on EC2:
-   ```bash
-   WG_PRIVATE_KEY=your_wireguard_private_key
-   WG_ADDRESS=10.x.x.x/32
-   WG_DNS=10.64.0.1
-   WG_PEER_PUBKEY=server_public_key
-   WG_ENDPOINT=server_ip:51820
-   ```
+```bash
+sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+if ip link show wg0 >/dev/null 2>&1; then
+  sudo wg-quick down wg0
+fi
+sudo rm -f /etc/wireguard/wg0.conf
 
-2. **Run the setup script:**
-   ```bash
-   cd /home/ec2-user/crypto_sentiment_crawler
-   bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
-   ```
+getent ahostsv4 api.coingecko.com
+curl -fsS https://api.coingecko.com/api/v3/ping
+```
 
-3. **Deploy the application.** Configure WireGuard once and when its settings
-   change; release deploys preserve the existing `wg0` service.
-
-4. **Verify:**
-   ```bash
-   # Should show the VPN egress IP, not the EC2 IP
-   curl https://ipinfo.io/ip
-
-   sudo wg show
-   ```
-
-### Behavior
-
-WireGuard carries ordinary crawler traffic through the host VPN. When the
-release's cookie-backed Unbrowser canary succeeds, the crawler uses that
-transport for Reddit HTML; otherwise only Reddit collection falls back to the
-standard fetcher. See `REDDIT_UNBROWSER_SETUP.md` for the solver verification.
-`PROXY_URL` remains available as an optional generic fallback transport.
+Release and legacy deployment scripts perform this cleanup automatically.
 
 ---
 
@@ -159,20 +139,34 @@ swapon --show
 
 ### Reddit Collection Issues
 ```bash
-# Check VPN status
-sudo wg show
-sudo systemctl status wg-quick@wg0
-
-# Check VPN egress IP
-curl https://ipinfo.io/ip
-
 # Check the solver socket without requesting cookie values
 curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
   http://localhost/healthz
+
+# Confirm the crawler is using Unbrowser
+docker exec crypto-crawler sh -c 'test "$REDDIT_FETCH_MODE" = unbrowser'
 ```
 
-Anonymous Reddit HTML can return `403` even when WireGuard is healthy. Follow
-`REDDIT_UNBROWSER_SETUP.md` to restore the supervised solver and socket forward.
+Anonymous Reddit HTML can return `403`. Follow `REDDIT_UNBROWSER_SETUP.md` to
+restore the supervised solver and socket forward.
+
+### All Outbound Feeds Stop Updating
+
+Check DNS from both the host and crawler. A legacy `wg0` interface must not be
+present:
+
+```bash
+getent ahostsv4 api.coingecko.com
+docker exec crypto-crawler getent ahostsv4 api.coingecko.com
+ip link show wg0  # expected: device does not exist
+```
+
+If `wg0` exists, disable it using the Production Egress commands above, then
+restart only the outbound workers so Docker refreshes their resolver state:
+
+```bash
+docker restart -t 120 crypto-crawler crypto-signals
+```
 
 ### S3 Backup Failing ("Unable to locate credentials")
 Verify the instance can reach EC2 metadata:
@@ -180,16 +174,12 @@ Verify the instance can reach EC2 metadata:
 # Should return IAM role info — if it hangs, the route is missing
 curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
 ```
-If it fails, re-run the WireGuard setup script to restore the metadata bypass
-route:
-
-```bash
-bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
-```
+With direct EC2 egress, a failure indicates an IAM role, metadata option, or
+instance networking problem.
 
 ### Dashboard Not Accessible (but SSH works)
-If Docker response packets route through the VPN, the WireGuard connmark rules
-are missing. Re-run setup:
+Check the frontend container and local HTTPS endpoint:
 ```bash
-bash deploy/setup-wireguard.sh /opt/crypto-sentiment/.env
+docker ps --filter name=crypto-frontend
+curl -kfsS https://localhost/ >/dev/null
 ```
