@@ -151,7 +151,9 @@ def compute_weights_from_beliefs(beliefs: dict, min_samples: int = 20) -> dict:
             "is_contrarian": is_contrarian,
             "alpha": belief.get("alpha"),
             "beta": belief.get("beta"),
-            "sample_size": belief.get("effective_n", belief.get("alpha", 1) + belief.get("beta", 1)),
+            "sample_size": belief.get(
+                "effective_n", belief.get("alpha", 1) + belief.get("beta", 1)
+            ),
         }
 
     # Normalize weights to sum to 1.0
@@ -195,6 +197,46 @@ async def _save_weights_to_db(
     await create_weights_table(db)
 
     try:
+        if not weights:
+            raise ValueError("Refusing to stage or publish an empty source-weight snapshot")
+        if belief_version is not None and (
+            type(belief_version) is not int or belief_version < 0
+        ):
+            raise ValueError("belief_version must be a non-negative integer")
+
+        # Serialize publishers before inspecting the currently accepted version.
+        # The JSON state file is published separately, so equal-version retries
+        # must be idempotent while stale writers must never prune newer rows.
+        await db.conn.execute("BEGIN IMMEDIATE")
+        publication = await (
+            await db.conn.execute(
+                "SELECT belief_version FROM belief_publications WHERE id = 1"
+            )
+        ).fetchone()
+        published_version = int(publication[0]) if publication is not None else None
+        if (
+            belief_version is not None
+            and published_version is not None
+            and belief_version < published_version
+        ):
+            raise ValueError(
+                f"Refusing stale source-weight version {belief_version}; "
+                f"published version is {published_version}"
+            )
+
+        if belief_version is not None:
+            newer_current = await (
+                await db.conn.execute(
+                    "SELECT COUNT(*) FROM source_weights "
+                    "WHERE belief_version IS NOT NULL AND belief_version > ?",
+                    (belief_version,),
+                )
+            ).fetchone()
+            if int(newer_current[0]):
+                raise RuntimeError(
+                    "source_weights contains rows newer than the requested publication"
+                )
+
         if belief_version is not None:
             await db.conn.execute(
                 "DELETE FROM source_weight_snapshots WHERE belief_version = ?",
@@ -203,7 +245,8 @@ async def _save_weights_to_db(
             for source, data in weights.items():
                 await db.conn.execute("""
                     INSERT INTO source_weight_snapshots
-                    (belief_version, source, weight, accuracy, is_contrarian, alpha, beta, sample_size, last_updated)
+                    (belief_version, source, weight, accuracy, is_contrarian,
+                     alpha, beta, sample_size, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     belief_version,
@@ -217,11 +260,21 @@ async def _save_weights_to_db(
                     datetime.now(timezone.utc).isoformat(),
                 ))
 
+            staged = await (
+                await db.conn.execute(
+                    "SELECT COUNT(*) FROM source_weight_snapshots WHERE belief_version = ?",
+                    (belief_version,),
+                )
+            ).fetchone()
+            if int(staged[0]) != len(weights):
+                raise RuntimeError("Staged source-weight snapshot is incomplete")
+
         if publish:
             for source, data in weights.items():
                 await db.conn.execute("""
                     INSERT INTO source_weights
-                    (source, weight, accuracy, is_contrarian, alpha, beta, sample_size, belief_version, last_updated)
+                    (source, weight, accuracy, is_contrarian, alpha, beta,
+                     sample_size, belief_version, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(source) DO UPDATE SET
                         weight = excluded.weight,
@@ -249,6 +302,47 @@ async def _save_weights_to_db(
                     datetime.now(timezone.utc).isoformat(),
                 ))
             if belief_version is not None:
+                # `source_weights` is the compatibility/current mirror. Remove
+                # sources absent from the complete accepted snapshot in the same
+                # transaction as the upserts and publication pointer update.
+                # Historical versions remain available in the snapshot table.
+                await db.conn.execute(
+                    """
+                    DELETE FROM source_weights
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM source_weight_snapshots snapshot
+                        WHERE snapshot.belief_version = ?
+                          AND snapshot.source = source_weights.source
+                    )
+                    """,
+                    (belief_version,),
+                )
+
+                mirror = await (
+                    await db.conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM source_weights current
+                        JOIN source_weight_snapshots snapshot
+                          ON snapshot.belief_version = ?
+                         AND snapshot.source = current.source
+                        WHERE current.belief_version = ?
+                          AND current.weight = snapshot.weight
+                          AND current.accuracy IS snapshot.accuracy
+                          AND current.is_contrarian = snapshot.is_contrarian
+                          AND current.alpha IS snapshot.alpha
+                          AND current.beta IS snapshot.beta
+                          AND current.sample_size IS snapshot.sample_size
+                        """,
+                        (belief_version, belief_version),
+                    )
+                ).fetchone()
+                if int(mirror[0]) != len(weights):
+                    raise RuntimeError(
+                        "source_weights does not exactly mirror the staged snapshot"
+                    )
+
                 await db.conn.execute("""
                     INSERT INTO belief_publications (id, belief_version, published_at)
                     VALUES (1, ?, ?)
@@ -394,16 +488,28 @@ def print_weights_table(weights: dict):
         reverse=True
     )
 
-    print(f"\n{'Source':<30} {'Weight':<10} {'Norm':<10} {'Accuracy':<10} {'Type':<12} {'Samples':<10}")
+    print(
+        f"\n{'Source':<30} {'Weight':<10} {'Norm':<10} "
+        f"{'Accuracy':<10} {'Type':<12} {'Samples':<10}"
+    )
     print("-" * 80)
 
     for source, data in sorted_weights:
         accuracy = data.get("accuracy")
         acc_str = f"{accuracy:.1%}" if accuracy else "N/A"
-        type_str = "CONTRARIAN" if data.get("is_contrarian") else "MOMENTUM" if accuracy and accuracy > 0.5 else "NEUTRAL"
+        type_str = (
+            "CONTRARIAN"
+            if data.get("is_contrarian")
+            else "MOMENTUM"
+            if accuracy and accuracy > 0.5
+            else "NEUTRAL"
+        )
         norm = data.get("weight_normalized", 0)
         samples = data.get("sample_size", 0)
 
-        print(f"{source:<30} {data['weight']:<10.4f} {norm:<10.4f} {acc_str:<10} {type_str:<12} {samples:<10.0f}")
+        print(
+            f"{source:<30} {data['weight']:<10.4f} {norm:<10.4f} "
+            f"{acc_str:<10} {type_str:<12} {samples:<10.0f}"
+        )
 
     print("=" * 80)
