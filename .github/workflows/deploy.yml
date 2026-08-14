@@ -8,6 +8,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/crypto-sentiment
 
+concurrency:
+  group: ${{ github.repository }}-production-deploy
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     name: Build and Push Images
@@ -49,9 +53,7 @@ jobs:
           context: .
           target: crawler
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-crawler:${{ steps.meta.outputs.version }}
           build-args: |
             TORCH_BASE_IMAGE=${{ env.REGISTRY }}/protostatis/crypto-sentiment-torch-base:latest
           cache-from: type=gha
@@ -63,9 +65,7 @@ jobs:
           context: .
           target: api
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -75,9 +75,7 @@ jobs:
           context: ./dashboard-frontend
           target: production
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -87,9 +85,7 @@ jobs:
           context: ./dashboard-frontend/game
           file: ./dashboard-frontend/game/server/Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-game-server:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -109,7 +105,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 20m
+          command_timeout: 45m
           script: |
             set -e
 
@@ -168,21 +164,20 @@ jobs:
             if [ -f /opt/crypto-sentiment/.env ]; then
               CRAWLER_ENV_ARGS="--env-file /opt/crypto-sentiment/.env"
             else
-              echo "WARNING: /opt/crypto-sentiment/.env not found; crawler will run without local env config"
+              echo "ERROR: /opt/crypto-sentiment/.env is required for production"
+              exit 1
             fi
 
-            # ========== PRE-DEPLOYMENT BACKUP ==========
-            if [ -f /opt/crypto-sentiment/data/sentiment.db ]; then
-              BACKUP_NAME="sentiment_predeploy_$(date +%Y%m%d_%H%M%S).db"
-              cp /opt/crypto-sentiment/data/sentiment.db /opt/crypto-sentiment/backups/$BACKUP_NAME
-              echo "Created pre-deploy backup: $BACKUP_NAME"
-              # Keep only last 14 backups
-              ls -t /opt/crypto-sentiment/backups/sentiment_*.db 2>/dev/null | tail -n +15 | xargs -r rm
+            # Existing production data is mandatory. Never bootstrap an empty
+            # database or repository state during a release deployment.
+            if [ ! -s /opt/crypto-sentiment/data/sentiment.db ]; then
+              echo "ERROR: Production database is missing or empty"
+              exit 1
             fi
-
-            # Seed state files if missing
-            [ ! -f /opt/crypto-sentiment/data/orchestrator_state.json ] && cp data/orchestrator_state.json /opt/crypto-sentiment/data/ && echo "Seeded orchestrator_state.json"
-            [ ! -f /opt/crypto-sentiment/data/discovery_state.json ] && cp data/discovery_state.json /opt/crypto-sentiment/data/ 2>/dev/null || true
+            if [ ! -s /opt/crypto-sentiment/data/orchestrator_state.json ]; then
+              echo "ERROR: Production orchestrator state is missing or empty"
+              exit 1
+            fi
 
             # ========== DISK SPACE CHECK & CLEANUP ==========
             echo "Pre-cleanup disk usage:"
@@ -229,6 +224,19 @@ jobs:
 
             # ========== ENSURE NETWORK EXISTS ==========
             docker network create --subnet=172.18.0.0/16 crypto-sentiment_crypto-net 2>/dev/null || echo "Network already exists"
+
+            # OpenRouter is fail-closed in the crawler. Prove the candidate image
+            # can make a real uncached request before replacing healthy services.
+            echo "Checking candidate OpenRouter embedding access..."
+            docker run --rm \
+              --network crypto-sentiment_crypto-net \
+              $CRAWLER_ENV_ARGS \
+              crypto-sentiment-crawler:current \
+              uv run python -m crypto_sentiment_crawler.maintenance.deployment_checks \
+                openrouter \
+                --expected-model qwen/qwen3-embedding-8b \
+                --expected-dimensions 4096
+            echo "Candidate OpenRouter canary passed."
 
             # The local Mac's solver is forwarded as a mode-0600 Unix socket.
             # A solver outage degrades only Reddit collection; it must not block
@@ -282,6 +290,68 @@ jobs:
               echo "WARNING: Reddit cookie solver socket is unavailable or has unsafe permissions ($SOCKET_METADATA; expected $EXPECTED_SOCKET_METADATA); deploying with standard Reddit fetching."
             fi
 
+            # ========== COHERENT PRE-DEPLOYMENT BACKUP ==========
+            # Use the candidate API image so backup behavior does not depend on
+            # the EC2 host's Python version. Retry if a live belief publication
+            # advances between the SQLite snapshot and the JSON state copy.
+            BACKUP_SUFFIX=$(date -u +%Y%m%dT%H%M%SZ)
+            BACKUP_NAME="sentiment_predeploy_${BACKUP_SUFFIX}.db"
+            STATE_BACKUP_NAME="orchestrator_state_predeploy_${BACKUP_SUFFIX}.json"
+            BACKUP_PATH="/opt/crypto-sentiment/backups/$BACKUP_NAME"
+            STATE_BACKUP_PATH="/opt/crypto-sentiment/backups/$STATE_BACKUP_NAME"
+            BACKUP_READY=0
+            for attempt in $(seq 1 5); do
+              rm -f "$BACKUP_PATH" "$STATE_BACKUP_PATH"
+              docker run --rm \
+                -v /opt/crypto-sentiment/data:/app/data:ro \
+                -v /opt/crypto-sentiment/backups:/app/backups \
+                crypto-sentiment-api:current \
+                python -m crypto_sentiment_crawler.maintenance.deployment_checks \
+                  backup /app/data/sentiment.db "/app/backups/$BACKUP_NAME"
+              cp /opt/crypto-sentiment/data/orchestrator_state.json "$STATE_BACKUP_PATH"
+              if docker run --rm \
+                -v /opt/crypto-sentiment/backups:/app/backups:ro \
+                crypto-sentiment-api:current \
+                python -m crypto_sentiment_crawler.maintenance.deployment_checks \
+                  publication \
+                  --db "/app/backups/$BACKUP_NAME" \
+                  --state "/app/backups/$STATE_BACKUP_NAME"; then
+                BACKUP_READY=1
+                break
+              fi
+              echo "Backup pair changed during snapshot; retrying ($attempt/5)..."
+              sleep 1
+            done
+            if [ "$BACKUP_READY" -ne 1 ]; then
+              echo "ERROR: Could not create a coherent database/state backup"
+              rm -f "$BACKUP_PATH" "$STATE_BACKUP_PATH"
+              exit 1
+            fi
+            sha256sum "$BACKUP_PATH" "$STATE_BACKUP_PATH"
+
+            if [ -f /opt/crypto-sentiment/data/discovery_state.json ]; then
+              DISCOVERY_BACKUP_PATH="/opt/crypto-sentiment/backups/discovery_state_predeploy_${BACKUP_SUFFIX}.json"
+              DISCOVERY_BACKUP_READY=0
+              for attempt in $(seq 1 3); do
+                cp /opt/crypto-sentiment/data/discovery_state.json "$DISCOVERY_BACKUP_PATH"
+                if python3 -m json.tool "$DISCOVERY_BACKUP_PATH" >/dev/null 2>&1; then
+                  DISCOVERY_BACKUP_READY=1
+                  break
+                fi
+                rm -f "$DISCOVERY_BACKUP_PATH"
+                sleep 1
+              done
+              if [ "$DISCOVERY_BACKUP_READY" -ne 1 ]; then
+                echo "ERROR: Could not create a valid discovery-state backup"
+                exit 1
+              fi
+              sha256sum "$DISCOVERY_BACKUP_PATH"
+            fi
+            echo "Created and verified pre-deploy recovery set: $BACKUP_SUFFIX"
+            ls -t /opt/crypto-sentiment/backups/sentiment_predeploy_*.db 2>/dev/null | tail -n +15 | xargs -r rm
+            ls -t /opt/crypto-sentiment/backups/orchestrator_state_predeploy_*.json 2>/dev/null | tail -n +15 | xargs -r rm
+            ls -t /opt/crypto-sentiment/backups/discovery_state_predeploy_*.json 2>/dev/null | tail -n +15 | xargs -r rm
+
             # ========== SYNC CONFIG FILES ==========
             mkdir -p /opt/crypto-sentiment/dashboard-frontend
             cp dashboard-frontend/blocklist.conf /opt/crypto-sentiment/dashboard-frontend/blocklist.conf
@@ -290,16 +360,34 @@ jobs:
             # Keep stopped containers until the replacement set passes health
             # checks so a failed rollout can restore the known-good set.
             SERVICES="crypto-crawler crypto-api crypto-frontend crypto-signals crypto-game-server"
+            RESTORE_ORDER="crypto-api crypto-game-server crypto-frontend crypto-crawler crypto-signals crypto-belief-auto"
             PREVIOUS_SERVICES=""
             for service in $SERVICES; do
               if docker inspect "$service-previous" >/dev/null 2>&1; then
                 echo "ERROR: Stale rollback container exists: $service-previous"
                 exit 1
               fi
-              if docker inspect "$service" >/dev/null 2>&1; then
-                PREVIOUS_SERVICES="$PREVIOUS_SERVICES $service"
+              if ! docker inspect "$service" >/dev/null 2>&1; then
+                echo "ERROR: Cannot deploy safely without rollback container $service"
+                exit 1
               fi
+              PREVIOUS_STATE=$(docker inspect --format '{{.State.Status}}' "$service")
+              if [ "$PREVIOUS_STATE" != "running" ]; then
+                echo "ERROR: Existing rollback container $service is not running ($PREVIOUS_STATE)"
+                exit 1
+              fi
+              PREVIOUS_SERVICES="$PREVIOUS_SERVICES $service"
             done
+            if docker inspect crypto-belief-auto-previous >/dev/null 2>&1; then
+              echo "ERROR: Stale rollback container exists: crypto-belief-auto-previous"
+              exit 1
+            fi
+            if docker inspect crypto-belief-auto >/dev/null 2>&1; then
+              LEGACY_STATE=$(docker inspect --format '{{.State.Status}}' crypto-belief-auto)
+              if [ "$LEGACY_STATE" = "running" ]; then
+                PREVIOUS_SERVICES="$PREVIOUS_SERVICES crypto-belief-auto"
+              fi
+            fi
 
             ROLLBACK_ACTIVE=1
             NEW_CONTAINERS_STARTED=0
@@ -311,32 +399,79 @@ jobs:
 
               echo "Deployment failed; restoring previous containers..."
               ROLLBACK_ACTIVE=0
+              trap - EXIT INT TERM
+              set +e
+              ROLLBACK_FAILED=0
               if [ "$NEW_CONTAINERS_STARTED" -eq 1 ]; then
                 for service in $SERVICES; do
-                  docker rm -f "$service" >/dev/null 2>&1 || true
+                  if docker inspect "$service" >/dev/null 2>&1; then
+                    docker rm -f "$service" >/dev/null 2>&1 || ROLLBACK_FAILED=1
+                  fi
                 done
               fi
-              for service in $PREVIOUS_SERVICES; do
+              for service in $RESTORE_ORDER; do
                 if docker inspect "$service-previous" >/dev/null 2>&1; then
-                  docker rename "$service-previous" "$service" || true
-                  docker start "$service" >/dev/null 2>&1 || true
-                elif docker inspect "$service" >/dev/null 2>&1; then
-                  docker start "$service" >/dev/null 2>&1 || true
+                  if ! docker rename "$service-previous" "$service"; then
+                    echo "ROLLBACK ERROR: Could not rename $service-previous"
+                    ROLLBACK_FAILED=1
+                    continue
+                  fi
+                  if ! docker start "$service"; then
+                    echo "ROLLBACK ERROR: Could not start $service"
+                    ROLLBACK_FAILED=1
+                  fi
+                else
+                  case " $PREVIOUS_SERVICES " in
+                    *" $service "*)
+                      if ! docker start "$service"; then
+                        echo "ROLLBACK ERROR: Could not restart $service"
+                        ROLLBACK_FAILED=1
+                      fi
+                      ;;
+                  esac
                 fi
               done
+              sleep 5
+              for service in $PREVIOUS_SERVICES; do
+                RESTORED_STATE=$(docker inspect --format '{{.State.Status}}' "$service" 2>/dev/null || echo "missing")
+                if [ "$RESTORED_STATE" != "running" ]; then
+                  echo "ROLLBACK ERROR: $service is not running after restore ($RESTORED_STATE)"
+                  ROLLBACK_FAILED=1
+                fi
+              done
+              if [ "$ROLLBACK_FAILED" -ne 0 ]; then
+                echo "CRITICAL: Automatic rollback was incomplete; operator action required"
+                docker ps -a
+              else
+                echo "Previous service set restored."
+              fi
               return "$exit_code"
             }
-            trap 'rollback_on_exit' 0
-
-            # The current service set no longer includes belief-auto.
-            docker stop crypto-belief-auto 2>/dev/null || true
-            docker rm crypto-belief-auto 2>/dev/null || true
+            trap 'rollback_on_exit' EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
 
             echo "Stopping old containers..."
             for service in $PREVIOUS_SERVICES; do
               docker stop "$service"
               docker rename "$service" "$service-previous"
             done
+
+            HEARTBEAT_WATERMARK_JSON=$(docker run --rm \
+              -v /opt/crypto-sentiment/data:/app/data:ro \
+              crypto-sentiment-api:current \
+              python -m crypto_sentiment_crawler.maintenance.deployment_checks \
+                heartbeat-watermark --db /app/data/sentiment.db)
+            HEARTBEAT_WATERMARK=$(printf '%s' "$HEARTBEAT_WATERMARK_JSON" | \
+              python3 -c 'import json, sys; print(json.load(sys.stdin)["heartbeat_id"])')
+            case "$HEARTBEAT_WATERMARK" in
+              ''|*[!0-9]*)
+                echo "ERROR: Invalid heartbeat watermark"
+                exit 1
+                ;;
+            esac
+            CANDIDATE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            echo "Candidate heartbeat watermark: $HEARTBEAT_WATERMARK"
             NEW_CONTAINERS_STARTED=1
 
             # ========== START SERVICES ==========
@@ -428,6 +563,46 @@ jobs:
               crypto-sentiment-crawler:current \
               uv run signals bot
 
+            # Keep rollback protection active until every service is stable and
+            # the new crawler has completed its initial runtime jobs.
+            echo "Waiting for stable services and fresh runtime heartbeats..."
+            RUNTIME_CHECK_OUT=/tmp/panicradar-runtime-check.out
+            RUNTIME_CHECK_ERR=/tmp/panicradar-runtime-check.err
+            RUNTIME_READY=0
+            for i in $(seq 1 360); do
+              CRAWLER_STATE=$(docker inspect --format '{{.State.Status}}' crypto-crawler 2>/dev/null || echo "missing")
+              CRAWLER_RESTARTS=$(docker inspect --format '{{.RestartCount}}' crypto-crawler 2>/dev/null || echo "999")
+              if [ "$CRAWLER_STATE" = "restarting" ] || [ "$CRAWLER_STATE" = "exited" ] || [ "$CRAWLER_STATE" = "dead" ] || [ "$CRAWLER_RESTARTS" -ne 0 ]; then
+                echo "ERROR: Crawler is unstable (state=$CRAWLER_STATE restarts=$CRAWLER_RESTARTS)"
+                docker logs crypto-crawler --tail 100
+                exit 1
+              fi
+              if [ "$CRAWLER_STATE" = "running" ] && docker exec crypto-api \
+                python -m crypto_sentiment_crawler.maintenance.deployment_checks \
+                  runtime \
+                  --db /app/data/sentiment.db \
+                  --state /app/data/orchestrator_state.json \
+                  --since "$CANDIDATE_STARTED_AT" \
+                  --after-heartbeat-id "$HEARTBEAT_WATERMARK" \
+                  >"$RUNTIME_CHECK_OUT" 2>"$RUNTIME_CHECK_ERR"; then
+                cat "$RUNTIME_CHECK_OUT"
+                RUNTIME_READY=1
+                break
+              fi
+              if [ $i -eq 360 ]; then
+                echo "ERROR: Runtime checks did not pass within 12 minutes"
+                cat "$RUNTIME_CHECK_ERR" 2>/dev/null || true
+                docker logs crypto-crawler --tail 100
+                exit 1
+              fi
+              sleep 2
+            done
+            rm -f "$RUNTIME_CHECK_OUT" "$RUNTIME_CHECK_ERR"
+            if [ "$RUNTIME_READY" -ne 1 ]; then
+              echo "ERROR: Runtime readiness was not established"
+              exit 1
+            fi
+
             # ========== POST-DEPLOY CLEANUP ==========
             echo "Cleaning up unused images..."
             docker image prune -af
@@ -446,20 +621,41 @@ jobs:
               exit 1
             fi
 
+            for service in $SERVICES; do
+              SERVICE_STATE=$(docker inspect --format '{{.State.Status}}' "$service")
+              SERVICE_RESTARTS=$(docker inspect --format '{{.RestartCount}}' "$service")
+              if [ "$SERVICE_STATE" != "running" ] || [ "$SERVICE_RESTARTS" -ne 0 ]; then
+                echo "ERROR: $service is unstable (state=$SERVICE_STATE restarts=$SERVICE_RESTARTS)"
+                docker logs "$service" --tail 100 2>/dev/null || true
+                exit 1
+              fi
+            done
+
+            echo "Checking frontend and API through Nginx..."
+            if ! curl -ksf -o /dev/null https://localhost; then
+              echo "ERROR: Frontend HTTPS check failed"
+              docker logs crypto-frontend --tail 100
+              exit 1
+            fi
+            if ! curl -ksf -o /dev/null https://localhost/api/dashboard/summary; then
+              echo "ERROR: API proxy check failed"
+              docker logs crypto-frontend --tail 100
+              docker logs crypto-api --tail 100
+              exit 1
+            fi
+
             ROLLBACK_ACTIVE=0
             for service in $PREVIOUS_SERVICES; do
               docker rm "$service-previous" >/dev/null 2>&1 || true
             done
-            trap - 0
+            docker rm crypto-belief-auto >/dev/null 2>&1 || true
+            trap - EXIT INT TERM
 
             for component in crawler api frontend game-server; do
               docker tag "crypto-sentiment-$component:current" "crypto-sentiment-$component:latest"
             done
 
-            echo "All 5 containers running. Checking frontend..."
-            if ! curl -sf -o /dev/null https://localhost --insecure 2>/dev/null; then
-              echo "WARNING: Frontend HTTPS check failed (may be normal if cert issue)"
-            fi
+            echo "All 5 containers passed runtime and proxy checks."
 
             # ========== SETUP CRON ==========
             chmod +x deploy/backup-db.sh
@@ -473,3 +669,33 @@ jobs:
 
             echo "========== DEPLOYMENT COMPLETE =========="
             docker ps
+
+  promote-latest:
+    name: Promote Verified Images
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote deployed release to latest
+        run: |
+          set -e
+          VERSION="${{ needs.build-and-push.outputs.version }}"
+          for component in crawler api frontend game-server; do
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$component"
+            docker buildx imagetools create \
+              --tag "$IMAGE:latest" \
+              "$IMAGE:$VERSION"
+          done
