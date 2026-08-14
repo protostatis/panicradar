@@ -448,7 +448,8 @@ jobs:
               return "$exit_code"
             }
             trap 'rollback_on_exit' EXIT
-            trap 'exit 130' INT TERM
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
 
             echo "Stopping old containers..."
             for service in $PREVIOUS_SERVICES; do
@@ -469,7 +470,7 @@ jobs:
                 exit 1
                 ;;
             esac
-            CANDIDATE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)
+            CANDIDATE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             echo "Candidate heartbeat watermark: $HEARTBEAT_WATERMARK"
             NEW_CONTAINERS_STARTED=1
 
