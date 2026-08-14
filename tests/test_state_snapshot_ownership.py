@@ -601,20 +601,21 @@ async def test_weight_loader_ignores_stale_snapshot_versions(tmp_path: Path):
             },
             belief_version=2,
         )
-        await save_weights_to_db(
-            db,
-            {
-                "current_source": {
-                    "weight": 0.8,
-                    "accuracy": 0.8,
-                    "is_contrarian": False,
-                    "alpha": 8.0,
-                    "beta": 2.0,
-                    "sample_size": 10,
-                }
-            },
-            belief_version=1,
-        )
+        with pytest.raises(ValueError, match="Refusing stale source-weight version"):
+            await save_weights_to_db(
+                db,
+                {
+                    "current_source": {
+                        "weight": 0.8,
+                        "accuracy": 0.8,
+                        "is_contrarian": False,
+                        "alpha": 8.0,
+                        "beta": 2.0,
+                        "sample_size": 10,
+                    }
+                },
+                belief_version=1,
+            )
     finally:
         await db.close()
 
@@ -661,3 +662,216 @@ async def test_weight_loader_retries_when_state_changes_during_read(tmp_path: Pa
 
     assert loaded["belief_version"] == 2
     assert loaded["weights"] == {"new_source": 0.2}
+
+
+def _weight(value: float) -> dict:
+    return {
+        "weight": value,
+        "accuracy": 0.6,
+        "is_contrarian": False,
+        "alpha": 3.0,
+        "beta": 2.0,
+        "sample_size": 5,
+    }
+
+
+async def test_published_weights_exactly_mirror_a_shrinking_snapshot(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await save_weights_to_db(
+            db,
+            {"keep": _weight(0.2), "remove": _weight(0.8)},
+            belief_version=1,
+        )
+        await save_weights_to_db(db, {"keep": _weight(0.4)}, belief_version=2)
+
+        current = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM source_weights ORDER BY source"
+            )
+        ).fetchall()
+        active = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM active_source_weights ORDER BY source"
+            )
+        ).fetchall()
+        old_snapshot = await (
+            await db.conn.execute(
+                "SELECT source FROM source_weight_snapshots "
+                "WHERE belief_version = 1 ORDER BY source"
+            )
+        ).fetchall()
+    finally:
+        await db.close()
+
+    assert [tuple(row) for row in current] == [("keep", 0.4, 2)]
+    assert [tuple(row) for row in active] == [("keep", 0.4, 2)]
+    assert [row["source"] for row in old_snapshot] == ["keep", "remove"]
+
+
+async def test_equal_version_republish_is_exact_and_idempotent(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await save_weights_to_db(
+            db,
+            {"old": _weight(0.2), "keep": _weight(0.3)},
+            belief_version=4,
+        )
+        await save_weights_to_db(db, {"keep": _weight(0.7)}, belief_version=4)
+
+        current = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM source_weights"
+            )
+        ).fetchall()
+        snapshot = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM source_weight_snapshots "
+                "WHERE belief_version = 4"
+            )
+        ).fetchall()
+        publication = await (
+            await db.conn.execute(
+                "SELECT belief_version FROM belief_publications WHERE id = 1"
+            )
+        ).fetchone()
+    finally:
+        await db.close()
+
+    assert [tuple(row) for row in current] == [("keep", 0.7, 4)]
+    assert [tuple(row) for row in snapshot] == [("keep", 0.7, 4)]
+    assert publication["belief_version"] == 4
+
+
+async def test_stale_weight_publication_is_rejected_without_changes(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await save_weights_to_db(db, {"current": _weight(0.6)}, belief_version=2)
+
+        with pytest.raises(ValueError, match="Refusing stale source-weight version"):
+            await save_weights_to_db(db, {"stale": _weight(0.9)}, belief_version=1)
+
+        current = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM source_weights"
+            )
+        ).fetchall()
+        stale_snapshots = await (
+            await db.conn.execute(
+                "SELECT COUNT(*) FROM source_weight_snapshots WHERE belief_version = 1"
+            )
+        ).fetchone()
+        publication = await (
+            await db.conn.execute(
+                "SELECT belief_version FROM belief_publications WHERE id = 1"
+            )
+        ).fetchone()
+    finally:
+        await db.close()
+
+    assert [tuple(row) for row in current] == [("current", 0.6, 2)]
+    assert stale_snapshots[0] == 0
+    assert publication["belief_version"] == 2
+
+
+async def test_versioned_publish_prunes_legacy_null_weight_rows(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await db.conn.execute(
+            "INSERT INTO source_weights (source, weight, belief_version) VALUES (?, ?, NULL)",
+            ("legacy", 0.9),
+        )
+        await db.conn.commit()
+
+        await save_weights_to_db(db, {"current": _weight(0.5)}, belief_version=1)
+        rows = await (
+            await db.conn.execute(
+                "SELECT source, belief_version FROM source_weights ORDER BY source"
+            )
+        ).fetchall()
+    finally:
+        await db.close()
+
+    assert [tuple(row) for row in rows] == [("current", 1)]
+
+
+async def test_empty_weight_snapshot_is_rejected_without_publication(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await save_weights_to_db(db, {"current": _weight(0.5)}, belief_version=1)
+
+        with pytest.raises(ValueError, match="empty source-weight snapshot"):
+            await save_weights_to_db(db, {}, belief_version=2, publish=False)
+        with pytest.raises(ValueError, match="empty source-weight snapshot"):
+            await save_weights_to_db(db, {}, belief_version=2)
+
+        publication = await (
+            await db.conn.execute(
+                "SELECT belief_version FROM belief_publications WHERE id = 1"
+            )
+        ).fetchone()
+        staged = await (
+            await db.conn.execute(
+                "SELECT COUNT(*) FROM source_weight_snapshots WHERE belief_version = 2"
+            )
+        ).fetchone()
+    finally:
+        await db.close()
+
+    assert publication["belief_version"] == 1
+    assert staged[0] == 0
+
+
+async def test_weight_mirror_failure_rolls_back_snapshot_and_upserts(tmp_path: Path):
+    db = Database(tmp_path / "sentiment.db")
+    await db.connect()
+    try:
+        await save_weights_to_db(
+            db,
+            {"keep": _weight(0.2), "drop_me": _weight(0.8)},
+            belief_version=1,
+        )
+        await db.conn.execute(
+            """
+            CREATE TRIGGER fail_weight_prune
+            BEFORE DELETE ON source_weights
+            WHEN OLD.source = 'drop_me'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected weight-prune failure');
+            END
+            """
+        )
+        await db.conn.commit()
+
+        with pytest.raises(Exception, match="injected weight-prune failure"):
+            await save_weights_to_db(db, {"keep": _weight(0.7)}, belief_version=2)
+
+        current = await (
+            await db.conn.execute(
+                "SELECT source, weight, belief_version FROM source_weights ORDER BY source"
+            )
+        ).fetchall()
+        staged = await (
+            await db.conn.execute(
+                "SELECT COUNT(*) FROM source_weight_snapshots WHERE belief_version = 2"
+            )
+        ).fetchone()
+        publication = await (
+            await db.conn.execute(
+                "SELECT belief_version FROM belief_publications WHERE id = 1"
+            )
+        ).fetchone()
+    finally:
+        await db.close()
+
+    assert [tuple(row) for row in current] == [
+        ("drop_me", 0.8, 1),
+        ("keep", 0.2, 1),
+    ]
+    assert staged[0] == 0
+    assert publication["belief_version"] == 1
