@@ -7,10 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+from ..sqlite_utils import connect_sqlite
+
 
 def get_db_connection(db_path: str = "data/sentiment.db") -> sqlite3.Connection:
     """Get a database connection with row factory."""
-    conn = sqlite3.connect(db_path)
+    conn = connect_sqlite(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 

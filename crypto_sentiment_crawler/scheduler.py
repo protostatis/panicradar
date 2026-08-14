@@ -14,7 +14,7 @@ Runs the following jobs:
 import asyncio
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -29,6 +29,17 @@ from .crawler.sources import get_all_sources
 from .logging_config import logger
 from .orchestrator import CrawlerOrchestrator
 from .storage.db import Database
+
+JOB_STAGGER_SECONDS = {
+    "crawl": 0,
+    "price": 5,
+    "evaluate": 15,
+    "stats": 20,
+    "confounders": 30,
+    "onchain": 45,
+    "belief_update": 75,
+    "fear_greed": 105,
+}
 
 
 def _tracked_job(job):
@@ -394,10 +405,21 @@ class CrawlerScheduler:
 
     def _setup_jobs(self) -> None:
         """Configure scheduled jobs."""
+        anchor = datetime.now(timezone.utc)
+
+        def staggered_interval(seconds: int, job_id: str) -> IntervalTrigger:
+            """Keep recurring SQLite writers from firing on the same second."""
+
+            return IntervalTrigger(
+                seconds=seconds,
+                start_date=anchor
+                + timedelta(seconds=seconds + JOB_STAGGER_SECONDS[job_id]),
+            )
+
         # Crawl job - most frequent
         self.scheduler.add_job(
             self._job_crawl,
-            IntervalTrigger(seconds=self.crawl_interval),
+            staggered_interval(self.crawl_interval, "crawl"),
             id="crawl",
             name="Bayesian Crawl",
             max_instances=1,
@@ -406,7 +428,7 @@ class CrawlerScheduler:
         # Price job
         self.scheduler.add_job(
             self._job_price,
-            IntervalTrigger(seconds=self.price_interval),
+            staggered_interval(self.price_interval, "price"),
             id="price",
             name="Price Collection",
             max_instances=1,
@@ -415,7 +437,7 @@ class CrawlerScheduler:
         # Evaluation job
         self.scheduler.add_job(
             self._job_evaluate,
-            IntervalTrigger(seconds=self.eval_interval),
+            staggered_interval(self.eval_interval, "evaluate"),
             id="evaluate",
             name="Outcome Evaluation",
             max_instances=1,
@@ -424,7 +446,7 @@ class CrawlerScheduler:
         # Fear & Greed job
         self.scheduler.add_job(
             self._job_fear_greed,
-            IntervalTrigger(seconds=self.fear_greed_interval),
+            staggered_interval(self.fear_greed_interval, "fear_greed"),
             id="fear_greed",
             name="Fear & Greed",
             max_instances=1,
@@ -433,7 +455,7 @@ class CrawlerScheduler:
         # Confounder collection job (for causal inference)
         self.scheduler.add_job(
             self._job_confounders,
-            IntervalTrigger(seconds=self.confounder_interval),
+            staggered_interval(self.confounder_interval, "confounders"),
             id="confounders",
             name="Confounder Collection",
             max_instances=1,
@@ -442,7 +464,7 @@ class CrawlerScheduler:
         # On-chain metrics job
         self.scheduler.add_job(
             self._job_onchain,
-            IntervalTrigger(seconds=self.onchain_interval),
+            staggered_interval(self.onchain_interval, "onchain"),
             id="onchain",
             name="On-Chain Metrics",
             max_instances=1,
@@ -451,7 +473,7 @@ class CrawlerScheduler:
         # Belief update + source_weights sync - every 30 minutes
         self.scheduler.add_job(
             self._job_belief_update,
-            IntervalTrigger(seconds=1800),
+            staggered_interval(1800, "belief_update"),
             id="belief_update",
             name="Belief Update & Weights Sync",
             max_instances=1,
@@ -460,7 +482,7 @@ class CrawlerScheduler:
         # Stats job - every 10 minutes
         self.scheduler.add_job(
             self._job_stats,
-            IntervalTrigger(seconds=600),
+            staggered_interval(600, "stats"),
             id="stats",
             name="Statistics",
             max_instances=1,
@@ -557,8 +579,8 @@ async def run_background_scheduler(
 # Quick stats viewer
 async def view_live_stats() -> None:
     """View current stats from the database."""
-    import sqlite3
     import json
+    import sqlite3
 
     db_path = Path("data/sentiment.db")
     state_path = Path("data/orchestrator_state.json")

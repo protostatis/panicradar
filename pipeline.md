@@ -62,7 +62,7 @@ uv run python -m crypto_sentiment_crawler.taskmanager status
 ### Single Commands
 
 ```bash
-# Run inference (price prediction)
+# Run the experimental inference diagnostic (reads live user sentiment)
 uv run python -m crypto_sentiment_crawler.inference
 
 # Run signal check once
@@ -365,7 +365,7 @@ sqlite3 data/sentiment.db "SELECT source, weight, accuracy, is_contrarian FROM s
 |------|---------|
 | `scheduler.py` | Background job scheduler |
 | `orchestrator.py` | Integration layer |
-| `inference.py` | Price prediction with dynamic weights |
+| `inference.py` | Experimental live-data inference diagnostic |
 | `taskmanager.py` | Task management CLI |
 | `bayesian/bandit.py` | Thompson Sampling |
 | `bayesian/beliefs.py` | Source belief model |

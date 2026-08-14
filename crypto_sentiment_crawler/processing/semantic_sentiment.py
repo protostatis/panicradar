@@ -608,26 +608,18 @@ class SemanticSentimentAnalyzer:
             # Neither provider, backend, nor model_name given — read settings.
             from ..config import settings
 
-            cfg_backend = settings.embedding_backend or "local"
+            cfg_backend = (settings.embedding_backend or "local").lower()
             cfg_model = settings.embedding_model or "all-MiniLM-L6-v2"
 
             if cfg_backend == "openrouter":
-                try:
-                    self.provider = OpenRouterEmbeddingProvider(
-                        model=cfg_model,
-                        api_key=settings.openrouter_api_key,
-                    )
-                except RuntimeError:
-                    if settings.embedding_require_openrouter:
-                        raise
-                    logger.warning(
-                        "OpenRouter unavailable; falling back to local MiniLM"
-                    )
-                    self.provider = LocalSentenceTransformerProvider(
-                        model_name="all-MiniLM-L6-v2"
-                    )
-            else:
+                self.provider = OpenRouterEmbeddingProvider(
+                    model=cfg_model,
+                    api_key=settings.openrouter_api_key,
+                )
+            elif cfg_backend == "local":
                 self.provider = LocalSentenceTransformerProvider(model_name=cfg_model)
+            else:
+                raise ValueError(f"Unknown embedding backend: {cfg_backend!r}")
         logger.info(
             "SemanticSentimentAnalyzer using provider=%s dim=%d",
             type(self.provider).__name__,
@@ -681,7 +673,10 @@ class SemanticSentimentAnalyzer:
         """
         # Encode input text
         embedding = self.provider.encode_single(text, normalize=True)
+        return self._analyze_embedding(embedding, method)
 
+    def _analyze_embedding(self, embedding: np.ndarray, method: str) -> dict:
+        """Analyze one normalized embedding with the selected scoring method."""
         if method == "centroid":
             bullish_sim = self._cosine_similarity(embedding, self.bullish_centroid)
             bearish_sim = self._cosine_similarity(embedding, self.bearish_centroid)
@@ -733,30 +728,10 @@ class SemanticSentimentAnalyzer:
         """Get sentiment score from -1 (bearish) to 1 (bullish)."""
         return self.analyze(text)["score"]
 
-    def analyze_batch(self, texts: list[str]) -> list[dict]:
-        """Analyze multiple texts efficiently."""
+    def analyze_batch(self, texts: list[str], method: str = "centroid") -> list[dict]:
+        """Analyze multiple texts in one provider request."""
         embeddings = self.provider.encode(texts, normalize=True)
-
-        results = []
-        for embedding in embeddings:
-            bullish_sim = self._cosine_similarity(embedding, self.bullish_centroid)
-            bearish_sim = self._cosine_similarity(embedding, self.bearish_centroid)
-            neutral_sim = self._cosine_similarity(embedding, self.neutral_centroid)
-
-            raw_score = bullish_sim - bearish_sim
-            score = np.tanh(raw_score * 3)
-            sentiment_strength = max(bullish_sim, bearish_sim) - neutral_sim
-            confidence = max(0.0, min(1.0, sentiment_strength * 2 + 0.5))
-
-            results.append({
-                "score": float(score),
-                "bullish_sim": float(bullish_sim),
-                "bearish_sim": float(bearish_sim),
-                "neutral_sim": float(neutral_sim),
-                "confidence": float(confidence),
-            })
-
-        return results
+        return [self._analyze_embedding(embedding, method) for embedding in embeddings]
 
     def get_scores_batch(self, texts: list[str]) -> list[float]:
         """Get sentiment scores for multiple texts."""

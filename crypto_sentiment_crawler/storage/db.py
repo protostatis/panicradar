@@ -1,15 +1,20 @@
 """Database operations using aiosqlite."""
 
+import asyncio
 import hashlib
 import json
+import sqlite3
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import AsyncIterator
 
 import aiosqlite
 
 from ..config import settings
 from ..logging_config import logger
+from ..sqlite_utils import SQLITE_BUSY_TIMEOUT_MS, SQLITE_BUSY_TIMEOUT_SECONDS
 from .migrations import run_all_migrations
 from .models import OnChainMetric, PriceData, SentimentRaw
 
@@ -211,12 +216,17 @@ class Database:
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or settings.db_path
         self._connection: aiosqlite.Connection | None = None
+        self._write_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Connect to the database and initialize schema."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = await aiosqlite.connect(self.db_path)
+        self._connection = await aiosqlite.connect(
+            self.db_path,
+            timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
+        )
         self._connection.row_factory = aiosqlite.Row
+        await self._connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
         await self._connection.executescript(SCHEMA)
         await self._connection.commit()
 
@@ -225,8 +235,13 @@ class Database:
             try:
                 await self._connection.execute(migration)
                 await self._connection.commit()
+            except sqlite3.OperationalError as exc:
+                await self._connection.rollback()
+                if "duplicate column name" not in str(exc).lower():
+                    raise
             except Exception:
-                pass  # Column already exists
+                await self._connection.rollback()
+                raise
 
         # Run data migrations (one-time cleanups, etc.)
         await run_all_migrations(self._connection)
@@ -282,23 +297,23 @@ class Database:
             last_error_at = now
             last_error_message = error_message
 
-        await self.conn.execute(
-            """
-            INSERT INTO pipeline_heartbeats (
-                component, last_success_at, last_error_at, last_error_message,
-                freshness_seconds, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                component,
-                last_success_at.isoformat() if last_success_at else None,
-                last_error_at.isoformat() if last_error_at else None,
-                last_error_message,
-                freshness_seconds,
-                json.dumps(metadata) if metadata is not None else None,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO pipeline_heartbeats (
+                    component, last_success_at, last_error_at, last_error_message,
+                    freshness_seconds, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    component,
+                    last_success_at.isoformat() if last_success_at else None,
+                    last_error_at.isoformat() if last_error_at else None,
+                    last_error_message,
+                    freshness_seconds,
+                    json.dumps(metadata) if metadata is not None else None,
+                ),
+            )
 
     async def get_latest_heartbeat(self, component: str) -> dict | None:
         """Return the most recent heartbeat for one component."""
@@ -337,6 +352,21 @@ class Database:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._connection
 
+    @asynccontextmanager
+    async def write_transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Serialize writes and guarantee rollback after a failed transaction."""
+
+        async with self._write_lock:
+            try:
+                yield self.conn
+                await self.conn.commit()
+            except BaseException:
+                try:
+                    await self.conn.rollback()
+                except Exception:
+                    logger.exception("Failed to roll back SQLite transaction")
+                raise
+
     def _compute_content_hash(self, source: str, raw_data: dict) -> str:
         """Compute a hash for deduplication based on source and URL/title."""
         # Use URL if available, otherwise use source + title
@@ -359,57 +389,58 @@ class Database:
             return 0  # Skip duplicate
 
         source = data.source.lower()
-        cursor = await self.conn.execute(
-            """
-            INSERT INTO sentiment_raw (timestamp, source, coin, raw_data, content_hash)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                data.timestamp.isoformat(),
-                source,
-                data.coin,
-                json.dumps(data.raw_data),
-                content_hash,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO sentiment_raw (timestamp, source, coin, raw_data, content_hash)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    data.timestamp.isoformat(),
+                    source,
+                    data.coin,
+                    json.dumps(data.raw_data),
+                    content_hash,
+                ),
+            )
         return cursor.lastrowid or 0
 
     async def insert_price_data(self, data: PriceData) -> int:
         """Insert price data."""
-        cursor = await self.conn.execute(
-            """
-            INSERT INTO price_data (timestamp, coin, price_usd, volume_24h, market_cap, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                data.timestamp.isoformat(),
-                data.coin,
-                data.price_usd,
-                data.volume_24h,
-                data.market_cap,
-                data.source,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO price_data (
+                    timestamp, coin, price_usd, volume_24h, market_cap, source
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data.timestamp.isoformat(),
+                    data.coin,
+                    data.price_usd,
+                    data.volume_24h,
+                    data.market_cap,
+                    data.source,
+                ),
+            )
         return cursor.lastrowid or 0
 
     async def insert_on_chain_metric(self, data: OnChainMetric) -> int:
         """Insert on-chain metric."""
-        cursor = await self.conn.execute(
-            """
-            INSERT INTO on_chain_metrics (timestamp, coin, metric_type, value, metadata)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                data.timestamp.isoformat(),
-                data.coin,
-                data.metric_type,
-                data.value,
-                json.dumps(data.metadata) if data.metadata else None,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO on_chain_metrics (timestamp, coin, metric_type, value, metadata)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    data.timestamp.isoformat(),
+                    data.coin,
+                    data.metric_type,
+                    data.value,
+                    json.dumps(data.metadata) if data.metadata else None,
+                ),
+            )
         return cursor.lastrowid or 0
 
     async def insert_sentiment_score(self, data) -> int:
@@ -463,29 +494,29 @@ class Database:
 
         Returns the row id.
         """
-        cursor = await self.conn.execute(
-            """
-            INSERT INTO prediction_outcomes
-                (source, signal_timestamp, target_timestamp, calibrated_score,
-                 price_before, price_before_timestamp, evaluator_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source, signal_timestamp, evaluator_version) DO UPDATE SET
-                target_timestamp = excluded.target_timestamp,
-                calibrated_score = excluded.calibrated_score,
-                price_before = excluded.price_before,
-                price_before_timestamp = excluded.price_before_timestamp
-            """,
-            (
-                source.lower(),
-                signal_timestamp.isoformat(),
-                target_timestamp.isoformat(),
-                calibrated_score,
-                price_before,
-                price_before_timestamp.isoformat() if price_before_timestamp else None,
-                evaluator_version,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO prediction_outcomes
+                    (source, signal_timestamp, target_timestamp, calibrated_score,
+                     price_before, price_before_timestamp, evaluator_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, signal_timestamp, evaluator_version) DO UPDATE SET
+                    target_timestamp = excluded.target_timestamp,
+                    calibrated_score = excluded.calibrated_score,
+                    price_before = excluded.price_before,
+                    price_before_timestamp = excluded.price_before_timestamp
+                """,
+                (
+                    source.lower(),
+                    signal_timestamp.isoformat(),
+                    target_timestamp.isoformat(),
+                    calibrated_score,
+                    price_before,
+                    price_before_timestamp.isoformat() if price_before_timestamp else None,
+                    evaluator_version,
+                ),
+            )
         return cursor.lastrowid or 0
 
     async def claim_pending_outcomes(
@@ -501,32 +532,32 @@ class Database:
         """
         now = now or datetime.now(timezone.utc)
         claim_token = f"claim:{now.isoformat()}:{uuid.uuid4().hex}"
-        await self.conn.execute(
-            """
-            UPDATE prediction_outcomes
-            SET evaluated_at = ?
-            WHERE target_timestamp < ?
-              AND price_after IS NULL
-              AND abstained = FALSE
-              AND evaluated_at IS NULL
-            """,
-            (claim_token, now.isoformat()),
-        )
+        async with self.write_transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE prediction_outcomes
+                SET evaluated_at = ?
+                WHERE target_timestamp < ?
+                  AND price_after IS NULL
+                  AND abstained = FALSE
+                  AND evaluated_at IS NULL
+                """,
+                (claim_token, now.isoformat()),
+            )
 
-        # Fetch only rows claimed by this worker. A generic "claiming" marker
-        # would allow a concurrent worker to process someone else's outcomes.
-        cursor = await self.conn.execute(
-            """
-            SELECT id, source, signal_timestamp, target_timestamp,
-                   calibrated_score, price_before, price_before_timestamp
-            FROM prediction_outcomes
-            WHERE evaluated_at = ?
-            ORDER BY signal_timestamp ASC
-            """,
-            (claim_token,),
-        )
-        rows = await cursor.fetchall()
-        await self.conn.commit()
+            # Fetch only rows claimed by this worker. A generic "claiming" marker
+            # would allow a concurrent worker to process someone else's outcomes.
+            cursor = await conn.execute(
+                """
+                SELECT id, source, signal_timestamp, target_timestamp,
+                       calibrated_score, price_before, price_before_timestamp
+                FROM prediction_outcomes
+                WHERE evaluated_at = ?
+                ORDER BY signal_timestamp ASC
+                """,
+                (claim_token,),
+            )
+            rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
     async def mark_outcome_evaluated(
@@ -539,28 +570,28 @@ class Database:
         price_gap_seconds: float | None = None,
     ) -> None:
         """Update an outcome row with evaluation results."""
-        await self.conn.execute(
-            """
-            UPDATE prediction_outcomes
-            SET price_after = ?,
-                price_after_timestamp = ?,
-                correct = ?,
-                direction = ?,
-                price_gap_seconds = ?,
-                evaluated_at = ?
-            WHERE id = ?
-            """,
-            (
-                price_after,
-                price_after_timestamp.isoformat(),
-                1 if correct else 0,
-                direction,
-                price_gap_seconds,
-                datetime.now(timezone.utc).isoformat(),
-                outcome_id,
-            ),
-        )
-        await self.conn.commit()
+        async with self.write_transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE prediction_outcomes
+                SET price_after = ?,
+                    price_after_timestamp = ?,
+                    correct = ?,
+                    direction = ?,
+                    price_gap_seconds = ?,
+                    evaluated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    price_after,
+                    price_after_timestamp.isoformat(),
+                    1 if correct else 0,
+                    direction,
+                    price_gap_seconds,
+                    datetime.now(timezone.utc).isoformat(),
+                    outcome_id,
+                ),
+            )
 
     async def get_source_performance(
         self, source: str, days: int = 30

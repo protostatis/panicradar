@@ -8,8 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 
 from ..config import settings
-
 from .affiliates import get_affiliates_for_context
+from .news_schemas import TrendingResponse
 from .queries import (
     compute_beta_std,
     get_all_sources_sentiment_history,
@@ -27,12 +27,13 @@ from .queries import (
     get_sentiment_history,
     get_source_sentiment_history,
     get_source_similarity,
-    get_source_type_label as get_source_type_label_query,
     get_source_weights,
     load_bayesian_beliefs,
     merge_history_data,
 )
-from .news_schemas import TrendingResponse
+from .queries import (
+    get_source_type_label as get_source_type_label_query,
+)
 from .schemas import (
     AffiliateLink,
     AffiliateResponse,
@@ -52,6 +53,10 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
+
+# These handlers intentionally use ``def`` rather than ``async def``. FastAPI
+# runs them in its thread pool so synchronous sqlite3 queries cannot block the
+# server event loop while waiting on another writer.
 
 DB_PATH = os.environ.get("DB_PATH", "data/sentiment.db")
 STATE_PATH = os.environ.get("STATE_PATH", "data/orchestrator_state.json")
@@ -108,7 +113,7 @@ def get_source_type_label(accuracy: float | None, is_contrarian: bool) -> str:
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummary)
-async def get_dashboard_summary():
+def get_dashboard_summary():
     """
     Get current dashboard summary metrics.
 
@@ -153,7 +158,7 @@ async def get_dashboard_summary():
 
 
 @router.get("/dashboard/history", response_model=DashboardHistory)
-async def get_dashboard_history(
+def get_dashboard_history(
     days: int = Query(30, ge=1, le=90, description="Number of days of history"),
 ):
     """
@@ -195,7 +200,7 @@ async def get_dashboard_history(
 
 
 @router.get("/dashboard/sources", response_model=SourceRankings)
-async def get_source_rankings():
+def get_source_rankings():
     """
     Get source accuracy rankings.
 
@@ -227,7 +232,7 @@ async def get_source_rankings():
 
 
 @router.get("/affiliates", response_model=AffiliateResponse)
-async def get_affiliates():
+def get_affiliates():
     """
     Get contextual affiliate recommendations.
 
@@ -251,7 +256,7 @@ async def get_affiliates():
 
 
 @router.get("/dashboard/beliefs", response_model=BeliefsResponse)
-async def get_bayesian_beliefs():
+def get_bayesian_beliefs():
     """
     Get current Bayesian beliefs from the model.
 
@@ -340,7 +345,7 @@ async def get_bayesian_beliefs():
 
 
 @router.get("/dashboard/beliefs/similarity")
-async def get_beliefs_similarity():
+def get_beliefs_similarity():
     """
     Get source similarity data computed from GP feature vectors.
 
@@ -355,7 +360,7 @@ async def get_beliefs_similarity():
 
 
 @router.get("/dashboard/sources/{source}/history", response_model=SourceSentimentHistory)
-async def get_source_history(
+def get_source_history(
     source: str,
     days: int = Query(30, ge=1, le=90, description="Number of days of history"),
 ):
@@ -395,7 +400,7 @@ async def get_source_history(
 
 
 @router.get("/dashboard/sources/history/all", response_model=AllSourcesHistory)
-async def get_all_sources_history(
+def get_all_sources_history(
     days: int = Query(30, ge=1, le=90, description="Number of days of history"),
 ):
     """
@@ -434,7 +439,7 @@ async def get_all_sources_history(
 
 
 @router.get("/dashboard/sources/list")
-async def get_sources_list():
+def get_sources_list():
     """
     Get list of all available sources with sentiment data.
 
@@ -456,7 +461,7 @@ STABLECOINS = {
 
 
 @router.get("/dashboard/coins")
-async def get_coins_list():
+def get_coins_list():
     """
     Get tracked coins sorted by latest market cap (descending).
     Stablecoins are excluded. Guarantees at least 6 coins by
@@ -501,7 +506,7 @@ async def get_coins_list():
 
 
 @router.get("/dashboard/coins/{coin}", response_model=CoinPrice)
-async def get_coin_price(coin: str):
+def get_coin_price(coin: str):
     """
     Get price data for a specific coin including 24h, 7d, and 30d changes.
     """
@@ -524,7 +529,7 @@ async def get_coin_price(coin: str):
 
 
 @router.get("/dashboard/coins/{coin}/history")
-async def get_coin_price_history(
+def get_coin_price_history(
     coin: str,
     days: int = Query(30, ge=1, le=90, description="Number of days of history"),
 ):
@@ -551,7 +556,7 @@ async def get_coin_price_history(
 
 
 @router.get("/dashboard/posts/recent", response_model=RecentPostsResponse)
-async def get_recent_posts(
+def get_recent_posts(
     limit: int = Query(20, ge=1, le=100, description="Number of posts to return"),
     source: str | None = Query(None, description="Filter by source"),
 ):
@@ -624,7 +629,7 @@ async def get_recent_posts(
 
 
 @router.get("/dashboard/sentiment/daily")
-async def get_daily_sentiment(
+def get_daily_sentiment(
     days: int = Query(30, ge=1, le=90, description="Number of days of history"),
     source: str | None = Query(None, description="Filter by source"),
 ):
@@ -647,7 +652,7 @@ async def get_daily_sentiment(
 
 
 @router.get("/dashboard/panic-score")
-async def get_panic_score():
+def get_panic_score():
     """
     Get Reddit-based panic score for the last 24 hours.
 
@@ -662,7 +667,7 @@ async def get_panic_score():
 
 
 @router.get("/ops/health")
-async def get_ops_health():
+def get_ops_health():
     """
     Pipeline health monitoring endpoint.
 
@@ -825,7 +830,7 @@ async def get_ops_health():
 
 
 @router.get("/news/trending", response_model=TrendingResponse)
-async def get_trending_signals():
+def get_trending_signals():
     """
     Get today's trending signals and market intelligence.
 

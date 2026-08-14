@@ -6,16 +6,16 @@ Orchestrates all confounder collectors and stores data.
 
 import asyncio
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .news import NewsCollector
-from .macro import MacroCollector
-from .regime import RegimeCollector
-from .models import ConfounderSnapshot
 from ..logging_config import logger
+from ..sqlite_utils import sqlite_transaction
+from .macro import MacroCollector
+from .models import ConfounderSnapshot
+from .news import NewsCollector
+from .regime import RegimeCollector
 
 
 class ConfounderCollector:
@@ -56,9 +56,9 @@ class ConfounderCollector:
         """Initialize database table for confounders."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS confounders (
+        with sqlite_transaction(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS confounders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
 
@@ -101,14 +101,12 @@ class ConfounderCollector:
                 collection_errors TEXT,
 
                 UNIQUE(timestamp)
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_confounders_timestamp
-            ON confounders(timestamp)
-        """)
-        conn.commit()
-        conn.close()
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_confounders_timestamp
+                ON confounders(timestamp)
+            """)
 
     async def collect_all(self) -> ConfounderSnapshot:
         """
@@ -182,9 +180,7 @@ class ConfounderCollector:
 
     def store_snapshot(self, snapshot: ConfounderSnapshot) -> None:
         """Store a confounder snapshot to database."""
-        conn = sqlite3.connect(self.db_path)
-
-        try:
+        with sqlite_transaction(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO confounders (
                     timestamp,
@@ -226,14 +222,11 @@ class ConfounderCollector:
                 snapshot.reddit_avg_score,
                 json.dumps(snapshot.collection_errors) if snapshot.collection_errors else None,
             ))
-            conn.commit()
-        finally:
-            conn.close()
 
     async def collect_and_store(self) -> ConfounderSnapshot:
         """Collect all confounders and store to database."""
         snapshot = await self.collect_all()
-        self.store_snapshot(snapshot)
+        await asyncio.to_thread(self.store_snapshot, snapshot)
 
         vix_str = f"{snapshot.vix_level:.1f}" if snapshot.vix_level else "N/A"
         logger.info(
