@@ -1,7 +1,8 @@
-"""
-Inference module: Analyze sentiment data and predict price movements.
+"""Experimental price-direction diagnostic using current sentiment data.
 
-Uses collected sentiment signals to infer price direction for the next 4 hours.
+This module is not the production signal path. It reads the live
+``user_sentiment_scores`` and ``confounders`` tables and refuses to emit a
+directional result when fresh user sentiment is unavailable.
 """
 
 import json
@@ -14,8 +15,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .logging_config import logger
 from .analysis.source_weights import load_weights_from_db_sync
+from .logging_config import logger
+from .sqlite_utils import connect_sqlite
 
 
 @dataclass
@@ -122,7 +124,7 @@ class SentimentAnalyzer:
 
     def get_connection(self) -> sqlite3.Connection:
         """Get database connection."""
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_sqlite(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -134,24 +136,62 @@ class SentimentAnalyzer:
         """Get recent sentiment scores."""
         conn = self.get_connection()
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=hours)).isoformat()
+        fear_greed_cutoff = (now - timedelta(hours=max(hours, 24))).isoformat()
 
-        # Get recent sentiment, but always include fear_greed (may be older)
-        query = """
-            SELECT source, coin, score, confidence, sample_size, timestamp
-            FROM sentiment_scores
-            WHERE (timestamp >= ? OR source = 'fear_greed')
-        """
+        coin_filter = ""
         params = [cutoff]
-
         if coin:
-            query += " AND (coin = ? OR coin = 'MARKET')"
+            coin_filter = "AND (uss.coin = ? OR uss.coin IS NULL OR uss.coin = 'MARKET')"
             params.append(coin)
+        params.append(fear_greed_cutoff)
 
-        query += " ORDER BY timestamp DESC"
+        query = f"""
+            WITH recent_user_sentiment AS (
+                SELECT
+                    up.source AS source,
+                    COALESCE(uss.coin, 'MARKET') AS coin,
+                    uss.final_score AS score,
+                    1.0 AS confidence,
+                    MAX(
+                        1,
+                        COALESCE(uss.segments_scored, 0)
+                            + CASE WHEN uss.title_score IS NULL THEN 0 ELSE 1 END
+                    ) AS sample_size,
+                    uss.timestamp AS timestamp
+                FROM user_sentiment_scores uss
+                JOIN user_profiles up ON up.user_id = uss.user_id
+                WHERE uss.timestamp >= ?
+                  AND uss.final_score IS NOT NULL
+                  {coin_filter}
+            ),
+            latest_fear_greed AS (
+                SELECT
+                    'fear_greed' AS source,
+                    'MARKET' AS coin,
+                    (fear_greed_index - 50.0) / 50.0 AS score,
+                    1.0 AS confidence,
+                    1 AS sample_size,
+                    timestamp
+                FROM confounders
+                WHERE fear_greed_index IS NOT NULL
+                  AND timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            )
+            SELECT source, coin, score, confidence, sample_size, timestamp
+            FROM recent_user_sentiment
+            UNION ALL
+            SELECT source, coin, score, confidence, sample_size, timestamp
+            FROM latest_fear_greed
+            ORDER BY timestamp DESC
+        """
 
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        try:
+            df = pd.read_sql_query(query, conn, params=params)
+        finally:
+            conn.close()
 
         if not df.empty:
             df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
@@ -161,12 +201,19 @@ class SentimentAnalyzer:
     def get_latest_fear_greed(self) -> float:
         """Get the most recent Fear & Greed score."""
         conn = self.get_connection()
-        row = conn.execute("""
-            SELECT score FROM sentiment_scores
-            WHERE source = 'fear_greed'
-            ORDER BY timestamp DESC LIMIT 1
-        """).fetchone()
-        conn.close()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        try:
+            row = conn.execute(
+                """
+                SELECT (fear_greed_index - 50.0) / 50.0 AS score
+                FROM confounders
+                WHERE fear_greed_index IS NOT NULL AND timestamp >= ?
+                ORDER BY timestamp DESC LIMIT 1
+                """,
+                (cutoff,),
+            ).fetchone()
+        finally:
+            conn.close()
         return row[0] if row else 0.0
 
     def get_recent_prices(self, hours: int = 4, coin: str = "BTC") -> pd.DataFrame:
@@ -182,8 +229,10 @@ class SentimentAnalyzer:
             ORDER BY timestamp ASC
         """
 
-        df = pd.read_sql_query(query, conn, params=[coin, cutoff])
-        conn.close()
+        try:
+            df = pd.read_sql_query(query, conn, params=[coin, cutoff])
+        finally:
+            conn.close()
 
         if not df.empty:
             df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
@@ -213,6 +262,7 @@ class SentimentAnalyzer:
                 "confidence": 0.0,
                 "signal_strength": 0.0,
                 "n_sources": 0,
+                "n_social_sources": 0,
             }
 
         # Group by source, take most recent or average
@@ -262,6 +312,7 @@ class SentimentAnalyzer:
         confidence = min(1.0, (n_sources / 5) * 0.5 + agreement * 0.5)
 
         n_contrarian = sum(1 for d in by_source.values() if d.get("is_contrarian"))
+        n_social_sources = sum(1 for source in by_source if source != "fear_greed")
 
         return {
             "composite_score": composite,
@@ -269,6 +320,7 @@ class SentimentAnalyzer:
             "confidence": confidence,
             "signal_strength": abs(composite),
             "n_sources": n_sources,
+            "n_social_sources": n_social_sources,
             "n_contrarian": n_contrarian,
         }
 
@@ -343,6 +395,27 @@ class PricePredictor:
             coin=coin,
         )
 
+        if sentiment["n_social_sources"] == 0:
+            return PredictionResult(
+                coin=coin,
+                current_price=momentum["current_price"],
+                predicted_direction="neutral",
+                confidence=0.0,
+                sentiment_score=sentiment["composite_score"],
+                signals={
+                    "sentiment": sentiment,
+                    "momentum": momentum,
+                    "adjusted_score": 0.0,
+                    "contrarian_boost": 0.0,
+                    "data_source": "user_sentiment_scores",
+                },
+                reasoning=(
+                    "No fresh user sentiment is available for this lookback; "
+                    "directional inference was suppressed."
+                ),
+                timestamp=datetime.now(timezone.utc),
+            )
+
         # Build prediction
         composite = sentiment["composite_score"]
         confidence = sentiment["confidence"]
@@ -416,6 +489,7 @@ class PricePredictor:
                 "momentum": momentum,
                 "adjusted_score": adjusted_score,
                 "contrarian_boost": contrarian_boost,
+                "data_source": "user_sentiment_scores",
             },
             reasoning=reasoning,
             timestamp=datetime.now(timezone.utc),
@@ -439,7 +513,8 @@ def run_inference(lookback_hours: int = 4, horizon_hours: int = 4) -> dict:
     predictor = PricePredictor()
 
     print("=" * 70)
-    print("CRYPTO SENTIMENT INFERENCE")
+    print("EXPERIMENTAL CRYPTO SENTIMENT INFERENCE")
+    print("Diagnostic only; production alerts use the signal service")
     print(f"Lookback: {lookback_hours}h | Prediction Horizon: {horizon_hours}h")
     print("=" * 70)
 

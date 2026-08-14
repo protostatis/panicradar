@@ -74,7 +74,7 @@ uv run python -m crypto_sentiment_crawler.taskmanager start signals
 # Check status
 uv run python -m crypto_sentiment_crawler.taskmanager status
 
-# Run inference (price prediction)
+# Run the experimental inference diagnostic (not the production signal path)
 uv run python -m crypto_sentiment_crawler.inference
 
 # Run single signal check
@@ -364,7 +364,7 @@ crypto_sentiment_crawler/
     ├── main.py              # Entry point
     ├── taskmanager.py       # Task manager CLI
     ├── orchestrator.py      # Integration layer
-    ├── inference.py         # Price prediction
+    ├── inference.py         # Experimental live-data inference diagnostic
     │
     ├── bayesian/            # Decision layer
     │   ├── beliefs.py       # SourceBelief model

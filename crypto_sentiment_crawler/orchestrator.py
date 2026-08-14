@@ -792,7 +792,8 @@ class CrawlerOrchestrator:
         coin = content.coins_mentioned[0] if content.coins_mentioned else None
         post_timestamp = content.published_at or content.crawled_at
         try:
-            post_score = self.user_scorer.score_post(
+            post_score = await asyncio.to_thread(
+                self.user_scorer.score_post,
                 raw_data=raw_data,
                 raw_id=raw_id,
                 timestamp=post_timestamp.isoformat(),
@@ -800,15 +801,24 @@ class CrawlerOrchestrator:
                 coin=coin,
             )
             if post_score:
-                score_id = self.user_scorer.save_post_score(post_score)
+                score_id = await asyncio.to_thread(
+                    self.user_scorer.save_post_score,
+                    post_score,
+                )
                 # Write score back to content for later belief evaluation
                 content.sentiment_score = post_score.final_score
                 if score_id > 0:
                     # Update user profile
-                    user_id = self.user_scorer.get_or_create_user(
-                        post_score.username, post_score.source, post_score.timestamp
+                    user_id = await asyncio.to_thread(
+                        self.user_scorer.get_or_create_user,
+                        post_score.username,
+                        post_score.source,
+                        post_score.timestamp,
                     )
-                    self.user_scorer.update_user_profile(user_id)
+                    await asyncio.to_thread(
+                        self.user_scorer.update_user_profile,
+                        user_id,
+                    )
                     logger.debug(
                         f"User scored: {content.source} final={post_score.final_score:.3f} "
                         f"fear={post_score.fear_index:.2f} euphoria={post_score.euphoria_index:.2f}"

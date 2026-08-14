@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..logging_config import logger
+from ..sqlite_utils import connect_sqlite
 from ..storage.db import Database
 
 
@@ -288,16 +289,16 @@ def load_weights_from_db_sync(
             logger.warning("Could not read belief version from %s", resolved_state_path)
             return None
 
-    conn = sqlite3.connect(db_path)
+    conn = connect_sqlite(db_path)
     conn.row_factory = sqlite3.Row
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(source_weights)")}
-    has_belief_version = "belief_version" in columns
-    snapshot_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(source_weight_snapshots)")
-    }
-    has_snapshots = "belief_version" in snapshot_columns
-
     try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(source_weights)")}
+        has_belief_version = "belief_version" in columns
+        snapshot_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(source_weight_snapshots)")
+        }
+        has_snapshots = "belief_version" in snapshot_columns
+
         for _ in range(2):
             expected_version = read_belief_version()
             if expected_version is not None and has_snapshots:

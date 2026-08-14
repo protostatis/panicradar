@@ -11,6 +11,8 @@ from typing import Optional
 
 import numpy as np
 
+from ..sqlite_utils import connect_sqlite, sqlite_transaction
+
 logger = logging.getLogger("crypto_sentiment")
 
 # Minimum human comments required for a post to be saved/scored
@@ -242,7 +244,7 @@ class UserSentimentScorer:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection."""
-        return sqlite3.connect(self.db_path)
+        return connect_sqlite(self.db_path)
 
     def _split_into_segments(self, text: str) -> list[str]:
         """Split text into meaningful segments."""
@@ -407,14 +409,18 @@ class UserSentimentScorer:
             logger.debug(f"Skipping post {raw_id}: only {human_comment_count} human comments (min: {min_human_comments})")
             return None
 
-        # Score title (always included)
-        title_score = None
-        if title and len(title.strip()) >= 10:
-            result = self.analyzer.analyze(title, method="asymmetric")
-            title_score = result['score']
-
         # Split and categorize segments
-        segments = self._split_into_segments(content)
+        segments = self._split_into_segments(content)[:20]
+        score_title = bool(title and len(title.strip()) >= 10)
+        texts_to_score = ([title] if score_title else []) + segments
+        results = self.analyzer.analyze_batch(texts_to_score, method="asymmetric")
+        result_index = 0
+
+        title_score = None
+        if score_title:
+            title_score = results[result_index]["score"]
+            result_index += 1
+
         segment_objs = []
 
         # Counters for multi-dimensional signals
@@ -426,10 +432,9 @@ class UserSentimentScorer:
         # Scores for filtered sentiment (STANDARD + TRUE_BEARISH only)
         scored_segment_values = []
 
-        for seg in segments[:20]:  # Limit segments
-            # Get semantic score
-            result = self.analyzer.analyze(seg, method="asymmetric")
-            score = result['score']
+        for seg in segments:
+            score = results[result_index]["score"]
+            result_index += 1
 
             # Categorize segment
             category = categorize_segment(seg)
@@ -508,71 +513,72 @@ class UserSentimentScorer:
     def get_or_create_user(self, username: str, source: str, timestamp: str) -> int:
         """Get existing user_id or create new user profile."""
         source = source.lower()
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with sqlite_transaction(self.db_path) as conn:
+            cursor = conn.cursor()
 
-        # Try to get existing user
-        cursor.execute(
-            "SELECT user_id FROM user_profiles WHERE username = ? AND source = ?",
-            (username, source)
-        )
-        row = cursor.fetchone()
-
-        if row:
-            user_id = row[0]
-            # Update last_seen
+            # Try to get existing user
             cursor.execute(
-                "UPDATE user_profiles SET last_seen = ? WHERE user_id = ?",
-                (timestamp, user_id)
+                "SELECT user_id FROM user_profiles WHERE username = ? AND source = ?",
+                (username, source),
             )
-        else:
-            # Create new user
-            cursor.execute(
-                """INSERT INTO user_profiles
-                   (username, source, first_seen, last_seen, total_posts, credibility_weight)
-                   VALUES (?, ?, ?, ?, 0, 1.0)""",
-                (username, source, timestamp, timestamp)
-            )
-            user_id = cursor.lastrowid
+            row = cursor.fetchone()
 
-        conn.commit()
-        conn.close()
-        return user_id
+            if row:
+                user_id = row[0]
+                # Update last_seen
+                cursor.execute(
+                    "UPDATE user_profiles SET last_seen = ? WHERE user_id = ?",
+                    (timestamp, user_id),
+                )
+            else:
+                # Create new user
+                cursor.execute(
+                    """INSERT INTO user_profiles
+                       (username, source, first_seen, last_seen, total_posts,
+                        credibility_weight)
+                       VALUES (?, ?, ?, ?, 0, 1.0)""",
+                    (username, source, timestamp, timestamp),
+                )
+                user_id = cursor.lastrowid
+
+        if user_id is None:
+            raise RuntimeError("Failed to resolve user profile ID")
+        return int(user_id)
 
     def save_post_score(self, post_score: PostScore, update_existing: bool = False) -> int:
         """Save post score to database and link to user."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
         # Get or create user
         user_id = self.get_or_create_user(
             post_score.username,
             post_score.source,
-            post_score.timestamp
+            post_score.timestamp,
         )
 
-        # Check if already scored
-        cursor.execute(
-            "SELECT id FROM user_sentiment_scores WHERE raw_id = ?",
-            (post_score.raw_id,)
-        )
-        existing = cursor.fetchone()
+        # Serialize segment scores with categories
+        segment_json = json.dumps([
+            {
+                "text": s.text,
+                "score": s.score,
+                "len": s.char_length,
+                "category": s.category.value,
+                "included": s.included,
+            }
+            for s in post_score.segment_scores
+        ])
 
-        if existing:
-            if update_existing:
+        with sqlite_transaction(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id FROM user_sentiment_scores WHERE raw_id = ?",
+                (post_score.raw_id,),
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                if not update_existing:
+                    return -1
+
                 score_id = existing[0]
-                # Update existing record
-                segment_json = json.dumps([
-                    {
-                        "text": s.text,
-                        "score": s.score,
-                        "len": s.char_length,
-                        "category": s.category.value,
-                        "included": s.included,
-                    }
-                    for s in post_score.segment_scores
-                ])
-
                 cursor.execute(
                     """UPDATE user_sentiment_scores SET
                        title_score = ?, body_score = ?, segment_scores = ?,
@@ -594,119 +600,98 @@ class UserSentimentScorer:
                         post_score.segments_filtered,
                         post_score.segments_scored,
                         score_id,
-                    )
+                    ),
                 )
-                conn.commit()
-                conn.close()
                 return score_id
-            else:
-                conn.close()
-                return -1  # Already exists
 
-        # Serialize segment scores with categories
-        segment_json = json.dumps([
-            {
-                "text": s.text,
-                "score": s.score,
-                "len": s.char_length,
-                "category": s.category.value,
-                "included": s.included,
-            }
-            for s in post_score.segment_scores
-        ])
-
-        # Insert score with new fields
-        cursor.execute(
-            """INSERT INTO user_sentiment_scores
-               (user_id, raw_id, timestamp, coin, title_score, body_score,
-                segment_scores, final_score, aggregation_method,
-                pos_count, neg_count, neu_count,
-                activity_level, fear_index, euphoria_index,
-                segments_filtered, segments_scored)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                post_score.raw_id,
-                post_score.timestamp,
-                post_score.coin,
-                post_score.title_score,
-                post_score.body_score,
-                segment_json,
-                post_score.final_score,
-                post_score.aggregation_method,
-                post_score.pos_count,
-                post_score.neg_count,
-                post_score.neu_count,
-                post_score.activity_level,
-                post_score.fear_index,
-                post_score.euphoria_index,
-                post_score.segments_filtered,
-                post_score.segments_scored,
+            cursor.execute(
+                """INSERT INTO user_sentiment_scores
+                   (user_id, raw_id, timestamp, coin, title_score, body_score,
+                    segment_scores, final_score, aggregation_method,
+                    pos_count, neg_count, neu_count,
+                    activity_level, fear_index, euphoria_index,
+                    segments_filtered, segments_scored)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    post_score.raw_id,
+                    post_score.timestamp,
+                    post_score.coin,
+                    post_score.title_score,
+                    post_score.body_score,
+                    segment_json,
+                    post_score.final_score,
+                    post_score.aggregation_method,
+                    post_score.pos_count,
+                    post_score.neg_count,
+                    post_score.neu_count,
+                    post_score.activity_level,
+                    post_score.fear_index,
+                    post_score.euphoria_index,
+                    post_score.segments_filtered,
+                    post_score.segments_scored,
+                ),
             )
-        )
-        score_id = cursor.lastrowid
+            score_id = cursor.lastrowid
 
-        conn.commit()
-        conn.close()
-
-        return score_id
+        if score_id is None:
+            raise RuntimeError("Failed to create user sentiment score")
+        return int(score_id)
 
     def update_user_profile(self, user_id: int):
         """Recalculate and update user profile aggregates."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with sqlite_transaction(self.db_path) as conn:
+            cursor = conn.cursor()
 
-        # Get all scores for user
-        cursor.execute(
-            """SELECT final_score, timestamp FROM user_sentiment_scores
-               WHERE user_id = ? ORDER BY timestamp""",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
+            cursor.execute(
+                """SELECT final_score, timestamp FROM user_sentiment_scores
+                   WHERE user_id = ? ORDER BY timestamp""",
+                (user_id,),
+            )
+            rows = cursor.fetchall()
 
-        if not rows:
-            conn.close()
-            return
+            if not rows:
+                return
 
-        scores = [r[0] for r in rows]
-        timestamps = [r[1] for r in rows]
+            scores = [row[0] for row in rows]
+            timestamps = [row[1] for row in rows]
 
-        total_posts = len(scores)
-        avg_sentiment = float(np.mean(scores))
-        sentiment_stddev = float(np.std(scores)) if len(scores) > 1 else 0.0
-        bullish_pct = sum(1 for s in scores if s > 0.1) / total_posts
-        bearish_pct = sum(1 for s in scores if s < -0.1) / total_posts
-        tendency = self._classify_tendency(bullish_pct, bearish_pct, sentiment_stddev)
-
-        # Update profile
-        cursor.execute(
-            """UPDATE user_profiles SET
-               total_posts = ?,
-               avg_sentiment = ?,
-               sentiment_stddev = ?,
-               bullish_pct = ?,
-               bearish_pct = ?,
-               tendency = ?,
-               first_seen = ?,
-               last_seen = ?,
-               updated_at = ?
-               WHERE user_id = ?""",
-            (
-                total_posts,
-                avg_sentiment,
-                sentiment_stddev,
+            total_posts = len(scores)
+            avg_sentiment = float(np.mean(scores))
+            sentiment_stddev = float(np.std(scores)) if len(scores) > 1 else 0.0
+            bullish_pct = sum(1 for score in scores if score > 0.1) / total_posts
+            bearish_pct = sum(1 for score in scores if score < -0.1) / total_posts
+            tendency = self._classify_tendency(
                 bullish_pct,
                 bearish_pct,
-                tendency,
-                timestamps[0],
-                timestamps[-1],
-                datetime.now(timezone.utc).isoformat(),
-                user_id,
+                sentiment_stddev,
             )
-        )
 
-        conn.commit()
-        conn.close()
+            cursor.execute(
+                """UPDATE user_profiles SET
+                   total_posts = ?,
+                   avg_sentiment = ?,
+                   sentiment_stddev = ?,
+                   bullish_pct = ?,
+                   bearish_pct = ?,
+                   tendency = ?,
+                   first_seen = ?,
+                   last_seen = ?,
+                   updated_at = ?
+                   WHERE user_id = ?""",
+                (
+                    total_posts,
+                    avg_sentiment,
+                    sentiment_stddev,
+                    bullish_pct,
+                    bearish_pct,
+                    tendency,
+                    timestamps[0],
+                    timestamps[-1],
+                    datetime.now(timezone.utc).isoformat(),
+                    user_id,
+                ),
+            )
 
     def get_user_profile(self, username: str, source: str) -> Optional[UserProfile]:
         """Get user profile by username and source."""
@@ -846,7 +831,7 @@ def backfill_user_scores(db_path: str = "data/sentiment.db", limit: int = None, 
     """
     scorer = UserSentimentScorer(db_path=db_path)
 
-    conn = sqlite3.connect(db_path)
+    conn = connect_sqlite(db_path)
     cursor = conn.cursor()
 
     # Default to all social media sources

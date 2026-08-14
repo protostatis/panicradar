@@ -1,7 +1,6 @@
 """REST API for the Contrarian Signal Service."""
 
 import os
-import sqlite3
 from datetime import datetime
 from typing import Optional
 
@@ -9,20 +8,19 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .service import SignalService
-from .subscriptions import SubscriptionManager, SubscriptionTier, TIERS
 from ..dashboard import router as dashboard_router
+from ..sqlite_utils import sqlite_transaction
 from ..storage.db import SCHEMA
+from .service import SignalService
+from .subscriptions import TIERS, SubscriptionManager, SubscriptionTier
 
 
 def init_database_schema(db_path: str) -> None:
     """Initialize database schema on startup."""
     from pathlib import Path
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.executescript(SCHEMA)
-    conn.commit()
-    conn.close()
+    with sqlite_transaction(db_path) as conn:
+        conn.executescript(SCHEMA)
     print(f"Database schema initialized: {db_path}")
 
 

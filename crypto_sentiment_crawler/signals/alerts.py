@@ -475,9 +475,11 @@ class TelegramBot:
         try:
             from ..analysis.source_weights import load_weights_from_db_sync
 
-            weight_data = load_weights_from_db_sync(self.db_path)
+            weight_data = await asyncio.to_thread(
+                load_weights_from_db_sync,
+                self.db_path,
+            )
             weights = weight_data.get("weights", {})
-            contrarian = weight_data.get("contrarian_sources", set())
 
             if not weights:
                 await self.channel.send_message(
@@ -488,26 +490,35 @@ class TelegramBot:
             # Load accuracy from database
             import sqlite3
 
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            from ..sqlite_utils import connect_sqlite
+
             belief_version = weight_data.get("belief_version")
-            snapshot_columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(source_weight_snapshots)")
-            }
-            if belief_version is None or "belief_version" not in snapshot_columns:
-                rows = conn.execute(
-                    "SELECT source, weight, accuracy, is_contrarian, sample_size "
-                    "FROM source_weights ORDER BY weight DESC LIMIT 10"
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT source, weight, accuracy, is_contrarian, sample_size "
-                    "FROM source_weight_snapshots WHERE belief_version = ? "
-                    "ORDER BY weight DESC LIMIT 10",
-                    (belief_version,),
-                ).fetchall()
-            conn.close()
+
+            def load_rows():
+                conn = connect_sqlite(self.db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    snapshot_columns = {
+                        row[1]
+                        for row in conn.execute(
+                            "PRAGMA table_info(source_weight_snapshots)"
+                        )
+                    }
+                    if belief_version is None or "belief_version" not in snapshot_columns:
+                        return conn.execute(
+                            "SELECT source, weight, accuracy, is_contrarian, sample_size "
+                            "FROM source_weights ORDER BY weight DESC LIMIT 10"
+                        ).fetchall()
+                    return conn.execute(
+                        "SELECT source, weight, accuracy, is_contrarian, sample_size "
+                        "FROM source_weight_snapshots WHERE belief_version = ? "
+                        "ORDER BY weight DESC LIMIT 10",
+                        (belief_version,),
+                    ).fetchall()
+                finally:
+                    conn.close()
+
+            rows = await asyncio.to_thread(load_rows)
 
             if not rows:
                 await self.channel.send_message(
@@ -520,7 +531,6 @@ class TelegramBot:
             for row in rows:
                 name = row["source"].replace("_", " ").title()
                 acc = row["accuracy"] * 100 if row["accuracy"] else 0
-                w = row["weight"]
                 n = row["sample_size"] or 0
                 entry = f"  `{name[:18]:<18}` {acc:.0f}% (n={n})"
                 if row["is_contrarian"]:
