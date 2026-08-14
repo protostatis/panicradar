@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the fail-closed production cutover after the release tag is checked out.
 
-set -e
+set -euo pipefail
 
 for required_name in \
   RELEASE_TAG RELEASE_IMAGE_TAG REGISTRY IMAGE_PREFIX GHCR_ACTOR GHCR_TOKEN \
@@ -49,8 +49,14 @@ docker system prune -af || true
 docker builder prune -af || true
 
 echo "Post-cleanup disk usage:"
-AVAIL_KB=$(df / | tail -1 | awk '{print $4}')
+AVAIL_KB=$(df -kP / | awk 'NR == 2 {print $4}')
 df -h /
+case "$AVAIL_KB" in
+  ''|*[!0-9]*)
+    echo "ERROR: Could not determine available disk space"
+    exit 1
+    ;;
+esac
 if [ "$AVAIL_KB" -lt 8000000 ]; then
   echo "ERROR: Insufficient disk space. Need 8GB, have ${AVAIL_KB}KB"
   exit 1
@@ -213,13 +219,13 @@ fi
 echo "Created and verified pre-deploy recovery set: $BACKUP_SUFFIX"
 # shellcheck disable=SC2012
 ls -t /opt/crypto-sentiment/backups/sentiment_predeploy_*.db \
-  2>/dev/null | tail -n +15 | xargs -r rm
+  2>/dev/null | tail -n +15 | xargs -r rm || true
 # shellcheck disable=SC2012
 ls -t /opt/crypto-sentiment/backups/orchestrator_state_predeploy_*.json \
-  2>/dev/null | tail -n +15 | xargs -r rm
+  2>/dev/null | tail -n +15 | xargs -r rm || true
 # shellcheck disable=SC2012
 ls -t /opt/crypto-sentiment/backups/discovery_state_predeploy_*.json \
-  2>/dev/null | tail -n +15 | xargs -r rm
+  2>/dev/null | tail -n +15 | xargs -r rm || true
 
 # ========== SYNC CONFIG FILES ==========
 mkdir -p /opt/crypto-sentiment/dashboard-frontend
@@ -488,10 +494,9 @@ df -h /
 # ========== VERIFY DEPLOYMENT ==========
 echo "Verifying all containers are running..."
 sleep 5
-# shellcheck disable=SC2126
 RUNNING=$(
   docker ps --format '{{.Names}}' | \
-    grep -E '^crypto-(api|frontend|crawler|signals|game-server)$' | wc -l
+    awk '/^crypto-(api|frontend|crawler|signals|game-server)$/ {count++} END {print count + 0}'
 )
 if [ "$RUNNING" -ne 5 ]; then
   echo "ERROR: Not all containers are running!"
@@ -541,13 +546,13 @@ sudo mkdir -p /opt/crypto-sentiment/reports
 BACKUP_CRON="0 0 * * * /home/ec2-user/crypto_sentiment_crawler/deploy/backup-db.sh >> /opt/crypto-sentiment/logs/backup.log 2>&1"
 TRAFFIC_CRON="5 0 * * * REPORT_EMAIL_TO=protostatis.dev@gmail.com REPORT_EMAIL_FROM=protostatis.dev@gmail.com /home/ec2-user/crypto_sentiment_crawler/scripts/daily_traffic_report.sh >> /opt/crypto-sentiment/logs/traffic_report.log 2>&1"
 MORNING_TRAFFIC_CRON="0 12 * * * REPORT_EMAIL_TO=protostatis.dev@gmail.com REPORT_EMAIL_FROM=protostatis.dev@gmail.com /home/ec2-user/crypto_sentiment_crawler/scripts/daily_traffic_report.sh --date \$(date -u +\%Y-\%m-\%d) >> /opt/crypto-sentiment/logs/traffic_report.log 2>&1"
-(
+{
   crontab -l 2>/dev/null | \
-    grep -v "backup-db.sh" | grep -v "daily_traffic_report.sh"
+    grep -v "backup-db.sh" | grep -v "daily_traffic_report.sh" || true
   echo "$BACKUP_CRON"
   echo "$TRAFFIC_CRON"
   echo "$MORNING_TRAFFIC_CRON"
-) | crontab -
+} | crontab -
 
 echo "========== DEPLOYMENT COMPLETE =========="
 docker ps

@@ -16,9 +16,11 @@ def test_ssh_action_uses_a_short_bootstrap() -> None:
     ssh_step = next(step for step in deploy_steps if "appleboy/ssh-action" in step["uses"])
     bootstrap = ssh_step["with"]["script"]
 
-    # GitHub rejects action-input expressions longer than 21,000 characters.
-    assert len(bootstrap) < 20_000
+    # GitHub rejects action-input expressions at 21,000 characters. Keep a
+    # much tighter budget so growth is caught well before that hard limit.
+    assert len(bootstrap) < 5_000
     assert "bash deploy/release.sh" in bootstrap
+    assert "${{ secrets." not in bootstrap
 
 
 def test_release_script_is_shell_parseable_and_expression_free() -> None:

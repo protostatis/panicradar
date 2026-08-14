@@ -111,7 +111,7 @@ jobs:
           command_timeout: 45m
           envs: RELEASE_TAG,RELEASE_IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_ACTOR,GHCR_TOKEN,TELEGRAM_BOT_TOKEN
           script: |
-            set -e
+            set -euo pipefail
             echo "========== DEPLOYMENT BOOTSTRAP: $RELEASE_TAG =========="
             cd /home/ec2-user/crypto_sentiment_crawler
 
