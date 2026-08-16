@@ -42,11 +42,77 @@ if [ ! -s /opt/crypto-sentiment/data/orchestrator_state.json ]; then
   exit 1
 fi
 
+TRENDING_SCOUT_IMAGE="${TRENDING_SCOUT_IMAGE:-panicradar-trending-scout:latest}"
+TRENDING_SCOUT_PIN_NAME="${TRENDING_SCOUT_PIN_NAME:-panicradar-trending-scout-image-pin}"
+TRENDING_SCOUT_PIN_NEXT_NAME="${TRENDING_SCOUT_PIN_NAME}-next"
+TRENDING_SCOUT_IMAGE_ID=""
+
+# The scout runs from root's hourly cron and is not built by this release. Pin
+# the exact image ID used by its mutable tag before broad Docker cleanup so an
+# unrelated application release cannot remove the scheduler's local image.
+refresh_trending_scout_pin() {
+  if ! docker image inspect "$TRENDING_SCOUT_IMAGE" >/dev/null 2>&1; then
+    echo "ERROR: Required trending scout image is missing: $TRENDING_SCOUT_IMAGE"
+    echo "Restore the image before deploying; proceeding would leave hourly trends stale."
+    exit 1
+  fi
+
+  TRENDING_SCOUT_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$TRENDING_SCOUT_IMAGE")
+
+  # Create and verify the replacement first so the current image stays
+  # protected even while an obsolete pin is replaced.
+  docker rm -f "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1 || true
+  docker run -d --name "$TRENDING_SCOUT_PIN_NEXT_NAME" --restart unless-stopped \
+    --memory 8m --cpus 0.01 \
+    --entrypoint /bin/sh "$TRENDING_SCOUT_IMAGE_ID" \
+    -c 'while :; do sleep 3600; done' >/dev/null
+
+  if ! docker inspect "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Replacement trending scout pin container was not created"
+    exit 1
+  fi
+  PINNED_NEXT_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$TRENDING_SCOUT_PIN_NEXT_NAME")
+  PINNED_NEXT_RUNNING=$(docker inspect --format '{{.State.Running}}' "$TRENDING_SCOUT_PIN_NEXT_NAME")
+  if [ "$PINNED_NEXT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+     [ "$PINNED_NEXT_RUNNING" != "true" ]; then
+    docker rm -f "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1 || true
+    echo "ERROR: Replacement trending scout pin is not running on the expected image ID"
+    exit 1
+  fi
+
+  docker rm -f "$TRENDING_SCOUT_PIN_NAME" >/dev/null 2>&1 || true
+  docker rename "$TRENDING_SCOUT_PIN_NEXT_NAME" "$TRENDING_SCOUT_PIN_NAME"
+  echo "Pinned trending scout image: $TRENDING_SCOUT_IMAGE_ID"
+}
+
+verify_trending_scout_pin() {
+  if ! docker image inspect "$TRENDING_SCOUT_IMAGE" >/dev/null 2>&1; then
+    echo "ERROR: Trending scout image was removed during cleanup: $TRENDING_SCOUT_IMAGE"
+    exit 1
+  fi
+
+  CURRENT_SCOUT_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$TRENDING_SCOUT_IMAGE")
+  if ! docker inspect "$TRENDING_SCOUT_PIN_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Trending scout pin container is missing: $TRENDING_SCOUT_PIN_NAME"
+    exit 1
+  fi
+  PINNED_SCOUT_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$TRENDING_SCOUT_PIN_NAME")
+  PINNED_SCOUT_RUNNING=$(docker inspect --format '{{.State.Running}}' "$TRENDING_SCOUT_PIN_NAME")
+  if [ "$CURRENT_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+     [ "$PINNED_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+     [ "$PINNED_SCOUT_RUNNING" != "true" ]; then
+    echo "ERROR: Trending scout pin no longer protects the scheduled image"
+    exit 1
+  fi
+}
+
 # ========== DISK SPACE CHECK & CLEANUP ==========
 echo "Pre-cleanup disk usage:"
 df -h /
+refresh_trending_scout_pin
 docker system prune -af || true
 docker builder prune -af || true
+verify_trending_scout_pin
 
 echo "Post-cleanup disk usage:"
 AVAIL_KB=$(df -kP / | awk 'NR == 2 {print $4}')
@@ -489,6 +555,7 @@ fi
 # Stopped rollback containers still protect their known-good images here.
 echo "Cleaning up unused images..."
 docker image prune -af
+verify_trending_scout_pin
 df -h /
 
 # ========== VERIFY DEPLOYMENT ==========
