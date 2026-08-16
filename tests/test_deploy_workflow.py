@@ -41,7 +41,10 @@ def test_release_refreshes_and_verifies_the_trending_scout_pin() -> None:
     assert "TRENDING_SCOUT_IMAGE" in release_script
     assert "TRENDING_SCOUT_IMAGE_ID=$(docker image inspect" in release_script
     assert 'docker run -d --name "$TRENDING_SCOUT_PIN_NEXT_NAME"' in release_script
+    assert "--memory 8m --cpus 0.01" in release_script
+    assert "--label panicradar.role=trending-scout-image-pin" not in release_script
     assert 'docker inspect --format \'{{.Image}}\' "$TRENDING_SCOUT_PIN_NAME"' in release_script
+    assert "Trending scout pin container is missing" in release_script
 
     refresh_call = release_script.index("\nrefresh_trending_scout_pin\n")
     system_prune = release_script.index("docker system prune -af")

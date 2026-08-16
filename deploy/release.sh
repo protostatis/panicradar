@@ -63,14 +63,20 @@ refresh_trending_scout_pin() {
   # protected even while an obsolete pin is replaced.
   docker rm -f "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1 || true
   docker run -d --name "$TRENDING_SCOUT_PIN_NEXT_NAME" --restart unless-stopped \
-    --label panicradar.role=trending-scout-image-pin \
+    --memory 8m --cpus 0.01 \
     --entrypoint /bin/sh "$TRENDING_SCOUT_IMAGE_ID" \
     -c 'while :; do sleep 3600; done' >/dev/null
 
+  if ! docker inspect "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Replacement trending scout pin container was not created"
+    exit 1
+  fi
   PINNED_NEXT_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$TRENDING_SCOUT_PIN_NEXT_NAME")
-  if [ "$PINNED_NEXT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ]; then
+  PINNED_NEXT_RUNNING=$(docker inspect --format '{{.State.Running}}' "$TRENDING_SCOUT_PIN_NEXT_NAME")
+  if [ "$PINNED_NEXT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+     [ "$PINNED_NEXT_RUNNING" != "true" ]; then
     docker rm -f "$TRENDING_SCOUT_PIN_NEXT_NAME" >/dev/null 2>&1 || true
-    echo "ERROR: Trending scout pin did not retain the expected image ID"
+    echo "ERROR: Replacement trending scout pin is not running on the expected image ID"
     exit 1
   fi
 
@@ -86,9 +92,15 @@ verify_trending_scout_pin() {
   fi
 
   CURRENT_SCOUT_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$TRENDING_SCOUT_IMAGE")
+  if ! docker inspect "$TRENDING_SCOUT_PIN_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Trending scout pin container is missing: $TRENDING_SCOUT_PIN_NAME"
+    exit 1
+  fi
   PINNED_SCOUT_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$TRENDING_SCOUT_PIN_NAME")
+  PINNED_SCOUT_RUNNING=$(docker inspect --format '{{.State.Running}}' "$TRENDING_SCOUT_PIN_NAME")
   if [ "$CURRENT_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
-     [ "$PINNED_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ]; then
+     [ "$PINNED_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+     [ "$PINNED_SCOUT_RUNNING" != "true" ]; then
     echo "ERROR: Trending scout pin no longer protects the scheduled image"
     exit 1
   fi
