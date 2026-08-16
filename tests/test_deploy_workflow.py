@@ -44,18 +44,26 @@ def test_release_refreshes_and_verifies_the_trending_scout_pin() -> None:
     assert "--memory 8m --cpus 0.01" in release_script
     assert "--label panicradar.role=trending-scout-image-pin" not in release_script
     assert 'docker inspect --format \'{{.Image}}\' "$TRENDING_SCOUT_PIN_NAME"' in release_script
+    assert 'docker tag "$TRENDING_SCOUT_IMAGE_ID" "$TRENDING_SCOUT_IMAGE"' in release_script
     assert "Trending scout pin container is missing" in release_script
 
     refresh_call = release_script.index("\nrefresh_trending_scout_pin\n")
     system_prune = release_script.index("docker system prune -af")
     post_deploy_prune = release_script.index("docker image prune -af")
+    restore_after_system_prune = release_script.index(
+        "\nrestore_trending_scout_tag\n", system_prune
+    )
     verify_after_system_prune = release_script.index(
         "\nverify_trending_scout_pin\n", system_prune
+    )
+    restore_after_post_deploy_prune = release_script.index(
+        "\nrestore_trending_scout_tag\n", post_deploy_prune
     )
     verify_after_post_deploy_prune = release_script.index(
         "\nverify_trending_scout_pin\n", post_deploy_prune
     )
 
     assert refresh_call < system_prune
+    assert system_prune < restore_after_system_prune < verify_after_system_prune
     assert verify_after_system_prune < post_deploy_prune
-    assert verify_after_post_deploy_prune > post_deploy_prune
+    assert post_deploy_prune < restore_after_post_deploy_prune < verify_after_post_deploy_prune
