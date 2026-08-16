@@ -85,23 +85,37 @@ refresh_trending_scout_pin() {
   echo "Pinned trending scout image: $TRENDING_SCOUT_IMAGE_ID"
 }
 
-verify_trending_scout_pin() {
-  if ! docker image inspect "$TRENDING_SCOUT_IMAGE" >/dev/null 2>&1; then
-    echo "ERROR: Trending scout image was removed during cleanup: $TRENDING_SCOUT_IMAGE"
-    exit 1
-  fi
-
-  CURRENT_SCOUT_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$TRENDING_SCOUT_IMAGE")
+assert_trending_scout_pin() {
   if ! docker inspect "$TRENDING_SCOUT_PIN_NAME" >/dev/null 2>&1; then
     echo "ERROR: Trending scout pin container is missing: $TRENDING_SCOUT_PIN_NAME"
     exit 1
   fi
   PINNED_SCOUT_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$TRENDING_SCOUT_PIN_NAME")
   PINNED_SCOUT_RUNNING=$(docker inspect --format '{{.State.Running}}' "$TRENDING_SCOUT_PIN_NAME")
-  if [ "$CURRENT_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
-     [ "$PINNED_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
+  if [ "$PINNED_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ] || \
      [ "$PINNED_SCOUT_RUNNING" != "true" ]; then
     echo "ERROR: Trending scout pin no longer protects the scheduled image"
+    exit 1
+  fi
+}
+
+restore_trending_scout_tag() {
+  # Docker prune can remove a mutable tag even while the pin retains its image
+  # ID. Recreate the cron's tag from that protected immutable reference.
+  assert_trending_scout_pin
+  docker tag "$TRENDING_SCOUT_IMAGE_ID" "$TRENDING_SCOUT_IMAGE"
+}
+
+verify_trending_scout_pin() {
+  assert_trending_scout_pin
+  if ! docker image inspect "$TRENDING_SCOUT_IMAGE" >/dev/null 2>&1; then
+    echo "ERROR: Trending scout image was not restored after cleanup: $TRENDING_SCOUT_IMAGE"
+    exit 1
+  fi
+
+  CURRENT_SCOUT_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$TRENDING_SCOUT_IMAGE")
+  if [ "$CURRENT_SCOUT_IMAGE_ID" != "$TRENDING_SCOUT_IMAGE_ID" ]; then
+    echo "ERROR: Trending scout tag does not resolve to the protected image"
     exit 1
   fi
 }
@@ -112,6 +126,7 @@ df -h /
 refresh_trending_scout_pin
 docker system prune -af || true
 docker builder prune -af || true
+restore_trending_scout_tag
 verify_trending_scout_pin
 
 echo "Post-cleanup disk usage:"
@@ -555,6 +570,7 @@ fi
 # Stopped rollback containers still protect their known-good images here.
 echo "Cleaning up unused images..."
 docker image prune -af
+restore_trending_scout_tag
 verify_trending_scout_pin
 df -h /
 
