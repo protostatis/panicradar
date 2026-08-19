@@ -19,12 +19,19 @@ const NEWSLETTER_URL = 'https://panicradar.substack.com';
 
 const formatCalendarDate = (dateStr) => {
   if (!dateStr) return null;
-  const date = new Date(dateStr);
+  // The backend `date` field is a calendar date only (e.g. "2026-07-24"),
+  // not an instant. `new Date("2026-07-24")` parses it as UTC midnight, and
+  // toLocaleDateString then shifts it into the viewer's timezone — which rolls
+  // the calendar day back by one in any timezone west of UTC (e.g. US Central).
+  // Format in UTC so the displayed calendar day always matches the stored date.
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+  const date = new Date(isDateOnly ? `${dateStr}T00:00:00Z` : dateStr);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
+    timeZone: 'UTC',
   });
 };
 
