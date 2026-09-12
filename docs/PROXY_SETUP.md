@@ -16,7 +16,7 @@ intentionally write them to GitHub secrets, the database, logs, or
 ## Verification
 
 ```bash
-curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+curl --unix-socket /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock \
   http://localhost/healthz
 docker exec crypto-crawler sh -c 'test "$REDDIT_FETCH_MODE" = unbrowser'
 ```

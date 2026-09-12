@@ -140,7 +140,7 @@ swapon --show
 ### Reddit Collection Issues
 ```bash
 # Check the solver socket without requesting cookie values
-curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+curl --unix-socket /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock \
   http://localhost/healthz
 
 # Confirm the crawler is using Unbrowser
