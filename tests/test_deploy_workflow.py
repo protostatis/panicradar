@@ -35,6 +35,30 @@ def test_release_script_is_shell_parseable_and_expression_free() -> None:
     )
 
 
+def test_reddit_solver_socket_is_directory_mounted() -> None:
+    release_script = RELEASE_SCRIPT_PATH.read_text()
+
+    # The Mac tunnel recreates the socket inode on every reconnect
+    # (StreamLocalBindUnlink). A single-file bind mount keeps pointing at the
+    # stale inode inside the crawler and silently breaks cookie refresh, so the
+    # dedicated directory must be mounted instead.
+    assert "REDDIT_SOCKET_DIR=/opt/crypto-sentiment/run/reddit-solver" in release_script
+    assert "REDDIT_CONTAINER_DIR=/run/reddit-solver" in release_script
+    assert '-v "$REDDIT_SOCKET_DIR":"$REDDIT_CONTAINER_DIR":ro' in release_script
+    assert '-v "$REDDIT_SOCKET_DIR:$REDDIT_CONTAINER_DIR:ro"' in release_script
+    assert 'UNBROWSER_COOKIE_SERVICE_SOCKET="$REDDIT_CONTAINER_SOCKET"' in release_script
+    assert '-v "$REDDIT_SOCKET":/run/reddit-cookie-solver.sock:ro' not in release_script
+
+
+def test_tunnel_entrypoint_creates_the_socket_directory() -> None:
+    tunnel_script = (ROOT / "scripts" / "run_reddit_cookie_tunnel.sh").read_text()
+
+    # The directory must exist before sshd can create the socket, and the
+    # forward must target the directory the crawler mounts.
+    assert "mkdir -p -- '${remote_dir}'" in tunnel_script
+    assert "REDDIT_SOLVER_REMOTE_DIR:-/opt/crypto-sentiment/run/reddit-solver" in tunnel_script
+
+
 def test_release_refreshes_and_verifies_the_trending_scout_pin() -> None:
     release_script = RELEASE_SCRIPT_PATH.read_text()
 

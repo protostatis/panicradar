@@ -78,9 +78,11 @@ Telegram, and every other outbound feed.
 See `docs/REDDIT_UNBROWSER_SETUP.md` for setup and recovery. Quick checks:
 
 ```bash
-curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+curl --unix-socket /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock \
   http://localhost/healthz
 docker exec crypto-crawler sh -c 'test "$REDDIT_FETCH_MODE" = unbrowser'
+docker exec crypto-crawler \
+  python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("/run/reddit-solver/reddit-cookie-solver.sock"); print("ok")'
 ```
 
 If the crawler shows repeated empty results, verify the solver/tunnel agents on

@@ -75,13 +75,17 @@ ssh -o ExitOnForwardFailure=yes \
   -o ServerAliveCountMax=3 \
   -o StreamLocalBindUnlink=yes \
   -o StreamLocalBindMask=0177 \
-  -R /opt/crypto-sentiment/run/reddit-cookie-solver.sock:127.0.0.1:18765 \
+  -R /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock:127.0.0.1:18765 \
   -N panicradar
 ```
 
-The runtime socket is mounted only into the crawler container as a single
-read-only socket path. Do not create a TCP bridge or set
-`UNBROWSER_COOKIE_SERVICE_URL` in production.
+The runtime socket lives in the dedicated EC2 directory
+`/opt/crypto-sentiment/run/reddit-solver/`, and the crawler container mounts
+that directory (not the socket file) read-only at `/run/reddit-solver`. sshd
+recreates the socket inode on every tunnel reconnect, so a single-file bind
+mount would keep pointing at a stale inode after any reconnect and silently
+break cookie refresh until the container was restarted. Do not create a TCP
+bridge or set `UNBROWSER_COOKIE_SERVICE_URL` in production.
 
 ## macOS supervision
 
@@ -128,20 +132,32 @@ launchctl print "gui/$(id -u)/ai.panicradar.reddit-cookie-solver"
 launchctl print "gui/$(id -u)/ai.panicradar.reddit-cookie-tunnel"
 ```
 
-The tunnel entrypoint removes only its fixed stale EC2 socket before each
-supervised reconnect, so a prior unclean SSH exit does not block recovery.
+The tunnel entrypoint ensures its fixed EC2 socket directory exists and removes
+only the fixed stale socket before each supervised reconnect, so a prior unclean
+SSH exit does not block recovery.
 
 ## Verification
 
 On EC2, verify socket reachability without requesting cookies:
 
 ```bash
-curl --unix-socket /opt/crypto-sentiment/run/reddit-cookie-solver.sock \
+curl --unix-socket /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock \
   http://localhost/healthz
-stat -c '%a:%U:%G' /opt/crypto-sentiment/run/reddit-cookie-solver.sock
+stat -c '%a:%U:%G' /opt/crypto-sentiment/run/reddit-solver/reddit-cookie-solver.sock
 ```
 
 The expected metadata is mode `600` and the deployment SSH user's owner/group.
+
+Verify the socket from the crawler's point of view as well, since that is the
+path that can go stale after a tunnel reconnect:
+
+```bash
+docker exec crypto-crawler \
+  python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("/run/reddit-solver/reddit-cookie-solver.sock"); print("ok")'
+```
+
+`scripts/check_cookie_tunnel.sh` runs both probes, plus a container-path probe
+and launchd restart-churn detection, so prefer it for routine checks.
 The release workflow verifies the socket, token-authenticated cookie solver,
 and a crawlable `old.reddit.com` listing before enabling Unbrowser for the new
 crawler. The host remains on direct EC2 networking; WireGuard is not required.

@@ -22,7 +22,8 @@ sudo mkdir -p \
   /opt/crypto-sentiment/data \
   /opt/crypto-sentiment/backups \
   /opt/crypto-sentiment/logs \
-  /opt/crypto-sentiment/run
+  /opt/crypto-sentiment/run \
+  /opt/crypto-sentiment/run/reddit-solver
 sudo chown -R ec2-user:ec2-user /opt/crypto-sentiment
 
 if [ ! -f /opt/crypto-sentiment/.env ]; then
@@ -181,7 +182,16 @@ echo "Candidate OpenRouter canary passed."
 
 # A solver outage degrades only Reddit collection. It must not block unrelated
 # API, frontend, or security releases.
-REDDIT_SOCKET=/opt/crypto-sentiment/run/reddit-cookie-solver.sock
+#
+# The socket lives in its own directory and the *directory* (not the socket
+# file) is bind-mounted into the crawler. sshd recreates the socket inode on
+# every tunnel reconnect (StreamLocalBindUnlink), so a single-file bind mount
+# would keep pointing at a stale inode after any reconnect and silently break
+# cookie refresh until the container was restarted.
+REDDIT_SOCKET_DIR=/opt/crypto-sentiment/run/reddit-solver
+REDDIT_SOCKET="$REDDIT_SOCKET_DIR/reddit-cookie-solver.sock"
+REDDIT_CONTAINER_DIR=/run/reddit-solver
+REDDIT_CONTAINER_SOCKET="$REDDIT_CONTAINER_DIR/reddit-cookie-solver.sock"
 REDDIT_CRAWLER_ARGS=(
   -e REDDIT_FETCH_MODE=standard
   -e UNBROWSER_COOKIE_SERVICE_SOCKET=
@@ -196,9 +206,9 @@ if [ -S "$REDDIT_SOCKET" ] && \
   if docker run --rm \
     --network crypto-sentiment_crypto-net \
     "${CRAWLER_ENV_ARGS[@]}" \
-    -v "$REDDIT_SOCKET":/run/reddit-cookie-solver.sock:ro \
+    -v "$REDDIT_SOCKET_DIR":"$REDDIT_CONTAINER_DIR":ro \
     -e REDDIT_FETCH_MODE=unbrowser \
-    -e UNBROWSER_COOKIE_SERVICE_SOCKET=/run/reddit-cookie-solver.sock \
+    -e UNBROWSER_COOKIE_SERVICE_SOCKET="$REDDIT_CONTAINER_SOCKET" \
     crypto-sentiment-crawler:current \
     uv run python -c '
 import asyncio
@@ -229,9 +239,9 @@ async def main() -> None:
 asyncio.run(main())
 '; then
     REDDIT_CRAWLER_ARGS=(
-      -v "$REDDIT_SOCKET:/run/reddit-cookie-solver.sock:ro"
+      -v "$REDDIT_SOCKET_DIR:$REDDIT_CONTAINER_DIR:ro"
       -e REDDIT_FETCH_MODE=unbrowser
-      -e UNBROWSER_COOKIE_SERVICE_SOCKET=/run/reddit-cookie-solver.sock
+      -e UNBROWSER_COOKIE_SERVICE_SOCKET="$REDDIT_CONTAINER_SOCKET"
     )
     echo "Reddit Unbrowser canary passed."
   else
