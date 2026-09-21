@@ -239,7 +239,7 @@ class SourceManager:
                 self.state.rejected.append(candidate.name)
                 self.discovery.reject(candidate.name)
                 rejected.append(candidate.name)
-                logger.debug(f"Rejected r/{candidate.name}: {eval_result.reason}")
+                logger.info(f"Rejected r/{candidate.name}: {eval_result.reason}")
 
         await self._save_state()
 

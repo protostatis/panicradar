@@ -156,11 +156,16 @@ docker exec crypto-crawler \
   python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("/run/reddit-solver/reddit-cookie-solver.sock"); print("ok")'
 ```
 
-`scripts/check_cookie_tunnel.sh` runs both probes, plus a container-path probe
-and launchd restart-churn detection, so prefer it for routine checks.
-The release workflow verifies the socket, token-authenticated cookie solver,
-and a crawlable `old.reddit.com` listing before enabling Unbrowser for the new
-crawler. The host remains on direct EC2 networking; WireGuard is not required.
+`scripts/check_cookie_tunnel.sh` runs both probes, plus a token-authenticated
+container probe (`/verify`), a keychain-to-running-solver token check (manual
+runs only: a cron session cannot read the login keychain), and launchd
+restart-churn detection, so prefer it for routine checks. A probe-host
+network failure (ssh exit 255) is retried once and then logged without paging
+until it persists across several consecutive probes; only tunnel-level
+failures page immediately. The release workflow verifies the socket,
+token-authenticated cookie solver, and a crawlable `old.reddit.com` listing
+before enabling Unbrowser for the new crawler. The host remains on direct EC2
+networking; WireGuard is not required.
 
 If the solver is unavailable or canary fails, deployment continues with standard
 Reddit fetching so unrelated API, frontend, and security releases remain
@@ -173,5 +178,10 @@ forward are restored.
   refresh, retries once, then opens a ten-minute refresh circuit breaker if
   Reddit remains unusable.
 - `429`: crawler does **not** invoke the solver and observes a bounded cooldown.
+- Private, banned, or quarantined subreddits: the transport classifies the
+  subreddit-level denial page (for example `<title>CryptoTech: private</title>`)
+  separately from the datacenter block page. These are not cookie problems, so
+  the crawler does not treat them as refresh failures, and source discovery
+  rejects such candidates instead of re-probing them on every discovery run.
 - Solver/tunnel outage: only Reddit collection degrades; no cookie values are
   logged and unrelated services continue running.

@@ -63,6 +63,34 @@ def test_solver_requires_a_token_before_exporting_cookies() -> None:
     assert solver.calls == 1
 
 
+def test_solver_verify_checks_the_token_without_solving() -> None:
+    class FakeSolver:
+        calls = 0
+
+        def solve(self, _url: str) -> list[dict]:
+            self.calls += 1
+            return []
+
+    solver = FakeSolver()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(solver, "t" * 32))
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_port}/verify"
+
+    try:
+        denied = httpx.get(endpoint)
+        allowed = httpx.get(endpoint, headers={"X-Reddit-Solver-Token": "t" * 32})
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join()
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json() == {"ok": True}
+    assert solver.calls == 0
+
+
 def test_solver_launches_headlessly_by_default(monkeypatch) -> None:
     solver = RedditCookieSolver("reddit-crawler", 9444, {"reddit_session"})
     launch_calls: list[tuple[str, ...]] = []
