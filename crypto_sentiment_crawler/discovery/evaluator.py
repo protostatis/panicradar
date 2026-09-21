@@ -16,8 +16,24 @@ from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 
 from ..crawler.fetcher import Fetcher
+from ..crawler.unbrowser_reddit import ACCESS_DENIAL_ERRORS
 from ..logging_config import logger
 from .reddit_discovery import CRYPTO_PATTERNS, DiscoveredSubreddit
+
+
+def _access_denial_reason(error: str | None) -> str | None:
+    """Return the denial reason when a fetch failed on subreddit-level access.
+
+    A private, banned, or quarantined subreddit fails deterministically for the
+    dedicated crawler account, so the candidate must be rejected instead of
+    being left unevaluated and re-probed on every discovery run.
+    """
+    if not error:
+        return None
+    for known in ACCESS_DENIAL_ERRORS:
+        if error.startswith(known):
+            return known
+    return None
 
 
 @dataclass
@@ -74,6 +90,21 @@ class SourceEvaluator:
 
         result = await self.fetcher.fetch(url, rate_limit=1.0)
         if not result.success:
+            denial = _access_denial_reason(result.error)
+            if denial is not None:
+                logger.info(f"Rejecting r/{subreddit}: {denial}")
+                return EvaluationResult(
+                    subreddit=subreddit,
+                    posts_per_hour=0,
+                    avg_score=0,
+                    avg_comments=0,
+                    crypto_relevance=0,
+                    freshness_hours=999,
+                    newest_post_hours=999,
+                    overall_score=0,
+                    recommendation="reject",
+                    reason=denial,
+                )
             logger.warning(f"Could not fetch r/{subreddit}: {result.error}")
             return None
 

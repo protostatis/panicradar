@@ -12,6 +12,20 @@ import httpx
 SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization", "set-cookie"}
 UNUSABLE_TITLES = ("<title>blocked</title>", "<title>welcome to reddit</title>")
 
+# Reddit serves these subreddit-level access denials with the reason in the
+# page title.  Unlike the datacenter block page ("Blocked"), a cookie refresh
+# cannot change them: the dedicated crawler account is not a member (private),
+# the subreddit is gone (banned), or the account has not opted in
+# (quarantined).  Match positively so an unrecognized non-200 response keeps
+# the existing refresh path.
+ACCESS_DENIAL_MARKERS = (
+    (": private</title>", "Reddit subreddit is private"),
+    (": banned</title>", "Reddit subreddit is banned"),
+    (": quarantined</title>", "Reddit subreddit is quarantined"),
+)
+ACCESS_DENIAL_ERRORS = tuple(error for _marker, error in ACCESS_DENIAL_MARKERS)
+ACCESS_DENIAL_STATUSES = (403, 404)
+
 
 @dataclass(frozen=True)
 class RedditTransportResponse:
@@ -65,6 +79,10 @@ class UnbrowserRedditTransport:
                     error="Reddit rate limit cooldown is active",
                 )
             response = self._navigate(url)
+            denial = self._access_denial_error(response)
+            if denial is not None:
+                return self._denied_response(response, started_at, denial)
+
             if self._is_blocked(response) and (
                 self.cookie_service_url or self.cookie_service_socket
             ):
@@ -97,6 +115,13 @@ class UnbrowserRedditTransport:
                     )
 
                 response = self._navigate(url)
+                denial = self._access_denial_error(response)
+                if denial is not None:
+                    # The session is valid but this account still cannot read
+                    # the subreddit; another refresh cannot help, so reuse the
+                    # refresh circuit to bound solver calls.
+                    self._refresh_blocked_until = now + self.refresh_cooldown_seconds
+                    return self._denied_response(response, started_at, denial)
                 if self._is_blocked(response):
                     self._refresh_blocked_until = now + self.refresh_cooldown_seconds
                     response = RedditTransportResponse(
@@ -239,6 +264,38 @@ class UnbrowserRedditTransport:
         return response.status_code == 403 or (
             response.status_code == 200
             and any(title in response.content[:500].casefold() for title in UNUSABLE_TITLES)
+        )
+
+    def _access_denial_error(self, response: RedditTransportResponse) -> str | None:
+        """Classify a subreddit-level access denial that cookies cannot fix.
+
+        Reddit returns these with a non-200 status and the reason in the page
+        title (for example ``<title>CryptoTech: private</title>``), so the body
+        must be read to tell them apart from the datacenter block page.  A body
+        read failure falls back to the status-based handling in ``fetch``.
+        """
+        if response.status_code not in ACCESS_DENIAL_STATUSES:
+            return None
+        try:
+            content = self._client_or_create().body() or ""
+        except Exception:
+            return None
+        head = content[:500].casefold()
+        for marker, error in ACCESS_DENIAL_MARKERS:
+            if marker in head:
+                return error
+        return None
+
+    @staticmethod
+    def _denied_response(
+        response: RedditTransportResponse, started_at: float, error: str
+    ) -> RedditTransportResponse:
+        return RedditTransportResponse(
+            status_code=response.status_code,
+            content="",
+            headers=response.headers,
+            elapsed_seconds=time.monotonic() - started_at,
+            error=error,
         )
 
     @staticmethod

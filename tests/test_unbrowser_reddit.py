@@ -29,7 +29,10 @@ class FakeClient:
 
 
 def test_transport_refreshes_once_after_forbidden_response(monkeypatch) -> None:
-    client = FakeClient([403, 200])
+    client = FakeClient(
+        [403, 200],
+        ["<html><title>Blocked</title></html>", "<html>Reddit</html>"],
+    )
     transport = UnbrowserRedditTransport(
         "http://solver.test",
         client_factory=lambda: client,
@@ -171,6 +174,134 @@ def test_transport_rejects_a_blocked_html_response_after_refresh(monkeypatch) ->
     assert response.status_code == 403
     assert response.content == ""
     assert response.error == "Reddit response remained unusable after cookie refresh"
+
+
+def test_transport_reports_a_private_subreddit_after_refresh(monkeypatch) -> None:
+    client = FakeClient(
+        [403, 403],
+        [
+            "<html><title>Blocked</title></html>",
+            "<html><title>CryptoTech: private</title></html>",
+        ],
+    )
+    transport = UnbrowserRedditTransport(
+        "http://solver.test",
+        client_factory=lambda: client,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_request_cookies",
+        lambda _url: [{"name": "session", "value": "value", "domain": ".reddit.com"}],
+    )
+
+    response = transport.fetch("https://old.reddit.com/r/cryptotech/new/")
+
+    assert response.status_code == 403
+    assert response.error == "Reddit subreddit is private"
+    assert len(client.cookies_set_calls) == 1
+    # A denial reuses the refresh circuit so solver calls stay bounded.
+    assert transport._refresh_blocked_until > 0
+
+
+def test_transport_reports_a_banned_subreddit_without_refreshing(monkeypatch) -> None:
+    client = FakeClient(
+        [404],
+        ["<html><title>The_Donald: banned</title></html>"],
+    )
+    transport = UnbrowserRedditTransport(
+        "http://solver.test",
+        client_factory=lambda: client,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_request_cookies",
+        lambda _url: (_ for _ in ()).throw(AssertionError("must not refresh")),
+    )
+
+    response = transport.fetch("https://old.reddit.com/r/the_donald/new/")
+
+    assert response.status_code == 404
+    assert response.error == "Reddit subreddit is banned"
+    assert client.cookies_set_calls == []
+
+
+def test_transport_reports_a_quarantined_subreddit_after_refresh(monkeypatch) -> None:
+    client = FakeClient(
+        [403, 403],
+        [
+            "<html><title>Blocked</title></html>",
+            "<html><title>reddit.com: quarantined</title></html>",
+        ],
+    )
+    transport = UnbrowserRedditTransport(
+        "http://solver.test",
+        client_factory=lambda: client,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_request_cookies",
+        lambda _url: [{"name": "session", "value": "value", "domain": ".reddit.com"}],
+    )
+
+    response = transport.fetch("https://old.reddit.com/r/theredpill/new/")
+
+    assert response.status_code == 403
+    assert response.error == "Reddit subreddit is quarantined"
+
+
+def test_transport_keeps_refresh_path_for_an_unrecognized_403(monkeypatch) -> None:
+    client = FakeClient(
+        [403, 403],
+        [
+            "<html><title>Blocked</title></html>",
+            "<html><title>Blocked</title></html>",
+        ],
+    )
+    transport = UnbrowserRedditTransport(
+        "http://solver.test",
+        client_factory=lambda: client,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_request_cookies",
+        lambda _url: [{"name": "session", "value": "value", "domain": ".reddit.com"}],
+    )
+
+    response = transport.fetch("https://old.reddit.com/r/bitcoin/new/")
+
+    assert response.status_code == 403
+    assert response.error == "Reddit response remained unusable after cookie refresh"
+    assert len(client.cookies_set_calls) == 1
+
+
+def test_transport_denial_body_read_failure_keeps_block_handling(monkeypatch) -> None:
+    class FlakyBodyClient(FakeClient):
+        def __init__(self, statuses: list[int], bodies: list[str] | None = None):
+            super().__init__(statuses, bodies)
+            self.body_calls = 0
+
+        def body(self) -> str:
+            self.body_calls += 1
+            if self.body_calls == 1:
+                raise RuntimeError("body unavailable")
+            return super().body()
+
+    client = FlakyBodyClient([403, 200], ["<html>Reddit</html>"])
+    transport = UnbrowserRedditTransport(
+        "http://solver.test",
+        client_factory=lambda: client,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_request_cookies",
+        lambda _url: [{"name": "session", "value": "value", "domain": ".reddit.com"}],
+    )
+
+    response = transport.fetch("https://old.reddit.com/r/bitcoin/new/")
+
+    assert response.status_code == 200
+    assert response.content == "<html>Reddit</html>"
+    assert len(client.cookies_set_calls) == 1
 
 
 def test_transport_requires_a_solver_token() -> None:

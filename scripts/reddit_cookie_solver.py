@@ -121,14 +121,23 @@ def make_handler(solver: RedditCookieSolver, token: str):
             if self.path == "/healthz":
                 self._json(200, {"ok": True})
                 return
+            if self.path == "/verify":
+                # Token-only check: proves the caller's configured token still
+                # matches this running process without launching Chrome.  Used
+                # by the Mac health probe and the crawler container to catch a
+                # one-sided token rotation before it silently breaks refresh.
+                if not self._authorized():
+                    self._json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                self._json(200, {"ok": True})
+                return
             self._json(404, {"ok": False, "error": "not found"})
 
         def do_POST(self) -> None:
             if self.path != "/solve":
                 self._json(404, {"ok": False, "error": "not found"})
                 return
-            supplied_token = self.headers.get("X-Reddit-Solver-Token", "")
-            if not hmac.compare_digest(supplied_token, token):
+            if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             try:
@@ -145,6 +154,10 @@ def make_handler(solver: RedditCookieSolver, token: str):
                 self._json(200, {"ok": True, "cookies": cookies})
             except Exception as error:
                 self._json(502, {"ok": False, "error": type(error).__name__})
+
+        def _authorized(self) -> bool:
+            supplied_token = self.headers.get("X-Reddit-Solver-Token", "")
+            return hmac.compare_digest(supplied_token, token)
 
         def _json(self, status: int, payload: dict) -> None:
             raw = json.dumps(payload, separators=(",", ":")).encode()
