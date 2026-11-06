@@ -10,6 +10,7 @@ Covers:
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -115,11 +116,18 @@ def _install_fake_threads(pipeline: RedditPipeline, calls: list[str]) -> None:
 
 
 def test_permalink_key_normalizes_stored_url_forms():
-    expected = "/r/bitcoin/comments/abc/title"
+    expected = "/r/bitcoin/comments/abc"
 
     assert permalink_key("https://reddit.com/r/bitcoin/comments/abc/title/") == expected
     assert permalink_key("https://old.reddit.com/r/bitcoin/comments/abc/title") == expected
     assert permalink_key("/r/bitcoin/comments/abc/title/?utm_source=x") == expected
+
+
+def test_permalink_key_ignores_title_slug_changes():
+    before = permalink_key("https://reddit.com/r/bitcoin/comments/abc/old_title/")
+    after = permalink_key("https://reddit.com/r/bitcoin/comments/abc/new_title/")
+
+    assert before == after == "/r/bitcoin/comments/abc"
 
 
 def test_permalink_key_rejects_non_reddit_urls():
@@ -175,6 +183,17 @@ async def test_rate_limit_failure_is_not_marked_unavailable():
     assert exc.value.source_unavailable is False
 
 
+async def test_missing_subreddit_404_is_marked_unavailable():
+    pipeline = RedditPipeline(
+        fetcher=FakeFetcher(success=False, status_code=404, error="HTTP 404")
+    )
+
+    with pytest.raises(RedditFetchError) as exc:
+        await pipeline.crawl_subreddit("does_not_exist")
+
+    assert exc.value.source_unavailable is True
+
+
 # ── selective thread fetching ───────────────────────────────────────────────
 
 
@@ -197,6 +216,44 @@ async def test_thread_fetches_are_capped_and_comment_first():
     assert by_url["Post e"].metadata["comments"]
     assert by_url["Post d"].metadata["comments"]
     assert by_url["Post a"].metadata["comments"] == []
+
+
+async def test_unstorable_threads_do_not_monopolise_the_cap():
+    posts = [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)]
+    pipeline = RedditPipeline(fetcher=FakeFetcher(_listing_html(posts)))
+    calls: list[str] = []
+    _install_fake_threads(pipeline, calls)
+
+    await pipeline.crawl_subreddit("test", max_thread_fetches=2)
+    assert calls == [
+        "/r/test/comments/e/post_5/",
+        "/r/test/comments/d/post_4/",
+    ]
+
+    # The orchestrator stored none of those (too few human comments), so the
+    # next crawl must move on instead of fetching the same two forever.
+    calls.clear()
+    await pipeline.crawl_subreddit("test", max_thread_fetches=2)
+    assert calls == [
+        "/r/test/comments/c/post_3/",
+        "/r/test/comments/b/post_2/",
+    ]
+
+
+async def test_failed_thread_fetch_is_retried_on_next_crawl():
+    pipeline = RedditPipeline(fetcher=FakeFetcher(_listing_html([("a", 1)])))
+    calls: list[str] = []
+
+    async def failing_thread(permalink: str, max_comments: int = 20):
+        calls.append(permalink)
+        return None
+
+    pipeline.fetch_thread = failing_thread
+
+    await pipeline.crawl_subreddit("test", max_thread_fetches=2)
+    await pipeline.crawl_subreddit("test", max_thread_fetches=2)
+
+    assert calls == ["/r/test/comments/a/post_1/"] * 2
 
 
 async def test_known_permalinks_skip_thread_fetch():
@@ -292,6 +349,48 @@ def test_cooldown_decay_uses_last_crawl_at_not_last_updated():
     assert "reddit_stale" not in bandit._get_eligible_sources(
         ["reddit_stale", "reddit_other"]
     )
+
+
+def test_seed_missing_crawl_clocks_recovers_stuck_source():
+    now = datetime.now(timezone.utc)
+    belief = SourceBelief(source="reddit_stuck", alpha=5.0, beta=8.0)
+    belief.consecutive_empty_crawls = 10
+    belief.first_empty_at = now - timedelta(hours=2)
+    belief.last_updated = now  # refreshed by the scheduled belief updater
+    data = belief.to_dict()
+    data.pop("last_crawl_at")
+
+    store = SourceBeliefStore.from_dict({"reddit_stuck": data})
+    assert store.get("reddit_stuck").last_crawl_at is None
+
+    assert store.seed_missing_crawl_clocks() == 1
+    assert store.get("reddit_stuck").last_crawl_at == belief.first_empty_at
+
+    bandit = CrawlBandit(store, empty_crawl_cooldown=10, cooldown_decay_hours=1.0)
+    assert "reddit_stuck" in bandit._get_eligible_sources(["reddit_stuck"])
+
+
+async def test_load_state_seeds_legacy_crawl_clock(tmp_path):
+    now = datetime.now(timezone.utc)
+    belief = SourceBelief(source="reddit_stuck", alpha=5.0, beta=8.0)
+    belief.consecutive_empty_crawls = 10
+    belief.first_empty_at = now - timedelta(hours=2)
+    belief.last_updated = now
+    data = belief.to_dict()
+    data.pop("last_crawl_at")
+
+    state_path = tmp_path / "orchestrator_state.json"
+    state_path.write_text(json.dumps({"beliefs": {"reddit_stuck": data}}))
+
+    orchestrator = CrawlerOrchestrator.__new__(CrawlerOrchestrator)
+    orchestrator.state_path = state_path
+    orchestrator.gp_model = None
+    orchestrator.feature_extractor = SimpleNamespace(scaler_params=None)
+    orchestrator.belief_store = SourceBeliefStore()
+
+    await orchestrator._load_state()
+
+    assert orchestrator.belief_store.get("reddit_stuck").last_crawl_at == belief.first_empty_at
 
 
 def test_stale_belief_without_last_crawl_at_falls_back_to_last_updated():

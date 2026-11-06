@@ -1,6 +1,7 @@
 """Content processing pipeline: crawl → parse → analyze → store."""
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -248,12 +249,17 @@ class RedditFetchError(RuntimeError):
         self.source_unavailable = source_unavailable
 
 
+_REDDIT_POST_PATH = re.compile(r"^/r/([^/]+)/comments/([^/]+)")
+
+
 def permalink_key(url: str | None) -> str | None:
-    """Normalize a Reddit permalink or URL to a comparable path key.
+    """Return a stable identity key for a Reddit post.
 
     Stored rows contain both ``https://reddit.com/r/...`` (crawler) and
-    ``https://old.reddit.com/r/...`` (backfill/thread) forms, so deduplication
-    compares paths rather than full URLs. Returns None for non-Reddit URLs so
+    ``https://old.reddit.com/r/...`` (backfill/thread) forms, and the title
+    slug in the path can change when a post is edited. Keying on
+    ``/r/<subreddit>/comments/<post id>`` makes deduplication independent of
+    host, slug, query, and trailing slash. Returns None for non-Reddit URLs so
     they never match a listing post.
     """
     if not url:
@@ -267,9 +273,11 @@ def permalink_key(url: str | None) -> str | None:
     else:
         path = url
     path = path.split("?", 1)[0].split("#", 1)[0]
-    if not path.startswith("/r/"):
+    match = _REDDIT_POST_PATH.match(path)
+    if not match:
         return None
-    return path.rstrip("/")
+    subreddit, post_id = match.groups()
+    return f"/r/{subreddit.lower()}/comments/{post_id.lower()}"
 
 
 @dataclass
@@ -288,6 +296,29 @@ class _ListingPost:
 
 class RedditPipeline(ContentPipeline):
     """Specialized pipeline for Reddit (old.reddit.com)."""
+
+    # How long a successfully fetched thread is skipped when the orchestrator
+    # did not store it (usually too few human comments). Without this, the
+    # comment-first cap would keep re-fetching the same unstorable posts and
+    # starve lower-ranked posts that would qualify.
+    DEFAULT_THREAD_ATTEMPT_TTL_SECONDS = 6 * 3600
+
+    def __init__(
+        self,
+        *args,
+        thread_attempt_ttl_seconds: float = DEFAULT_THREAD_ATTEMPT_TTL_SECONDS,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.thread_attempt_ttl_seconds = thread_attempt_ttl_seconds
+        self._thread_attempts: dict[str, float] = {}
+
+    def _prune_thread_attempts(self, now: float) -> None:
+        cutoff = now - self.thread_attempt_ttl_seconds
+        self._thread_attempts = {
+            key: stamp for key, stamp in self._thread_attempts.items()
+            if stamp >= cutoff
+        }
 
     SUBREDDIT_SELECTORS = {
         "post_list": "div.thing.link",
@@ -486,12 +517,17 @@ class RedditPipeline(ContentPipeline):
 
         if not fetch_result.success:
             error = fetch_result.error or "unknown error"
+            # A 404 listing means the subreddit does not exist (or is gone);
+            # 403 is ambiguous (block page vs. private subreddit), so only the
+            # known access-denial messages make it permanent.
+            source_unavailable = (
+                fetch_result.status_code == 404
+                or any(denial in error for denial in ACCESS_DENIAL_ERRORS)
+            )
             raise RedditFetchError(
                 f"Reddit listing fetch failed for r/{subreddit}: {error}",
                 status_code=fetch_result.status_code,
-                source_unavailable=any(
-                    denial in error for denial in ACCESS_DENIAL_ERRORS
-                ),
+                source_unavailable=source_unavailable,
             )
 
         from bs4 import BeautifulSoup
@@ -565,10 +601,15 @@ class RedditPipeline(ContentPipeline):
         # the human-comment threshold used before storing.
         threads: dict[str, RedditThread | None] = {}
         if fetch_content:
-            pending = [
-                post for post in candidates
-                if post.permalink and permalink_key(post.permalink) not in known
-            ]
+            self._prune_thread_attempts(time.monotonic())
+            pending = []
+            for post in candidates:
+                if not post.permalink:
+                    continue
+                key = permalink_key(post.permalink)
+                if key and (key in known or key in self._thread_attempts):
+                    continue
+                pending.append(post)
             pending.sort(
                 key=lambda post: (
                     post.num_comments,
@@ -579,10 +620,17 @@ class RedditPipeline(ContentPipeline):
             if max_thread_fetches is not None:
                 pending = pending[:max(0, max_thread_fetches)]
             for post in pending:
-                threads[post.permalink] = await self.fetch_thread(
+                thread = await self.fetch_thread(
                     post.permalink,
                     max_comments=max_comments,
                 )
+                threads[post.permalink] = thread
+                key = permalink_key(post.permalink)
+                if thread is not None and key:
+                    # Remember successful fetches so an unstorable post does
+                    # not monopolise the cap on the next crawl. Failures are
+                    # not remembered so a transport blip retries promptly.
+                    self._thread_attempts[key] = time.monotonic()
 
         posts = []
         for candidate in candidates:

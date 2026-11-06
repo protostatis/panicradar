@@ -240,6 +240,23 @@ class SourceBeliefStore:
         belief = self.get(source)
         belief.update_with_utility(utility, threshold)
 
+    def seed_missing_crawl_clocks(self) -> int:
+        """Seed ``last_crawl_at`` for beliefs persisted before the field existed.
+
+        Cooldown decay must not use ``last_updated``, which the scheduled
+        belief updater refreshes. Backfilling from the start of the current
+        empty streak lets sources that were already stuck recover on the next
+        eligibility check instead of staying locked out forever.
+
+        Returns the number of beliefs seeded.
+        """
+        seeded = 0
+        for belief in self.beliefs.values():
+            if belief.last_crawl_at is None:
+                belief.last_crawl_at = belief.first_empty_at or belief.last_updated
+                seeded += 1
+        return seeded
+
     def all_sources(self) -> list[str]:
         """Get all tracked sources."""
         return list(self.beliefs.keys())

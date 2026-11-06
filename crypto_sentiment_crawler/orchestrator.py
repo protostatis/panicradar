@@ -231,6 +231,11 @@ class CrawlerOrchestrator:
                     data = json.load(f)
                 self.state = OrchestratorState.from_dict(data)
                 self.belief_store = SourceBeliefStore.from_dict(self.state.beliefs)
+                seeded = self.belief_store.seed_missing_crawl_clocks()
+                if seeded:
+                    logger.info(
+                        f"Seeded crawl clock for {seeded} legacy source beliefs"
+                    )
 
                 # Restore GP hyperparameters if present
                 if self.state.gp_hyperparameters:

@@ -46,9 +46,9 @@ class Settings(BaseSettings):
 
     # Reddit crawl pacing. Reddit bills HTML pages against a ~100 unit /
     # 10 minute session budget, and every page (listing or thread) costs
-    # roughly a dozen units. Keep a handful of new thread fetches per crawl,
-    # most-commented first.
-    reddit_max_thread_fetches: int = 3
+    # roughly a dozen units. Two thread fetches per crawl (plus the listing)
+    # leave ~40% headroom for retries and the weekly discovery job.
+    reddit_max_thread_fetches: int = 2
     # How far back to look for already-stored posts (thread-fetch dedupe).
     reddit_known_url_lookback_hours: int = 48
 
