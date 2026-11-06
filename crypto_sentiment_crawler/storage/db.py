@@ -405,6 +405,38 @@ class Database:
             )
         return cursor.lastrowid or 0
 
+    async def get_raw_urls(
+        self,
+        source: str,
+        since: datetime | None = None,
+    ) -> set[str]:
+        """Return raw-data URLs already stored for a source.
+
+        Used by the Reddit crawler to skip thread pages it has already fetched.
+        ``raw_data`` is decoded in Python instead of SQL so this works on any
+        SQLite build (no json1 extension assumption).
+        """
+        query = "SELECT raw_data FROM sentiment_raw WHERE source = ?"
+        params: list[object] = [source.lower()]
+        if since is not None:
+            query += " AND timestamp >= ?"
+            params.append(since.isoformat())
+
+        cursor = await self.conn.execute(query, params)
+        rows = await cursor.fetchall()
+
+        urls: set[str] = set()
+        for row in rows:
+            try:
+                data = json.loads(row["raw_data"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict):
+                url = data.get("url")
+                if url:
+                    urls.add(str(url))
+        return urls
+
     async def insert_price_data(self, data: PriceData) -> int:
         """Insert price data."""
         async with self.write_transaction() as conn:

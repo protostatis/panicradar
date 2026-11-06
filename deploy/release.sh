@@ -506,6 +506,8 @@ docker run -d --name crypto-frontend --restart unless-stopped \
   crypto-sentiment-frontend:current
 
 echo "Starting crawler..."
+# 360s + REDDIT_MAX_THREAD_FETCHES keeps Reddit HTML fetches inside the
+# ~100 units / 10 minute session budget (1 listing + a few thread pages).
 docker run -d --name crypto-crawler --restart unless-stopped \
   --network crypto-sentiment_crypto-net \
   "${CRAWLER_ENV_ARGS[@]}" \
@@ -515,7 +517,7 @@ docker run -d --name crypto-crawler --restart unless-stopped \
   -e PROXY_URL= \
   "${REDDIT_CRAWLER_ARGS[@]}" \
   crypto-sentiment-crawler:current \
-  uv run crawler background --crawl-interval 60
+  uv run crawler background --crawl-interval 360
 
 echo "Starting signals bot..."
 docker run -d --name crypto-signals --restart unless-stopped \

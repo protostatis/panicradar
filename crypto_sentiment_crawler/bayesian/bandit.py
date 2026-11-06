@@ -94,10 +94,14 @@ class CrawlBandit:
                     continue
 
             # Decay stale cooldowns: if a source hasn't been tried in a while,
-            # give it another chance (prevents permanent cooldown from persisted state)
+            # give it another chance (prevents permanent cooldown from persisted state).
+            # Use the last crawl attempt, not last_updated: the scheduled belief
+            # updater refreshes last_updated from outcome data, which would keep
+            # a source on cooldown indefinitely.
             if belief.consecutive_empty_crawls >= self.empty_crawl_cooldown:
-                hours_since_update = (now - belief.last_updated).total_seconds() / 3600
-                if hours_since_update >= self.cooldown_decay_hours:
+                last_attempt = belief.last_crawl_at or belief.last_updated
+                hours_since_attempt = (now - last_attempt).total_seconds() / 3600
+                if hours_since_attempt >= self.cooldown_decay_hours:
                     belief.consecutive_empty_crawls = 0
 
             # Skip sources on cooldown

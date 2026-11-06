@@ -3,9 +3,11 @@
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from .fetcher import Fetcher, FetchResult
 from .parser import Parser, ParseResult
+from .unbrowser_reddit import ACCESS_DENIAL_ERRORS
 
 
 # Coin detection patterns
@@ -222,6 +224,68 @@ class RedditThread:
     crawled_at: datetime
 
 
+class RedditFetchError(RuntimeError):
+    """A Reddit listing could not be fetched (transport or rate-limit failure).
+
+    Callers use this to distinguish an infrastructure failure from a source
+    that fetched successfully but had no fresh posts, so a rate limit does not
+    get recorded as an "empty crawl" against the source's belief.
+
+    ``source_unavailable`` marks permanent, source-level denials (private,
+    banned, quarantined, missing subreddit) that are worth penalizing: no
+    amount of retrying will make them produce content.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 0,
+        *,
+        source_unavailable: bool = False,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.source_unavailable = source_unavailable
+
+
+def permalink_key(url: str | None) -> str | None:
+    """Normalize a Reddit permalink or URL to a comparable path key.
+
+    Stored rows contain both ``https://reddit.com/r/...`` (crawler) and
+    ``https://old.reddit.com/r/...`` (backfill/thread) forms, so deduplication
+    compares paths rather than full URLs. Returns None for non-Reddit URLs so
+    they never match a listing post.
+    """
+    if not url:
+        return None
+    if "://" in url:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if host != "reddit.com" and not host.endswith(".reddit.com"):
+            return None
+        path = parts.path
+    else:
+        path = url
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    if not path.startswith("/r/"):
+        return None
+    return path.rstrip("/")
+
+
+@dataclass
+class _ListingPost:
+    """A post parsed from a subreddit listing, before its thread is fetched."""
+
+    title: str | None
+    score: int
+    num_comments: int
+    author: str | None
+    post_url: str
+    permalink: str
+    created_utc: float | None
+    published_at: datetime | None
+
+
 class RedditPipeline(ContentPipeline):
     """Specialized pipeline for Reddit (old.reddit.com)."""
 
@@ -387,6 +451,8 @@ class RedditPipeline(ContentPipeline):
         max_age_hours: float | None = None,
         fetch_content: bool = True,
         max_comments: int = 10,
+        known_permalinks: set[str] | None = None,
+        max_thread_fetches: int | None = None,
     ) -> list[CrawledContent]:
         """
         Crawl posts from a subreddit using old.reddit.com.
@@ -400,22 +466,40 @@ class RedditPipeline(ContentPipeline):
                           Use 2-4 hours for inference mode.
             fetch_content: If True, fetch full thread content and comments (slower but richer)
             max_comments: Maximum comments to fetch per thread
+            known_permalinks: Normalized permalink keys (see ``permalink_key``) that are
+                already stored. Matching posts are returned without refetching their thread.
+            max_thread_fetches: Maximum number of thread pages to fetch for this listing.
+                None means no cap. Posts left unfetched are still returned as metadata-only
+                content so a healthy source is not mistaken for an empty one.
 
         Returns:
-            List of CrawledContent for each post
+            List of CrawledContent for each post.
+
+        Raises:
+            RedditFetchError: The listing itself could not be fetched (transport or
+                rate-limit failure). An empty list means the listing loaded but had no
+                posts that passed the filters.
         """
         url = f"https://old.reddit.com/r/{subreddit}/{sort}/"
 
         fetch_result = await self.fetcher.fetch(url, rate_limit=0.5)
 
         if not fetch_result.success:
-            return []
+            error = fetch_result.error or "unknown error"
+            raise RedditFetchError(
+                f"Reddit listing fetch failed for r/{subreddit}: {error}",
+                status_code=fetch_result.status_code,
+                source_unavailable=any(
+                    denial in error for denial in ACCESS_DENIAL_ERRORS
+                ),
+            )
 
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(fetch_result.content, "lxml")
 
-        posts = []
         crawled_at = datetime.now(timezone.utc)
+        known = known_permalinks or set()
+        candidates: list[_ListingPost] = []
 
         for thing in soup.select("div.thing.link")[:limit]:
             try:
@@ -462,69 +546,107 @@ class RedditPipeline(ContentPipeline):
                     if age_hours > max_age_hours:
                         continue  # Skip posts older than threshold
 
-                # Fetch full thread content if requested
-                content = None
-                comments_data = []
-
-                if fetch_content and permalink:
-                    thread = await self.fetch_thread(permalink, max_comments=max_comments)
-                    if thread:
-                        # Use only selftext for content (don't include comments)
-                        # Comments are stored separately in metadata for optional analysis
-                        content = thread.selftext if thread.selftext else None
-
-                        # Store comment metadata
-                        comments_data = [
-                            {
-                                "author": c.author,
-                                "body": c.body,
-                                "score": c.score,
-                                "created_utc": c.created_utc,
-                                "depth": c.depth,
-                            }
-                            for c in thread.comments
-                        ]
-
-                        # Update score from thread (more accurate)
-                        score = thread.score
-
-                # Analyze full text (title + content)
-                full_text = " ".join(filter(None, [title, content]))
-                coins = detect_coins(full_text)
-                # Sentiment scoring deferred to user_sentiment backfill (uses FinBERT)
-
-                posts.append(CrawledContent(
-                    url=f"https://reddit.com{permalink}" if permalink else post_url,
-                    source=f"reddit_{subreddit}",
+                candidates.append(_ListingPost(
                     title=title,
-                    content=content,
+                    score=score,
+                    num_comments=num_comments,
                     author=author,
+                    post_url=post_url,
+                    permalink=permalink,
+                    created_utc=created_utc,
                     published_at=published_at,
-                    crawled_at=crawled_at,
-                    coins_mentioned=coins,
-                    sentiment_score=None,
-                    sentiment_details={},
-                    fetch_result=fetch_result,
-                    parse_result=ParseResult(
-                        url=url,
-                        title=title,
-                        content=content,
-                        author=author,
-                        published_at=published_at,
-                        links=[],
-                        metadata={},
-                        success=True,
-                    ),
-                    metadata={
-                        "score": score,
-                        "num_comments": num_comments,
-                        "subreddit": subreddit,
-                        "created_utc": created_utc,
-                        "comments": comments_data,
-                    },
                 ))
-
             except Exception:
                 continue
+
+        # Thread pages are the expensive part of a crawl (Reddit charges roughly
+        # a dozen rate-limit units per HTML page), so only fetch pages we still
+        # need, most-commented first: those are the posts most likely to clear
+        # the human-comment threshold used before storing.
+        threads: dict[str, RedditThread | None] = {}
+        if fetch_content:
+            pending = [
+                post for post in candidates
+                if post.permalink and permalink_key(post.permalink) not in known
+            ]
+            pending.sort(
+                key=lambda post: (
+                    post.num_comments,
+                    post.published_at or crawled_at,
+                ),
+                reverse=True,
+            )
+            if max_thread_fetches is not None:
+                pending = pending[:max(0, max_thread_fetches)]
+            for post in pending:
+                threads[post.permalink] = await self.fetch_thread(
+                    post.permalink,
+                    max_comments=max_comments,
+                )
+
+        posts = []
+        for candidate in candidates:
+            title = candidate.title
+            score = candidate.score
+            permalink = candidate.permalink
+            content = None
+            comments_data = []
+
+            thread = threads.get(permalink) if permalink else None
+            if thread:
+                # Use only selftext for content (don't include comments)
+                # Comments are stored separately in metadata for optional analysis
+                content = thread.selftext if thread.selftext else None
+
+                # Store comment metadata
+                comments_data = [
+                    {
+                        "author": c.author,
+                        "body": c.body,
+                        "score": c.score,
+                        "created_utc": c.created_utc,
+                        "depth": c.depth,
+                    }
+                    for c in thread.comments
+                ]
+
+                # Update score from thread (more accurate)
+                score = thread.score
+
+            # Analyze full text (title + content)
+            full_text = " ".join(filter(None, [title, content]))
+            coins = detect_coins(full_text)
+            # Sentiment scoring deferred to user_sentiment backfill (uses FinBERT)
+
+            posts.append(CrawledContent(
+                url=f"https://reddit.com{permalink}" if permalink else candidate.post_url,
+                source=f"reddit_{subreddit}",
+                title=title,
+                content=content,
+                author=candidate.author,
+                published_at=candidate.published_at,
+                crawled_at=crawled_at,
+                coins_mentioned=coins,
+                sentiment_score=None,
+                sentiment_details={},
+                fetch_result=fetch_result,
+                parse_result=ParseResult(
+                    url=url,
+                    title=title,
+                    content=content,
+                    author=candidate.author,
+                    published_at=candidate.published_at,
+                    links=[],
+                    metadata={},
+                    success=True,
+                ),
+                metadata={
+                    "score": score,
+                    "num_comments": candidate.num_comments,
+                    "subreddit": subreddit,
+                    "created_utc": candidate.created_utc,
+                    "comments": comments_data,
+                },
+            ))
 
         return posts
