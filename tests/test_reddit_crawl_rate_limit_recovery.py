@@ -20,6 +20,7 @@ from crypto_sentiment_crawler.bayesian.bandit import CrawlBandit
 from crypto_sentiment_crawler.bayesian.beliefs import SourceBelief, SourceBeliefStore
 from crypto_sentiment_crawler.crawler.fetcher import FetchResult
 from crypto_sentiment_crawler.crawler.pipeline import (
+    CrawledContent,
     RedditComment,
     RedditFetchError,
     RedditPipeline,
@@ -469,6 +470,64 @@ async def test_unavailable_source_still_records_empty_crawl():
 
     belief = orchestrator.belief_store.get("reddit_bitcoin")
     assert belief.consecutive_empty_crawls == 1
+    assert belief.last_crawl_at is not None
+
+
+def _content(comments: list[dict]) -> CrawledContent:
+    now = datetime.now(timezone.utc)
+    return CrawledContent(
+        url="https://reddit.com/r/test/comments/abc/post/",
+        source="reddit_bitcoin",
+        title="Post",
+        content="body",
+        author="author",
+        published_at=now,
+        crawled_at=now,
+        coins_mentioned=["BTC"],
+        sentiment_score=None,
+        sentiment_details={},
+        fetch_result=None,
+        parse_result=None,
+        metadata={"comments": comments},
+    )
+
+
+async def _stubbed_orchestrator(contents: list[CrawledContent]) -> CrawlerOrchestrator:
+    orchestrator = _bare_orchestrator()
+
+    async def crawl(*args, **kwargs):
+        return contents
+
+    async def store(_content):
+        return 0
+
+    async def price(_coin):
+        return None
+
+    orchestrator._crawl_source_batch = crawl
+    orchestrator._store_content = store
+    orchestrator._get_current_price = price
+    orchestrator.utility_scorer = SimpleNamespace(compute_novelty_only=lambda *a, **k: 0.0)
+    orchestrator.eval_lag_hours = 1
+    return orchestrator
+
+
+async def test_threads_fetched_but_nothing_stored_penalizes_source():
+    orchestrator = await _stubbed_orchestrator([_content([{"body": "hi"}])])
+
+    await orchestrator.select_and_crawl()
+
+    belief = orchestrator.belief_store.get("reddit_bitcoin")
+    assert belief.consecutive_empty_crawls == 1
+
+
+async def test_listing_only_result_does_not_penalize_source():
+    orchestrator = await _stubbed_orchestrator([_content([])])
+
+    await orchestrator.select_and_crawl()
+
+    belief = orchestrator.belief_store.get("reddit_bitcoin")
+    assert belief.consecutive_empty_crawls == 0
     assert belief.last_crawl_at is not None
 
 

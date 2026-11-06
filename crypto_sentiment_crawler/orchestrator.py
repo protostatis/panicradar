@@ -610,48 +610,8 @@ class CrawlerOrchestrator:
 
         if not contents:
             # Penalize empty crawl so the bandit learns to avoid dry sources
-            async with self._belief_lock:
-                belief = self.belief_store.get(source_name)
-                was_probe = (belief.status == "inactive")
-                belief.record_empty_crawl(penalty=0.3)
-                logger.info(
-                    f"Empty crawl from {source_name} "
-                    f"(consecutive={belief.consecutive_empty_crawls}, "
-                    f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
-                )
-                # Mark source inactive after 24h of continuous empty crawls
-                if (belief.status == "active"
-                        and belief.first_empty_at is not None
-                        and belief.consecutive_empty_crawls >= 6):
-                    hours_empty = (
-                        datetime.now(timezone.utc) - belief.first_empty_at
-                    ).total_seconds() / 3600
-                    if hours_empty >= 24:
-                        belief.status = "inactive"
-                        belief.next_probe_at = (
-                            datetime.now(timezone.utc) + timedelta(hours=24)
-                        )
-                        logger.warning(
-                            f"Source {source_name} marked inactive after "
-                            f"{belief.consecutive_empty_crawls} empty crawls over "
-                            f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
-                        )
-                # Reschedule probe after failed inactive-source probe
-                elif was_probe:
-                    belief.next_probe_at = (
-                        datetime.now(timezone.utc) + timedelta(hours=24)
-                    )
-                    logger.info(
-                        f"Probe of inactive source {source_name} was empty. "
-                        f"Next probe at {belief.next_probe_at}."
-                    )
-                self.state.belief_revision += 1
+            await self._record_empty_crawl(source_name)
             return []
-
-        # Successful crawl — reset empty counter via dedicated method
-        async with self._belief_lock:
-            belief = self.belief_store.get(source_name)
-            belief.record_successful_crawl()
 
         # Get current price for later evaluation
         price_data = await self._get_current_price("BTC")
@@ -692,7 +652,59 @@ class CrawlerOrchestrator:
         if contents:
             logger.info(f"Stored {stored_count}/{len(contents)} posts from {source_name}")
 
+        # A thread that was fetched but produced nothing storable means the
+        # source has posts we cannot use right now. Record that as an empty
+        # crawl so the bandit stops spending every slot on it; listing-only
+        # results (everything was already stored) stay neutral.
+        attempted_thread_fetch = any(
+            content.metadata.get("comments") for content in contents
+        )
+        if stored_count == 0 and attempted_thread_fetch:
+            await self._record_empty_crawl(source_name)
+        else:
+            async with self._belief_lock:
+                self.belief_store.get(source_name).record_successful_crawl()
+
         return contents
+
+    async def _record_empty_crawl(self, source_name: str) -> None:
+        """Penalize a crawl that produced no storable content."""
+        async with self._belief_lock:
+            belief = self.belief_store.get(source_name)
+            was_probe = (belief.status == "inactive")
+            belief.record_empty_crawl(penalty=0.3)
+            logger.info(
+                f"Empty crawl from {source_name} "
+                f"(consecutive={belief.consecutive_empty_crawls}, "
+                f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
+            )
+            # Mark source inactive after 24h of continuous empty crawls
+            if (belief.status == "active"
+                    and belief.first_empty_at is not None
+                    and belief.consecutive_empty_crawls >= 6):
+                hours_empty = (
+                    datetime.now(timezone.utc) - belief.first_empty_at
+                ).total_seconds() / 3600
+                if hours_empty >= 24:
+                    belief.status = "inactive"
+                    belief.next_probe_at = (
+                        datetime.now(timezone.utc) + timedelta(hours=24)
+                    )
+                    logger.warning(
+                        f"Source {source_name} marked inactive after "
+                        f"{belief.consecutive_empty_crawls} empty crawls over "
+                        f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
+                    )
+            # Reschedule probe after failed inactive-source probe
+            elif was_probe:
+                belief.next_probe_at = (
+                    datetime.now(timezone.utc) + timedelta(hours=24)
+                )
+                logger.info(
+                    f"Probe of inactive source {source_name} was empty. "
+                    f"Next probe at {belief.next_probe_at}."
+                )
+            self.state.belief_revision += 1
 
     async def _known_reddit_permalinks(self, source_name: str) -> set[str]:
         """Return permalink keys already stored for a source.
