@@ -324,7 +324,19 @@ class UnbrowserRedditTransport:
 
     @staticmethod
     def _retry_after_seconds(headers: dict[str, str]) -> float:
-        try:
-            return min(max(float(headers.get("retry-after", "60")), 15.0), 600.0)
-        except ValueError:
-            return 60.0
+        """Seconds to wait before retrying a 429.
+
+        Reddit does not always send ``retry-after`` but does send
+        ``x-ratelimit-reset`` (seconds until the window resets), which is more
+        accurate than the fixed fallback and avoids both premature retries and
+        needless idle time.
+        """
+        for header in ("retry-after", "x-ratelimit-reset"):
+            raw = headers.get(header)
+            if raw is None:
+                continue
+            try:
+                return min(max(float(raw), 15.0), 600.0)
+            except (TypeError, ValueError):
+                continue
+        return 60.0

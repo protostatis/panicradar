@@ -309,3 +309,30 @@ def test_transport_requires_a_solver_token() -> None:
 
     with pytest.raises(RuntimeError, match="token is not configured"):
         transport._request_cookies("https://old.reddit.com/r/bitcoin/new/")
+
+
+def test_retry_after_prefers_retry_after_header() -> None:
+    assert UnbrowserRedditTransport._retry_after_seconds(
+        {"retry-after": "30", "x-ratelimit-reset": "427"}
+    ) == 30.0
+
+
+def test_retry_after_uses_rate_limit_reset_header() -> None:
+    # Reddit's 429s on HTML pages often omit retry-after but include the
+    # seconds until the rate-limit window resets.
+    assert UnbrowserRedditTransport._retry_after_seconds(
+        {"x-ratelimit-reset": "427"}
+    ) == 427.0
+
+
+def test_retry_after_clamps_and_falls_back() -> None:
+    assert UnbrowserRedditTransport._retry_after_seconds({}) == 60.0
+    assert UnbrowserRedditTransport._retry_after_seconds(
+        {"x-ratelimit-reset": "not-a-number"}
+    ) == 60.0
+    assert UnbrowserRedditTransport._retry_after_seconds(
+        {"x-ratelimit-reset": "5"}
+    ) == 15.0
+    assert UnbrowserRedditTransport._retry_after_seconds(
+        {"x-ratelimit-reset": "9999"}
+    ) == 600.0

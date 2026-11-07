@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # Tracked coins
     tracked_coins: str = "BTC,ETH,SOL,BNB,XRP,ADA,DOGE,AVAX,DOT,LINK"
 
+    # Reddit crawl pacing. Reddit bills HTML pages against a ~100 unit /
+    # 10 minute session budget, and every page (listing or thread) costs
+    # roughly a dozen units. Two thread fetches per crawl (plus the listing)
+    # leave ~40% headroom for retries and the weekly discovery job.
+    reddit_max_thread_fetches: int = 2
+    # How far back to look for already-stored posts (thread-fetch dedupe).
+    reddit_known_url_lookback_hours: int = 48
+
     # Collector intervals (seconds)
     price_interval: int = 300
     reddit_interval: int = 600

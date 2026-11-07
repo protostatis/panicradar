@@ -22,8 +22,9 @@ from .bayesian.cold_start import compute_baseline_informativeness, initialize_so
 from .bayesian.feature_extraction import SourceFeatureExtractor
 from .bayesian.gp_model import GPSourceModel
 from .causal import GrangerAnalyzer
+from .config import settings
 from .crawler import ContentPipeline, Fetcher
-from .crawler.pipeline import CrawledContent, RedditPipeline
+from .crawler.pipeline import CrawledContent, RedditFetchError, RedditPipeline, permalink_key
 from .crawler.sources import DEFAULT_SOURCES, SourceConfig, get_all_sources
 from .logging_config import logger
 from .processing.user_sentiment import MIN_HUMAN_COMMENTS, UserSentimentScorer, count_human_comments
@@ -230,6 +231,11 @@ class CrawlerOrchestrator:
                     data = json.load(f)
                 self.state = OrchestratorState.from_dict(data)
                 self.belief_store = SourceBeliefStore.from_dict(self.state.beliefs)
+                seeded = self.belief_store.seed_missing_crawl_clocks()
+                if seeded:
+                    logger.info(
+                        f"Seeded crawl clock for {seeded} legacy source beliefs"
+                    )
 
                 # Restore GP hyperparameters if present
                 if self.state.gp_hyperparameters:
@@ -395,6 +401,10 @@ class CrawlerOrchestrator:
                 new_data["first_empty_at"] = (
                     existing.first_empty_at.isoformat()
                     if existing.first_empty_at else None
+                )
+                new_data["last_crawl_at"] = (
+                    existing.last_crawl_at.isoformat()
+                    if existing.last_crawl_at else None
                 )
                 new_data["next_probe_at"] = (
                     existing.next_probe_at.isoformat()
@@ -579,53 +589,29 @@ class CrawlerOrchestrator:
             f"mean={selection.belief.mean:.3f})"
         )
 
-        # Crawl based on source type - get ALL posts
-        contents = await self._crawl_source_batch(source_name, source_config)
+        # Crawl based on source type - get ALL posts. A transport failure
+        # (e.g. Reddit 429/403) says nothing about the source's informativeness,
+        # so skip the belief update instead of charging it as an empty crawl.
+        try:
+            contents = await self._crawl_source_batch(source_name, source_config)
+        except RedditFetchError as exc:
+            if not exc.source_unavailable:
+                logger.warning(
+                    f"Transport failure for {source_name} ({exc}); "
+                    f"skipping belief update for this cycle"
+                )
+                return []
+            # Private/banned/missing subreddit: permanent, so record it as an
+            # empty crawl and let the normal cooldown/inactive path retire it.
+            logger.warning(
+                f"Source {source_name} is unavailable ({exc}); recording empty crawl"
+            )
+            contents = []
 
         if not contents:
             # Penalize empty crawl so the bandit learns to avoid dry sources
-            async with self._belief_lock:
-                belief = self.belief_store.get(source_name)
-                was_probe = (belief.status == "inactive")
-                belief.record_empty_crawl(penalty=0.3)
-                logger.info(
-                    f"Empty crawl from {source_name} "
-                    f"(consecutive={belief.consecutive_empty_crawls}, "
-                    f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
-                )
-                # Mark source inactive after 24h of continuous empty crawls
-                if (belief.status == "active"
-                        and belief.first_empty_at is not None
-                        and belief.consecutive_empty_crawls >= 6):
-                    hours_empty = (
-                        datetime.now(timezone.utc) - belief.first_empty_at
-                    ).total_seconds() / 3600
-                    if hours_empty >= 24:
-                        belief.status = "inactive"
-                        belief.next_probe_at = (
-                            datetime.now(timezone.utc) + timedelta(hours=24)
-                        )
-                        logger.warning(
-                            f"Source {source_name} marked inactive after "
-                            f"{belief.consecutive_empty_crawls} empty crawls over "
-                            f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
-                        )
-                # Reschedule probe after failed inactive-source probe
-                elif was_probe:
-                    belief.next_probe_at = (
-                        datetime.now(timezone.utc) + timedelta(hours=24)
-                    )
-                    logger.info(
-                        f"Probe of inactive source {source_name} was empty. "
-                        f"Next probe at {belief.next_probe_at}."
-                    )
-                self.state.belief_revision += 1
+            await self._record_empty_crawl(source_name)
             return []
-
-        # Successful crawl — reset empty counter via dedicated method
-        async with self._belief_lock:
-            belief = self.belief_store.get(source_name)
-            belief.record_successful_crawl()
 
         # Get current price for later evaluation
         price_data = await self._get_current_price("BTC")
@@ -666,7 +652,76 @@ class CrawlerOrchestrator:
         if contents:
             logger.info(f"Stored {stored_count}/{len(contents)} posts from {source_name}")
 
+        # A thread that was fetched but produced nothing storable means the
+        # source has posts we cannot use right now. Record that as an empty
+        # crawl so the bandit stops spending every slot on it; listing-only
+        # results (everything was already stored) stay neutral.
+        attempted_thread_fetch = any(
+            content.metadata.get("comments") for content in contents
+        )
+        if stored_count == 0 and attempted_thread_fetch:
+            await self._record_empty_crawl(source_name)
+        else:
+            async with self._belief_lock:
+                self.belief_store.get(source_name).record_successful_crawl()
+
         return contents
+
+    async def _record_empty_crawl(self, source_name: str) -> None:
+        """Penalize a crawl that produced no storable content."""
+        async with self._belief_lock:
+            belief = self.belief_store.get(source_name)
+            was_probe = (belief.status == "inactive")
+            belief.record_empty_crawl(penalty=0.3)
+            logger.info(
+                f"Empty crawl from {source_name} "
+                f"(consecutive={belief.consecutive_empty_crawls}, "
+                f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
+            )
+            # Mark source inactive after 24h of continuous empty crawls
+            if (belief.status == "active"
+                    and belief.first_empty_at is not None
+                    and belief.consecutive_empty_crawls >= 6):
+                hours_empty = (
+                    datetime.now(timezone.utc) - belief.first_empty_at
+                ).total_seconds() / 3600
+                if hours_empty >= 24:
+                    belief.status = "inactive"
+                    belief.next_probe_at = (
+                        datetime.now(timezone.utc) + timedelta(hours=24)
+                    )
+                    logger.warning(
+                        f"Source {source_name} marked inactive after "
+                        f"{belief.consecutive_empty_crawls} empty crawls over "
+                        f"{hours_empty:.1f}h. Next probe at {belief.next_probe_at}."
+                    )
+            # Reschedule probe after failed inactive-source probe
+            elif was_probe:
+                belief.next_probe_at = (
+                    datetime.now(timezone.utc) + timedelta(hours=24)
+                )
+                logger.info(
+                    f"Probe of inactive source {source_name} was empty. "
+                    f"Next probe at {belief.next_probe_at}."
+                )
+            self.state.belief_revision += 1
+
+    async def _known_reddit_permalinks(self, source_name: str) -> set[str]:
+        """Return permalink keys already stored for a source.
+
+        Thread pages are the expensive half of a Reddit crawl (and the first to
+        hit the rate limit), so the pipeline skips them for posts we already
+        have. Failure to read the index only costs a few redundant fetches.
+        """
+        since = datetime.now(timezone.utc) - timedelta(
+            hours=settings.reddit_known_url_lookback_hours
+        )
+        try:
+            urls = await self.db.get_raw_urls(source_name, since=since)
+        except Exception as exc:
+            logger.warning(f"Could not load stored URLs for {source_name}: {exc}")
+            return set()
+        return {key for url in urls if (key := permalink_key(url))}
 
     async def _crawl_source_batch(
         self,
@@ -700,6 +755,8 @@ class CrawlerOrchestrator:
                         max_age_hours=24.0,  # Posts from last 24 hours (was 4)
                         fetch_content=True,  # Fetch full thread + comments
                         max_comments=10,
+                        known_permalinks=await self._known_reddit_permalinks(source_name),
+                        max_thread_fetches=settings.reddit_max_thread_fetches,
                     )
                     if posts:
                         # Sort by timestamp (most recent first)
@@ -738,6 +795,9 @@ class CrawlerOrchestrator:
                 )
                 return [result] if result else []
 
+        except RedditFetchError:
+            # Transport failure: let select_and_crawl skip the belief update.
+            raise
         except Exception as e:
             logger.error(f"Crawl failed for {source_name}: {e}")
             return []

@@ -35,6 +35,10 @@ class SourceBelief:
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Source status tracking
+    # last_crawl_at tracks crawl attempts only. Cooldown decay uses it instead
+    # of last_updated, which the scheduled belief updater refreshes from
+    # outcome data and would otherwise keep a source on cooldown forever.
+    last_crawl_at: datetime | None = None
     last_success_at: datetime | None = None
     first_empty_at: datetime | None = None
     status: str = "active"  # "active", "inactive", "archived"
@@ -91,11 +95,13 @@ class SourceBelief:
         Resets empty-crawl tracking and marks source as active.
         """
         self.consecutive_empty_crawls = 0
-        self.last_success_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        self.last_crawl_at = now
+        self.last_success_at = now
         self.first_empty_at = None
         if self.status == "inactive":
             self.status = "active"
-        self.last_updated = datetime.now(timezone.utc)
+        self.last_updated = now
 
     def record_empty_crawl(self, penalty: float = 0.3) -> None:
         """Record an empty crawl (no posts returned).
@@ -105,10 +111,12 @@ class SourceBelief:
         that empty != bad content, just no content.
         """
         self.consecutive_empty_crawls += 1
+        now = datetime.now(timezone.utc)
+        self.last_crawl_at = now
         if self.consecutive_empty_crawls == 1:
-            self.first_empty_at = datetime.now(timezone.utc)
+            self.first_empty_at = now
         self.beta += penalty
-        self.last_updated = datetime.now(timezone.utc)
+        self.last_updated = now
 
     def update_with_utility(self, utility: float, threshold: float = 0.5) -> None:
         """Update belief based on utility score."""
@@ -150,6 +158,8 @@ class SourceBelief:
             "total_crawls": self.total_crawls,
             "consecutive_empty_crawls": self.consecutive_empty_crawls,
             "last_updated": self.last_updated.isoformat(),
+            "last_crawl_at": self.last_crawl_at.isoformat()
+            if self.last_crawl_at else None,
             "last_success_at": self.last_success_at.isoformat()
             if self.last_success_at else None,
             "first_empty_at": self.first_empty_at.isoformat()
@@ -182,6 +192,9 @@ class SourceBelief:
             last_updated=datetime.fromisoformat(data["last_updated"])
             if "last_updated" in data
             else datetime.now(timezone.utc),
+            last_crawl_at=datetime.fromisoformat(data["last_crawl_at"])
+            if data.get("last_crawl_at")
+            else None,
             last_success_at=datetime.fromisoformat(data["last_success_at"])
             if data.get("last_success_at")
             else None,
@@ -226,6 +239,23 @@ class SourceBeliefStore:
         """Update belief for a source after crawl."""
         belief = self.get(source)
         belief.update_with_utility(utility, threshold)
+
+    def seed_missing_crawl_clocks(self) -> int:
+        """Seed ``last_crawl_at`` for beliefs persisted before the field existed.
+
+        Cooldown decay must not use ``last_updated``, which the scheduled
+        belief updater refreshes. Backfilling from the start of the current
+        empty streak lets sources that were already stuck recover on the next
+        eligibility check instead of staying locked out forever.
+
+        Returns the number of beliefs seeded.
+        """
+        seeded = 0
+        for belief in self.beliefs.values():
+            if belief.last_crawl_at is None:
+                belief.last_crawl_at = belief.first_empty_at or belief.last_updated
+                seeded += 1
+        return seeded
 
     def all_sources(self) -> list[str]:
         """Get all tracked sources."""
