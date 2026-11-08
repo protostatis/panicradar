@@ -634,7 +634,7 @@ trap - EXIT INT TERM
 # to the previous one). Recreate both tags from the container's immutable image
 # ID so promotion does not depend on which tag happened to survive cleanup.
 for component in crawler api frontend game-server; do
-  image_id=$(docker inspect --format '{{.Image}}' "crypto-sentiment-$component")
+  image_id=$(docker inspect --format '{{.Image}}' "crypto-$component")
   docker tag "$image_id" "crypto-sentiment-$component:current"
   docker tag "$image_id" "crypto-sentiment-$component:latest"
 done
