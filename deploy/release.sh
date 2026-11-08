@@ -629,9 +629,14 @@ done
 docker rm crypto-belief-auto >/dev/null 2>&1 || true
 trap - EXIT INT TERM
 
+# `docker image prune -af` can drop extra tags from an image that is still in
+# use by a running container (observed when a release ships an image identical
+# to the previous one). Recreate both tags from the container's immutable image
+# ID so promotion does not depend on which tag happened to survive cleanup.
 for component in crawler api frontend game-server; do
-  docker tag "crypto-sentiment-$component:current" \
-    "crypto-sentiment-$component:latest"
+  image_id=$(docker inspect --format '{{.Image}}' "crypto-sentiment-$component")
+  docker tag "$image_id" "crypto-sentiment-$component:current"
+  docker tag "$image_id" "crypto-sentiment-$component:latest"
 done
 echo "All 5 containers passed runtime and proxy checks."
 
