@@ -16,7 +16,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/crypto-sentiment-torch-base
+  # Deliberately not `crypto-sentiment-torch-base`: that legacy package was
+  # published out-of-band and denies `write_package` to this workflow's
+  # GITHUB_TOKEN. A package first published by Actions is auto-linked to this
+  # repository with write access.
+  IMAGE_NAME: ${{ github.repository_owner }}/crypto-sentiment-ml-base
 
 jobs:
   check-deps:

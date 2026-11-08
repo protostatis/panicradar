@@ -122,7 +122,7 @@ jobs:
           push: false
           tags: crypto-sentiment-crawler:test
           build-args: |
-            TORCH_BASE_IMAGE=ghcr.io/protostatis/crypto-sentiment-torch-base:latest
+            TORCH_BASE_IMAGE=ghcr.io/protostatis/crypto-sentiment-ml-base:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
