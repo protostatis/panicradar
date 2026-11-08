@@ -676,10 +676,12 @@ class CrawlerOrchestrator:
                 f"(consecutive={belief.consecutive_empty_crawls}, "
                 f"mean={belief.mean:.3f}{', probe' if was_probe else ''})"
             )
-            # Mark source inactive after 24h of continuous empty crawls
+            # Mark source inactive after 24h of continuous empty crawls.
+            # Use first_empty_at rather than the consecutive counter: the
+            # counter is reset by the cooldown decay, so a threshold there
+            # would make this transition unreachable.
             if (belief.status == "active"
-                    and belief.first_empty_at is not None
-                    and belief.consecutive_empty_crawls >= 6):
+                    and belief.first_empty_at is not None):
                 hours_empty = (
                     datetime.now(timezone.utc) - belief.first_empty_at
                 ).total_seconds() / 3600
