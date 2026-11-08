@@ -2,7 +2,7 @@
 # Supports: api (lean, no torch), crawler, backfill, base (ML)
 
 # Global ARG — must be before first FROM to be usable in later FROM lines
-ARG TORCH_BASE_IMAGE=ghcr.io/protostatis/crypto-sentiment-torch-base:latest
+ARG TORCH_BASE_IMAGE=ghcr.io/protostatis/crypto-sentiment-ml-base:latest
 
 # ============================================
 # API stages (lean — no torch dependency)
