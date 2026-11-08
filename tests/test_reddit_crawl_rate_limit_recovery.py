@@ -408,6 +408,19 @@ def test_stale_belief_without_last_crawl_at_falls_back_to_last_updated():
     assert "reddit_legacy" in bandit._get_eligible_sources(["reddit_legacy"])
 
 
+def test_default_cooldown_rests_a_source_after_four_empty_crawls():
+    store = SourceBeliefStore()
+    belief = store.get("reddit_dry")
+
+    for _ in range(3):
+        belief.record_empty_crawl()
+    bandit = CrawlBandit(store)
+    assert bandit._get_eligible_sources(["reddit_dry"]) == ["reddit_dry"]
+
+    belief.record_empty_crawl()
+    assert bandit._get_eligible_sources(["reddit_dry"]) == []
+
+
 # ── orchestrator behaviour ──────────────────────────────────────────────────
 
 

@@ -39,7 +39,7 @@ class CrawlBandit:
         initial_exploration: float = 1.0,
         min_exploration: float = 0.1,
         causal_bonus: float = 1.5,
-        empty_crawl_cooldown: int = 10,
+        empty_crawl_cooldown: int = 4,
         cooldown_decay_hours: float = 1.0,
     ):
         """
@@ -49,7 +49,10 @@ class CrawlBandit:
             initial_exploration: Initial exploration weight
             min_exploration: Minimum exploration weight
             causal_bonus: Multiplier for sources with causal evidence
-            empty_crawl_cooldown: Skip sources with this many consecutive empty crawls
+            empty_crawl_cooldown: Skip sources with this many consecutive empty
+                crawls. The default of 4 is sized for the production 360s tick:
+                10 kept a dry source selectable for up to two hours, which
+                starved productive sources of slots.
             cooldown_decay_hours: Reset empty crawl counter after this many hours
         """
         self.belief_store = belief_store
