@@ -7,6 +7,7 @@ Covers:
 - ``last_crawl_at`` driving cooldown decay instead of ``last_updated``
 - Stored-URL index used for deduplication
 - Orchestrator skipping the empty-crawl penalty on a transport failure
+- Zero-yield ticks counting as empty crawls until the source cools down
 """
 
 import asyncio
@@ -521,14 +522,54 @@ async def test_threads_fetched_but_nothing_stored_penalizes_source():
     assert belief.consecutive_empty_crawls == 1
 
 
-async def test_listing_only_result_does_not_penalize_source():
+async def test_listing_only_zero_yield_counts_as_empty_crawl():
     orchestrator = await _stubbed_orchestrator([_content([])])
 
     await orchestrator.select_and_crawl()
 
     belief = orchestrator.belief_store.get("reddit_bitcoin")
-    assert belief.consecutive_empty_crawls == 0
+    assert belief.consecutive_empty_crawls == 1
     assert belief.last_crawl_at is not None
+
+
+async def test_repeated_zero_yield_crawls_reach_cooldown():
+    orchestrator = await _stubbed_orchestrator([_content([])])
+    orchestrator.bandit = CrawlBandit(
+        orchestrator.belief_store,
+        empty_crawl_cooldown=10,
+        cooldown_decay_hours=1.0,
+    )
+
+    for _ in range(10):
+        await orchestrator.select_and_crawl()
+
+    belief = orchestrator.belief_store.get("reddit_bitcoin")
+    assert belief.consecutive_empty_crawls == 10
+    assert orchestrator.bandit._get_eligible_sources(["reddit_bitcoin"]) == []
+
+
+async def test_stored_content_resets_empty_crawl_streak(monkeypatch):
+    orchestrator = await _stubbed_orchestrator([_content([{"body": "hi"}])])
+    orchestrator.db = object()
+    orchestrator.state.total_crawls = 0
+    belief = orchestrator.belief_store.get("reddit_bitcoin")
+    belief.consecutive_empty_crawls = 3
+
+    async def store(_content):
+        return 7
+
+    async def write_outcome(**kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "crypto_sentiment_crawler.orchestrator.write_outcome",
+        write_outcome,
+    )
+    orchestrator._store_content = store
+
+    await orchestrator.select_and_crawl()
+
+    assert belief.consecutive_empty_crawls == 0
 
 
 async def test_batch_crawl_propagates_transport_error():

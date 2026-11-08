@@ -652,14 +652,12 @@ class CrawlerOrchestrator:
         if contents:
             logger.info(f"Stored {stored_count}/{len(contents)} posts from {source_name}")
 
-        # A thread that was fetched but produced nothing storable means the
-        # source has posts we cannot use right now. Record that as an empty
-        # crawl so the bandit stops spending every slot on it; listing-only
-        # results (everything was already stored) stay neutral.
-        attempted_thread_fetch = any(
-            content.metadata.get("comments") for content in contents
-        )
-        if stored_count == 0 and attempted_thread_fetch:
+        # Any crawl that stored nothing consumes a selection without advancing
+        # ingestion, whether the listing was all previously stored or the threads
+        # were recently fetched without yielding storable content. Count it as an
+        # empty crawl so repeated dry ticks accumulate into the cooldown instead
+        # of looking like successes and monopolising the bandit.
+        if stored_count == 0:
             await self._record_empty_crawl(source_name)
         else:
             async with self._belief_lock:
