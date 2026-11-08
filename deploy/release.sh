@@ -212,6 +212,7 @@ if [ -S "$REDDIT_SOCKET" ] && \
     crypto-sentiment-crawler:current \
     uv run python -c '
 import asyncio
+import sys
 
 from crypto_sentiment_crawler.crawler.fetcher import Fetcher
 
@@ -230,6 +231,17 @@ async def main() -> None:
             "https://old.reddit.com/r/Bitcoin/new/",
             rate_limit=1.0,
         )
+    if result.status_code == 429:
+        # The canary runs while the previous crawler is still consuming the
+        # same IP budget, so a 429 only proves the limiter is active. The
+        # crawler honours x-ratelimit-reset itself; falling back to standard
+        # fetching would be strictly worse (datacenter IPs are blocked).
+        print(
+            "Reddit canary rate limited (429); transport reachable, "
+            "keeping Unbrowser mode.",
+            file=sys.stderr,
+        )
+        return
     if result.status_code != 200 or "data-timestamp" not in result.content:
         raise RuntimeError(
             f"Reddit Unbrowser canary failed (status={result.status_code})"
