@@ -113,7 +113,11 @@ class SourceBelief:
         self.consecutive_empty_crawls += 1
         now = datetime.now(timezone.utc)
         self.last_crawl_at = now
-        if self.consecutive_empty_crawls == 1:
+        # Persist the start of the dry streak across cooldown resets: the
+        # counter is zeroed when a rested source becomes eligible again, but
+        # the source has still produced nothing since first_empty_at. Only a
+        # successful crawl clears it.
+        if self.first_empty_at is None:
             self.first_empty_at = now
         self.beta += penalty
         self.last_updated = now

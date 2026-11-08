@@ -545,6 +545,29 @@ async def test_listing_only_zero_yield_counts_as_empty_crawl():
     assert belief.last_crawl_at is not None
 
 
+def test_first_empty_at_survives_cooldown_reset():
+    belief = SourceBelief(source="reddit_dry")
+    belief.record_empty_crawl()
+    first_empty_at = belief.first_empty_at
+
+    belief.consecutive_empty_crawls = 0  # what the cooldown decay does
+    belief.record_empty_crawl()
+
+    assert belief.first_empty_at == first_empty_at
+
+
+async def test_source_dry_for_24h_is_marked_inactive():
+    orchestrator = await _stubbed_orchestrator([_content([])])
+    belief = orchestrator.belief_store.get("reddit_bitcoin")
+    belief.first_empty_at = datetime.now(timezone.utc) - timedelta(hours=25)
+    belief.consecutive_empty_crawls = 3
+
+    await orchestrator._record_empty_crawl("reddit_bitcoin")
+
+    assert belief.status == "inactive"
+    assert belief.next_probe_at is not None
+
+
 async def test_repeated_zero_yield_crawls_reach_cooldown():
     orchestrator = await _stubbed_orchestrator([_content([])])
     orchestrator.bandit = CrawlBandit(
