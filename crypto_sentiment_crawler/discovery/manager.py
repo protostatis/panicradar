@@ -198,14 +198,33 @@ class SourceManager:
         """
         Process evaluation results and update source lists.
 
-        Returns dict with lists of added, monitoring, and rejected sources.
+        Returns dict with lists of added, monitoring, rejected, and kept_active
+        sources. ``kept_active`` lists already-active sources that discovery
+        re-evaluated but deliberately did not demote.
         """
         added = []
         monitoring = []
         rejected = []
+        kept_active = []
 
         for candidate, eval_result in results:
             key = f"reddit_{candidate.name}"
+            existing = self.state.sources.get(key)
+
+            # Discovery re-evaluations must never silently demote a source that
+            # is already actively crawled. The scheduler builds the crawler
+            # source pool from active entries only, so downgrading here would
+            # remove the source from the pool on the next restart.
+            if existing and existing.get("status") == "active":
+                existing["last_evaluated"] = datetime.now(timezone.utc).isoformat()
+                existing["evaluation_score"] = eval_result.overall_score
+                kept_active.append(candidate.name)
+                logger.info(
+                    "Kept existing active source %s (recommendation=%s)",
+                    key,
+                    eval_result.recommendation,
+                )
+                continue
 
             if eval_result.recommendation == "add":
                 self.state.sources[key] = {
@@ -247,6 +266,7 @@ class SourceManager:
             "added": added,
             "monitoring": monitoring,
             "rejected": rejected,
+            "kept_active": kept_active,
         }
 
     def get_active_sources(self) -> dict[str, SourceConfig]:
