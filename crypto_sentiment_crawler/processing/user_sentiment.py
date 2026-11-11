@@ -11,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-from ..sqlite_utils import connect_sqlite, sqlite_transaction
+from ..sqlite_utils import connect_sqlite, iso_cutoff_sql, sqlite_transaction
 
 logger = logging.getLogger("crypto_sentiment")
 
@@ -765,12 +765,12 @@ class UserSentimentScorer:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        query = """
+        query = f"""
             SELECT uss.final_score, up.credibility_weight, up.username, up.tendency,
                    uss.activity_level, uss.fear_index, uss.euphoria_index
             FROM user_sentiment_scores uss
             JOIN user_profiles up ON uss.user_id = up.user_id
-            WHERE uss.timestamp >= datetime('now', ?)
+            WHERE uss.timestamp >= {iso_cutoff_sql('?')}
         """
         params = [f'-{hours} hours']
 

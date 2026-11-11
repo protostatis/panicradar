@@ -184,6 +184,8 @@ CREATE TABLE IF NOT EXISTS prediction_outcomes (
     price_gap_seconds REAL,
     evaluated_at TIMESTAMP,
     evaluator_version TEXT,
+    claim_token TEXT,
+    claimed_at TIMESTAMP,
     UNIQUE(source, signal_timestamp, evaluator_version)
 );
 """
@@ -207,6 +209,8 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_pipeline_heartbeats_component_id
     ON pipeline_heartbeats(component, id DESC);
     """,
+    "ALTER TABLE prediction_outcomes ADD COLUMN claim_token TEXT;",
+    "ALTER TABLE prediction_outcomes ADD COLUMN claimed_at TIMESTAMP;",
 ]
 
 
@@ -552,29 +556,38 @@ class Database:
         return cursor.lastrowid or 0
 
     async def claim_pending_outcomes(
-        self, now: datetime | None = None
+        self,
+        now: datetime | None = None,
+        stale_after_hours: float = 1.0,
     ) -> list[dict]:
         """Atomically claim pending outcomes for evaluation.
 
-        Marks rows with a unique claim token so concurrent workers cannot
-        evaluate the same outcomes. Only the rows claimed by this call are
-        returned.
+        Writes a unique claim token to ``claim_token`` so concurrent workers
+        cannot evaluate the same rows, and returns only the rows claimed by this
+        call. ``evaluated_at`` is reserved for completed evaluations.
+
+        A worker that dies between claiming and evaluating would otherwise leave
+        its rows unclaimable forever, so claims older than ``stale_after_hours``
+        are released back to the pool.
 
         Returns the claimed rows.
         """
         now = now or datetime.now(timezone.utc)
         claim_token = f"claim:{now.isoformat()}:{uuid.uuid4().hex}"
+        stale_before = (now - timedelta(hours=stale_after_hours)).isoformat()
         async with self.write_transaction() as conn:
             await conn.execute(
                 """
                 UPDATE prediction_outcomes
-                SET evaluated_at = ?
+                SET claim_token = ?,
+                    claimed_at = ?
                 WHERE target_timestamp < ?
                   AND price_after IS NULL
                   AND abstained = FALSE
                   AND evaluated_at IS NULL
+                  AND (claim_token IS NULL OR claimed_at < ?)
                 """,
-                (claim_token, now.isoformat()),
+                (claim_token, now.isoformat(), now.isoformat(), stale_before),
             )
 
             # Fetch only rows claimed by this worker. A generic "claiming" marker
@@ -584,7 +597,7 @@ class Database:
                 SELECT id, source, signal_timestamp, target_timestamp,
                        calibrated_score, price_before, price_before_timestamp
                 FROM prediction_outcomes
-                WHERE evaluated_at = ?
+                WHERE claim_token = ?
                 ORDER BY signal_timestamp ASC
                 """,
                 (claim_token,),
@@ -611,7 +624,9 @@ class Database:
                     correct = ?,
                     direction = ?,
                     price_gap_seconds = ?,
-                    evaluated_at = ?
+                    evaluated_at = ?,
+                    claim_token = NULL,
+                    claimed_at = NULL
                 WHERE id = ?
                 """,
                 (

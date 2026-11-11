@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 
+from ..bayesian.beliefs import SourceBeliefStore
 from ..logging_config import logger
 from ..state_lock import StateFileLock
 from ..storage.db import Database
@@ -357,6 +358,9 @@ async def update_orchestrator_beliefs(
         current_beliefs = copy.deepcopy(
             base_beliefs if base_beliefs is not None else state.get("beliefs", {})
         )
+        # Fold legacy case-variant keys (``reddit_CryptoCurrency``) so the legacy
+        # CLI write path cannot keep a frozen duplicate alive for one subreddit.
+        current_beliefs = SourceBeliefStore.from_dict(current_beliefs).to_dict()
     except Exception:
         if state_lock:
             state_lock.release()

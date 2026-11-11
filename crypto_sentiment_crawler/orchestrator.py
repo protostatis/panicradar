@@ -893,8 +893,8 @@ class CrawlerOrchestrator:
         Evaluate pending outcomes from the persistent ledger against actual
         price movements. Returns number of outcomes evaluated.
 
-        Uses an atomic claim (evaluated_at = 'claiming') to prevent
-        concurrent workers from double-evaluating the same rows.
+        Uses an atomic claim (``claim_token``) to prevent concurrent workers
+        from double-evaluating the same rows.
         """
         now = datetime.now(timezone.utc)
 

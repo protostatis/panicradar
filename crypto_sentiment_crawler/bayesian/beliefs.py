@@ -8,6 +8,8 @@ from scipy import stats
 from scipy.special import ndtri as norm_ppf
 from scipy.stats import norm
 
+from ..source_names import canonical_source_name
+
 
 @dataclass
 class SourceBelief:
@@ -221,6 +223,26 @@ class SourceBelief:
         )
 
 
+def _merge_case_variant(
+    primary: SourceBelief, duplicate: SourceBelief
+) -> SourceBelief:
+    """Fold a case-variant duplicate into ``primary``.
+
+    Posterior counts are deliberately not summed: the duplicate is an artifact
+    of a mixed-case key, and adding them would double-count the same crawls.
+    Only crawl clocks are carried over, and only when ``primary`` never recorded
+    them, so the merged belief can still be selected and cooled down normally.
+    """
+
+    if primary.last_crawl_at is None:
+        primary.last_crawl_at = duplicate.last_crawl_at
+    if primary.last_success_at is None:
+        primary.last_success_at = duplicate.last_success_at
+    if primary.first_empty_at is None:
+        primary.first_empty_at = duplicate.first_empty_at
+    return primary
+
+
 class SourceBeliefStore:
     """Manage beliefs for multiple sources."""
 
@@ -231,6 +253,7 @@ class SourceBeliefStore:
 
     def get(self, source: str) -> SourceBelief:
         """Get belief for source, creating with default prior if needed."""
+        source = canonical_source_name(source)
         if source not in self.beliefs:
             self.beliefs[source] = SourceBelief(
                 source=source,
@@ -287,8 +310,25 @@ class SourceBeliefStore:
 
     @classmethod
     def from_dict(cls, data: dict) -> "SourceBeliefStore":
-        """Deserialize from dictionary."""
+        """Deserialize from dictionary, folding case-variant duplicates.
+
+        Old discovery code stored subreddit keys in their display case
+        (``reddit_CryptoCurrency``) while every crawler and database write path
+        used lowercase. Both keys could therefore exist, with the mixed-case twin
+        frozen because the accuracy lookups are case-sensitive. Merging on load
+        keeps a single belief per real source.
+        """
         store = cls()
         for source, belief_data in data.items():
-            store.beliefs[source] = SourceBelief.from_dict(belief_data)
+            canonical = canonical_source_name(source)
+            belief = SourceBelief.from_dict(belief_data)
+            belief.source = canonical
+            existing = store.beliefs.get(canonical)
+            if existing is None:
+                store.beliefs[canonical] = belief
+            elif source == canonical:
+                # The already-lowercase entry wins over the legacy variant.
+                store.beliefs[canonical] = _merge_case_variant(belief, existing)
+            else:
+                store.beliefs[canonical] = _merge_case_variant(existing, belief)
         return store
