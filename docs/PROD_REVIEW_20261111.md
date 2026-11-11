@@ -266,6 +266,19 @@ against production without guessing.
    clear the stuck `claim:` row. *Accept:* `MAX(evaluated_at)` is a valid
    timestamp.
 
+**Phase 0 status (commit `9f798ef`, branch `fix/prod-phase0-correctness`):**
+items 1, 2 and 6 are implemented with tests. Two plan corrections found while
+implementing them:
+
+- Item 2's "extend `_find_ghost_sources()` to Reddit too" would delete every
+  newly discovered subreddit before its first crawl, since a legitimate new
+  source has zero rows by definition. Canonicalizing keys on load (and
+  wherever a reddit key is built) removes the duplicate class instead, without
+  a heuristic that can delete live sources.
+- Item 5 is half-done in `main` already: `busy_timeout=30000` is set in
+  `connect_sqlite()`/`Database.connect()`. Only WAL + `synchronous=NORMAL`
+  remain, and those need the restart procedure (one container at a time).
+
 ### Phase 1 — ingestion efficiency (1–2 days, biggest value per line changed)
 
 7. **Instrument the funnel** before changing it: per crawl count
