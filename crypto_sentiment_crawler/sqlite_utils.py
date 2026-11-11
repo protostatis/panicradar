@@ -8,6 +8,23 @@ from typing import Any, Iterator
 SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
 SQLITE_BUSY_TIMEOUT_MS = int(SQLITE_BUSY_TIMEOUT_SECONDS * 1000)
 
+# Timestamps are stored as ISO-8601 (``2026-11-11T13:57:48+00:00``) via
+# ``datetime.isoformat()``. SQLite's ``datetime('now', ...)`` returns a
+# space-separated string (``2026-11-11 13:57:48``) which sorts *before* every
+# ISO-T value on the same date, because ``'T'`` (0x54) > ``' '`` (0x20).
+# Comparing the two formats silently widens every window filter by up to a day.
+ISO_TS_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
+def iso_cutoff_sql(modifier: str) -> str:
+    """SQL expression for a UTC ISO-8601 cutoff comparable to stored timestamps.
+
+    ``modifier`` is the SQLite date modifier, either a literal (``"'-24 hours'"``)
+    or a bound-parameter expression (``"'-' || ? || ' days'"``).
+    """
+
+    return f"strftime('{ISO_TS_FORMAT}', 'now', {modifier})"
+
 
 def connect_sqlite(
     database: str | bytes | PathLike[str] | PathLike[bytes],

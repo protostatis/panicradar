@@ -7,7 +7,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..sqlite_utils import connect_sqlite
+from ..sqlite_utils import connect_sqlite, iso_cutoff_sql
+
+# SQLite date modifiers for iso_cutoff_sql(). Kept as named constants so the
+# query f-strings never reuse the string's own quote character inside an
+# expression (Python 3.11 compatibility) and the modifier text is defined once.
+_MOD_DAYS = "'-' || ? || ' days'"
+_MOD_24H = "'-24 hours'"
+_MOD_30D = "'-30 days'"
+_MOD_8D = "'-8 days'"
 
 
 def get_db_connection(db_path: str = "data/sentiment.db") -> sqlite3.Connection:
@@ -40,6 +48,7 @@ def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
 
     # Try progressively longer windows until we find data
     for hours in [4, 24, 168]:  # 4h, 24h, 7 days
+        hours_modifier = f"'-{hours} hours'"
         cursor = conn.execute(
             f"""
             WITH source_averages AS (
@@ -57,7 +66,7 @@ def get_latest_sentiment(conn: sqlite3.Connection) -> dict:
                     MAX(uss.timestamp) as latest_timestamp
                 FROM user_sentiment_scores uss
                 JOIN sentiment_raw sr ON uss.raw_id = sr.id
-                WHERE uss.timestamp >= datetime('now', '-{hours} hours')
+                WHERE uss.timestamp >= {iso_cutoff_sql(hours_modifier)}
                   AND uss.final_score IS NOT NULL
                 GROUP BY sr.source
             )
@@ -211,7 +220,7 @@ def get_sentiment_history(
     """
     # First get hourly aggregates
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             strftime('%Y-%m-%d %H:00:00', timestamp) as hour,
             AVG(final_score) as sentiment_score,
@@ -220,7 +229,7 @@ def get_sentiment_history(
             SUM(activity_level) as total_activity,
             COUNT(*) as sample_count
         FROM user_sentiment_scores
-        WHERE timestamp >= datetime('now', '-' || ? || ' days')
+        WHERE timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
           AND final_score IS NOT NULL
         GROUP BY strftime('%Y-%m-%d %H', timestamp)
         ORDER BY hour ASC
@@ -272,13 +281,13 @@ def get_price_history(
 ) -> list[dict]:
     """Get daily price history for charts."""
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             date(timestamp) as date,
             AVG(price_usd) as price
         FROM price_data
         WHERE coin = ?
-          AND timestamp >= datetime('now', '-' || ? || ' days')
+          AND timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
         GROUP BY date(timestamp)
         ORDER BY date ASC
         """,
@@ -297,12 +306,12 @@ def get_price_history(
 def get_fear_greed_history(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
     """Get daily fear & greed index history."""
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             date(timestamp) as date,
             AVG(fear_greed_index) as fear_greed_index
         FROM confounders
-        WHERE timestamp >= datetime('now', '-' || ? || ' days')
+        WHERE timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
           AND fear_greed_index IS NOT NULL
         GROUP BY date(timestamp)
         ORDER BY date ASC
@@ -435,7 +444,7 @@ def get_source_sentiment_history(
     """
     # Get hourly aggregates for this source
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             strftime('%Y-%m-%d %H:00:00', uss.timestamp) as hour,
             AVG(uss.final_score) as sentiment_score,
@@ -446,7 +455,7 @@ def get_source_sentiment_history(
         FROM user_sentiment_scores uss
         JOIN sentiment_raw sr ON uss.raw_id = sr.id
         WHERE sr.source = ?
-          AND uss.timestamp >= datetime('now', '-' || ? || ' days')
+          AND uss.timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
           AND uss.final_score IS NOT NULL
         GROUP BY strftime('%Y-%m-%d %H', uss.timestamp)
         ORDER BY hour ASC
@@ -496,11 +505,11 @@ def get_all_sources_sentiment_history(
     """Get daily sentiment history for all sources with sufficient data (user-based scoring only)."""
     # Get all sources with user_sentiment_scores data
     cursor = conn.execute(
-        """
+        f"""
         SELECT DISTINCT sr.source
         FROM user_sentiment_scores uss
         JOIN sentiment_raw sr ON uss.raw_id = sr.id
-        WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+        WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
           AND uss.final_score IS NOT NULL
         GROUP BY sr.source
         HAVING COUNT(*) >= ?
@@ -522,11 +531,11 @@ def get_all_sources_sentiment_history(
 def get_available_sources(conn: sqlite3.Connection) -> list[str]:
     """Get list of all available sources with user-based sentiment data."""
     cursor = conn.execute(
-        """
+        f"""
         SELECT DISTINCT sr.source, COUNT(*) as count
         FROM user_sentiment_scores uss
         JOIN sentiment_raw sr ON uss.raw_id = sr.id
-        WHERE uss.timestamp >= datetime('now', '-30 days')
+        WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_30D)}
           AND uss.final_score IS NOT NULL
         GROUP BY sr.source
         ORDER BY count DESC
@@ -550,7 +559,7 @@ def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
     """
     # 1. Get current 24h Reddit sentiment data
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             COUNT(*) as total_posts,
             SUM(CASE WHEN uss.final_score < -0.1 THEN 1 ELSE 0 END) as bearish_posts,
@@ -561,7 +570,7 @@ def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
             MIN(uss.final_score) as most_negative
         FROM user_sentiment_scores uss
         JOIN sentiment_raw sr ON uss.raw_id = sr.id
-        WHERE uss.timestamp >= datetime('now', '-24 hours')
+        WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_24H)}
           AND uss.final_score IS NOT NULL
           AND sr.source LIKE 'reddit_%'
         """
@@ -587,12 +596,12 @@ def get_reddit_panic_score(conn: sqlite3.Connection) -> dict:
 
     # 2. Get 7-day rolling baseline (excluding last 24h) for relative comparison
     baseline_row = conn.execute(
-        """
+        f"""
         SELECT AVG(uss.final_score) as baseline_sentiment
         FROM user_sentiment_scores uss
         JOIN sentiment_raw sr ON uss.raw_id = sr.id
-        WHERE uss.timestamp >= datetime('now', '-8 days')
-          AND uss.timestamp < datetime('now', '-24 hours')
+        WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_8D)}
+          AND uss.timestamp < {iso_cutoff_sql(_MOD_24H)}
           AND uss.final_score IS NOT NULL
           AND sr.source LIKE 'reddit_%'
         """
@@ -834,7 +843,7 @@ def get_daily_sentiment_counts(
     """
     if source:
         cursor = conn.execute(
-            """
+            f"""
             SELECT
                 date(uss.timestamp) as date,
                 SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as bull_count,
@@ -844,7 +853,7 @@ def get_daily_sentiment_counts(
                 COUNT(*) as total_count
             FROM user_sentiment_scores uss
             JOIN sentiment_raw sr ON uss.raw_id = sr.id
-            WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+            WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
               AND uss.final_score IS NOT NULL
               AND sr.source = ?
             GROUP BY date(uss.timestamp)
@@ -854,7 +863,7 @@ def get_daily_sentiment_counts(
         )
     else:
         cursor = conn.execute(
-            """
+            f"""
             SELECT
                 date(uss.timestamp) as date,
                 SUM(CASE WHEN uss.euphoria_index > 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as bull_count,
@@ -863,7 +872,7 @@ def get_daily_sentiment_counts(
                 SUM(CASE WHEN uss.euphoria_index <= 0 AND uss.fear_index <= 0 THEN 1 ELSE 0 END) as neutral_count,
                 COUNT(*) as total_count
             FROM user_sentiment_scores uss
-            WHERE uss.timestamp >= datetime('now', '-' || ? || ' days')
+            WHERE uss.timestamp >= {iso_cutoff_sql(_MOD_DAYS)}
               AND uss.final_score IS NOT NULL
             GROUP BY date(uss.timestamp)
             ORDER BY date ASC

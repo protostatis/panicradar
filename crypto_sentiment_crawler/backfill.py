@@ -14,6 +14,7 @@ from .crawler.fetcher import Fetcher
 from .crawler.pipeline import RedditPipeline, CrawledContent
 from .logging_config import logger
 from .processing.user_sentiment import UserSentimentScorer
+from .source_names import reddit_source_key
 from .storage.db import Database
 from .storage.models import SentimentRaw
 
@@ -213,7 +214,7 @@ class HistoricalBackfiller:
 
                     post = CrawledContent(
                         url=thread.url,
-                        source=f"reddit_{subreddit}",
+                        source=reddit_source_key(subreddit),
                         title=thread.title,
                         content=content,
                         author=thread.author,

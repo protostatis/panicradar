@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
+from ..source_names import reddit_source_key
 from .fetcher import Fetcher, FetchResult
 from .parser import Parser, ParseResult
 from .unbrowser_reddit import ACCESS_DENIAL_ERRORS
@@ -668,7 +669,7 @@ class RedditPipeline(ContentPipeline):
 
             posts.append(CrawledContent(
                 url=f"https://reddit.com{permalink}" if permalink else candidate.post_url,
-                source=f"reddit_{subreddit}",
+                source=reddit_source_key(subreddit),
                 title=title,
                 content=content,
                 author=candidate.author,

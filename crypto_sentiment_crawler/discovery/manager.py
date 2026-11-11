@@ -17,6 +17,7 @@ from pathlib import Path
 from ..crawler.fetcher import Fetcher
 from ..crawler.sources import SourceConfig
 from ..logging_config import logger
+from ..source_names import reddit_source_key
 from .evaluator import EvaluationResult, SourceEvaluator
 from .reddit_discovery import SEED_SUBREDDITS, DiscoveredSubreddit, RedditDiscovery
 
@@ -93,7 +94,7 @@ class SourceManager:
     def _init_seeds(self) -> None:
         """Initialize seed sources as active."""
         for seed in SEED_SUBREDDITS:
-            key = f"reddit_{seed}"
+            key = reddit_source_key(seed)
             if key not in self.state.sources:
                 self.state.sources[key] = {
                     "name": key,
@@ -208,7 +209,7 @@ class SourceManager:
         kept_active = []
 
         for candidate, eval_result in results:
-            key = f"reddit_{candidate.name}"
+            key = reddit_source_key(candidate.name)
             existing = self.state.sources.get(key)
 
             # Discovery re-evaluations must never silently demote a source that
@@ -300,7 +301,7 @@ class SourceManager:
 
     async def promote_source(self, name: str) -> bool:
         """Promote a monitoring source to active."""
-        key = f"reddit_{name}" if not name.startswith("reddit_") else name
+        key = reddit_source_key(name)
 
         if key not in self.state.sources:
             return False
@@ -313,7 +314,7 @@ class SourceManager:
 
     async def demote_source(self, name: str) -> bool:
         """Demote an active source to monitoring."""
-        key = f"reddit_{name}" if not name.startswith("reddit_") else name
+        key = reddit_source_key(name)
 
         if key not in self.state.sources:
             return False

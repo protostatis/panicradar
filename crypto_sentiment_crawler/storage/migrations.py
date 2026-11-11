@@ -37,9 +37,14 @@ async def is_migration_applied(conn: "aiosqlite.Connection", migration_id: str) 
 
 
 async def mark_migration_applied(conn: "aiosqlite.Connection", migration_id: str) -> None:
-    """Mark a migration as applied."""
+    """Mark a migration as applied.
+
+    ``INSERT OR IGNORE`` keeps concurrent service starts (API, crawler, signals
+    all connect on boot) from failing the connection on the primary key when two
+    processes pick up the same pending migration.
+    """
     await conn.execute(
-        "INSERT INTO applied_migrations (id) VALUES (?)",
+        "INSERT OR IGNORE INTO applied_migrations (id) VALUES (?)",
         (migration_id,)
     )
     await conn.commit()
@@ -177,7 +182,54 @@ async def fix_timestamps_from_metadata(conn: "aiosqlite.Connection") -> int:
     return updated
 
 
+async def release_orphaned_outcome_claims(conn: "aiosqlite.Connection") -> int:
+    """Free outcome rows that a crashed worker left marked as claimed.
+
+    Earlier versions stored the claim token in ``evaluated_at``, so a worker that
+    died between claiming and evaluating left a row that was neither evaluated
+    nor claimable again. Those rows are now un-evaluable (their 4 h target window
+    is long past), so they are marked ``abstained`` instead of being evaluated
+    against a stale price.
+
+    Returns the number of repaired rows.
+    """
+    migration_id = "003_release_orphaned_outcome_claims"
+
+    await ensure_migrations_table(conn)
+
+    if await is_migration_applied(conn, migration_id):
+        logger.debug(f"Migration {migration_id} already applied, skipping")
+        return 0
+
+    logger.info(f"Running migration: {migration_id}")
+
+    cursor = await conn.execute(
+        """
+        SELECT COUNT(*) FROM prediction_outcomes
+        WHERE evaluated_at LIKE 'claim:%'
+        """
+    )
+    count = (await cursor.fetchone())[0]
+
+    await conn.execute(
+        """
+        UPDATE prediction_outcomes
+        SET evaluated_at = NULL,
+            claim_token = NULL,
+            claimed_at = NULL,
+            abstained = TRUE
+        WHERE evaluated_at LIKE 'claim:%'
+        """
+    )
+    await conn.commit()
+
+    await mark_migration_applied(conn, migration_id)
+    logger.info(f"Migration {migration_id} complete: released {count} orphaned claims")
+    return count
+
+
 async def run_all_migrations(conn: "aiosqlite.Connection") -> None:
     """Run all pending migrations."""
     await cleanup_low_engagement_posts(conn)
     await fix_timestamps_from_metadata(conn)
+    await release_orphaned_outcome_claims(conn)

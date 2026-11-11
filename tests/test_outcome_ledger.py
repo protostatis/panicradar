@@ -449,3 +449,102 @@ class TestSourcePerformance:
         # Query with different case should still find it
         perf = await get_source_performance(db, source="Reddit_Case", days=30)
         assert perf["total_evaluated"] == 1
+
+
+# ── Claim bookkeeping ─────────────────────────────────────────────────────
+
+
+class TestClaimBookkeeping:
+    async def _row(self, db, *, source: str, now: datetime) -> int:
+        return await write_outcome(
+            db=db, source=source, signal_timestamp=now - timedelta(hours=6),
+            target_timestamp=now - timedelta(hours=2), calibrated_score=0.5,
+            price_before=100.0,
+        )
+
+    async def _state(self, db, row_id: int) -> dict:
+        cursor = await db.conn.execute(
+            "SELECT evaluated_at, claim_token, claimed_at "
+            "FROM prediction_outcomes WHERE id = ?",
+            (row_id,),
+        )
+        return dict(await cursor.fetchone())
+
+    async def test_claim_does_not_touch_evaluated_at(self, db):
+        """A claim is bookkeeping, not an evaluation.
+
+        Storing the token in ``evaluated_at`` made it a malformed timestamp and
+        left rows that were neither evaluated nor claimable again.
+        """
+        now = datetime.now(timezone.utc)
+        row_id = await self._row(db, source="reddit_claim", now=now)
+
+        claimed = await claim_pending_outcomes(db, now=now)
+        assert [row["id"] for row in claimed] == [row_id]
+
+        state = await self._state(db, row_id)
+        assert state["evaluated_at"] is None
+        assert state["claim_token"].startswith("claim:")
+        assert state["claimed_at"] == now.isoformat()
+
+    async def test_stale_claim_is_reclaimable(self, db):
+        """A worker that dies mid-evaluation must not strand its rows."""
+        now = datetime.now(timezone.utc)
+        row_id = await self._row(db, source="reddit_stale", now=now)
+
+        assert len(await claim_pending_outcomes(db, now=now)) == 1
+        assert await claim_pending_outcomes(db, now=now + timedelta(minutes=30)) == []
+
+        reclaimed = await claim_pending_outcomes(db, now=now + timedelta(hours=2))
+        assert [row["id"] for row in reclaimed] == [row_id]
+
+    async def test_evaluation_clears_claim_and_sets_evaluated_at(self, db):
+        now = datetime.now(timezone.utc)
+        row_id = await self._row(db, source="reddit_done", now=now)
+
+        await claim_pending_outcomes(db, now=now)
+        await evaluate_outcome(
+            db=db, outcome_id=row_id, price_after=105.0,
+            price_after_timestamp=now, correct=True, direction="up",
+        )
+
+        state = await self._state(db, row_id)
+        assert state["claim_token"] is None
+        assert state["claimed_at"] is None
+        assert state["evaluated_at"] is not None
+        assert not state["evaluated_at"].startswith("claim:")
+
+    async def test_legacy_orphan_claim_is_released(self, db):
+        """Rows left with a ``claim:`` token are repaired, not re-evaluated.
+
+        Their target window is months in the past, so evaluating them now would
+        record a bogus data point. They are marked abstained instead.
+        """
+        from crypto_sentiment_crawler.storage.migrations import (
+            release_orphaned_outcome_claims,
+        )
+
+        now = datetime.now(timezone.utc)
+        row_id = await self._row(db, source="reddit_orphan", now=now)
+        await db.conn.execute(
+            "UPDATE prediction_outcomes SET evaluated_at = ? WHERE id = ?",
+            ("claim:2026-08-14T00:00:00+00:00:abcdef", row_id),
+        )
+        await db.conn.execute(
+            "DELETE FROM applied_migrations WHERE id = '003_release_orphaned_outcome_claims'"
+        )
+        await db.conn.commit()
+
+        released = await release_orphaned_outcome_claims(db.conn)
+
+        assert released == 1
+        state = await self._state(db, row_id)
+        assert state["evaluated_at"] is None
+        cursor = await db.conn.execute(
+            "SELECT abstained FROM prediction_outcomes WHERE id = ?",
+            (row_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["abstained"] == 1
+        # An abstained row is never handed to an evaluator.
+        assert await claim_pending_outcomes(db, now=now) == []

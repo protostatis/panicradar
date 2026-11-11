@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+from ..source_names import canonical_source_name, reddit_source_key
+
 
 @dataclass
 class EndpointConfig:
@@ -227,7 +229,7 @@ def _create_default_discovery_state(path: Path) -> dict:
 
     sources = {}
     for subreddit in DEFAULT_SUBREDDITS:
-        key = f"reddit_{subreddit}"
+        key = reddit_source_key(subreddit)
         sources[key] = {
             "name": key,
             "source_type": "reddit",
@@ -290,9 +292,12 @@ def load_discovered_sources(state_path: str | None = None) -> dict[str, SourceCo
             continue
 
         if source_data.get("source_type") == "reddit":
-            subreddit = source_data.get("subreddit", key.replace("reddit_", ""))
-            sources[key] = SourceConfig(
-                name=key,
+            subreddit = canonical_source_name(
+                source_data.get("subreddit", key.replace("reddit_", ""))
+            )
+            canonical_key = reddit_source_key(subreddit)
+            sources[canonical_key] = SourceConfig(
+                name=canonical_key,
                 base_url="https://old.reddit.com",
                 source_type="social",
                 endpoints=[
